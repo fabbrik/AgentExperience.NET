@@ -1,0 +1,59 @@
+{
+  "description": "One lesson's rows within a run carry different or blank lesson models: per run, the lesson's model is the ordinal least non-blank one, or unknown when every row's is blank or absent.",
+  "rows": [
+    {
+      "runId": "000000a0-0000-4000-8000-000000000101",
+      "arm": "Treatment",
+      "experienceId": "000000a0-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "run-model",
+      "lessonModel": "model-y"
+    },
+    {
+      "runId": "000000a0-0000-4000-8000-000000000101",
+      "arm": "Treatment",
+      "experienceId": "000000a0-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "run-model",
+      "lessonModel": " "
+    },
+    {
+      "runId": "000000a0-0000-4000-8000-000000000101",
+      "arm": "Treatment",
+      "experienceId": "000000a0-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "run-model",
+      "lessonModel": "model-x"
+    },
+    {
+      "runId": "000000a0-0000-4000-8000-000000000102",
+      "arm": "Holdout",
+      "experienceId": "000000a0-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "run-model",
+      "lessonModel": "\t"
+    },
+    {
+      "runId": "000000a0-0000-4000-8000-000000000102",
+      "arm": "Holdout",
+      "experienceId": "000000a0-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "run-model",
+      "lessonModel": null
+    },
+    {
+      "runId": "000000a0-0000-4000-8000-000000000103",
+      "arm": "Holdout",
+      "experienceId": "000000a0-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "run-model",
+      "lessonModel": "model-y"
+    }
+  ]
+}

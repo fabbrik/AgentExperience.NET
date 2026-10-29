@@ -260,8 +260,10 @@ func reflectRun(run *CapturedRun, evaluation *VerificationResult, reflectionID U
 	addPrecondition("Runtime version", &environment.RuntimeVersion)
 	addPrecondition("Operating system", &environment.OperatingSystem)
 	addPrecondition("Application version", environment.ApplicationVersion)
-	for _, key := range sortedKeys(environment.Metadata) {
-		value := environment.Metadata[key]
+	// The run's model is bookkeeping (ModelMetadataKey), never a precondition.
+	metadata := withoutModel(environment.Metadata)
+	for _, key := range sortedKeys(metadata) {
+		value := metadata[key]
 		addPrecondition(reflectorPreconditionLabelPrefix+key+"]", &value)
 	}
 

@@ -27,7 +27,15 @@ from .embedding import (
 )
 from .encoding import Instant
 from .finalize import FinalizedExperience, InitialLifecycleEvent
-from .holdout import HoldoutArm, HoldoutAssignment, holdout_records
+from .holdout import (
+    HoldoutArm,
+    HoldoutAssignment,
+    HoldoutOutcomeCursor,
+    HoldoutOutcomeRow,
+    check_outcome_limit,
+    holdout_records,
+)
+from .model import model_of_metadata
 from .records import EXPERIENCE_STATUSES, ExperienceRecord, Scope
 from .reflector import is_model_authored
 from .search import AuthorizationBounds, SearchParameters, SearchRow
@@ -402,11 +410,78 @@ class InMemoryExperienceStore:
                     HoldoutRow(run_id, exposure.experience_id, exposure.revision, assignment.arm, scope, at),
                 )
 
+    def seed_holdout_row(self, row: HoldoutRow) -> None:
+        """Holds one assignment row exactly as given, as the schema's owner inserts one (no checks, no clamp): for
+        seeding and tests. A row that already exists for the run and record is replaced."""
+        if not isinstance(row, HoldoutRow):
+            raise TypeError("row must be a HoldoutRow.")
+        with self._lock:
+            self._holdout[(row.run_id, row.experience_id)] = row
+
     def holdout_assignments(self) -> list[HoldoutRow]:
         """Every holdout assignment row, ordered by run then record, for inspection in tests."""
         with self._lock:
             rows = list(self._holdout.values())
         return sorted(rows, key=lambda row: (row.run_id, row.experience_id))
+
+    def read_holdout_outcomes(
+        self, bounds: AuthorizationBounds, scope: Scope, limit: int, after: HoldoutOutcomeCursor | None = None
+    ) -> list[HoldoutOutcomeRow]:
+        """
+        A page of the holdout's outcome rows (contract 1.9), as ``sql/query-holdout-outcomes.sql`` reads them: the
+        assignment rows in exactly ``scope``, in (run, record) order, after ``after``, at most ``limit`` (1 to 1000),
+        each with its run's outcome and model (the record held in exactly the row's scope whose source run is the run,
+        the earliest created, then the lowest ID) and the named lesson's model (its record in exactly the row's
+        scope). Raises :class:`AuthorizationDenied` outside the bounds and ``ValueError`` for a bad limit. Reads only.
+        """
+        check_outcome_limit(limit)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        with self._lock:
+            page = sorted(
+                (
+                    row
+                    for row in self._holdout.values()
+                    if row.scope == scope and (after is None or (row.run_id, row.experience_id) > after)
+                ),
+                key=lambda row: (row.run_id, row.experience_id),
+            )[:limit]
+            runs: dict[uuid.UUID, tuple[str | None, str | None]] = {}
+            lessons: dict[uuid.UUID, str | None] = {}
+            result: list[HoldoutOutcomeRow] = []
+            for row in page:
+                if row.run_id not in runs:
+                    own = sorted(
+                        (
+                            indexed.record
+                            for indexed in self._records.values()
+                            if indexed.record.source_run_id == row.run_id and indexed.record.scope == row.scope
+                        ),
+                        key=lambda record: (record.created_at.truncate_to_microseconds(), record.experience_id),
+                    )
+                    runs[row.run_id] = (
+                        (own[0].outcome.status, model_of_metadata(own[0].environment.metadata)) if own else (None, None)
+                    )
+                if row.experience_id not in lessons:
+                    lesson = self._records.get(row.experience_id)
+                    lessons[row.experience_id] = (
+                        model_of_metadata(lesson.record.environment.metadata)
+                        if lesson is not None and lesson.record.scope == row.scope
+                        else None
+                    )
+                outcome, run_model = runs[row.run_id]
+                result.append(
+                    HoldoutOutcomeRow(
+                        row.run_id,
+                        row.arm,
+                        row.experience_id,
+                        row.assigned_at,
+                        outcome,
+                        run_model,
+                        lessons[row.experience_id],
+                    )
+                )
+        return result
 
     def erase(self, experience_id: uuid.UUID) -> bool:
         """

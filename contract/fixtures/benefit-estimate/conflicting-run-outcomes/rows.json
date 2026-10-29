@@ -1,0 +1,68 @@
+{
+  "description": "Rows of one run that disagree on its outcome: the run reads the outcome of its row with the lowest experienceId among those that carry one, whatever the row order.",
+  "rows": [
+    {
+      "runId": "0000009d-0000-4000-8000-000000000101",
+      "arm": "Treatment",
+      "experienceId": "0000009d-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": null,
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "0000009d-0000-4000-8000-000000000101",
+      "arm": "Treatment",
+      "experienceId": "0000009d-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "0000009d-0000-4000-8000-000000000101",
+      "arm": "Treatment",
+      "experienceId": "0000009d-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "0000009d-0000-4000-8000-000000000102",
+      "arm": "Holdout",
+      "experienceId": "0000009d-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "0000009d-0000-4000-8000-000000000102",
+      "arm": "Holdout",
+      "experienceId": "0000009d-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Unknown",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "0000009d-0000-4000-8000-000000000103",
+      "arm": "Treatment",
+      "experienceId": "0000009d-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Unknown",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "0000009d-0000-4000-8000-000000000103",
+      "arm": "Treatment",
+      "experienceId": "0000009d-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    }
+  ]
+}

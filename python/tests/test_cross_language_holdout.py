@@ -10,6 +10,12 @@ their initial lifecycle events and the holdout assignments), every column in Pos
 exactly ``tests/cross-language/python-agent-holdout-rows.json``. The .NET contract tests insert those rows, with the Go
 agent's, into one database and run ``AgentExperienceBenefit.EstimateAsync`` over the scope: every finalized run counts
 in its arm. Set ``AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE=1`` to rewrite the file on purpose, then read the diff.
+
+Contract 1.9: the agent's chat client reports the model ``python-agent-model``, which capture records in every run's
+environment. In the PostgreSQL leg the Python and the Go agents' rows files go into one database, and the Python
+``estimate_benefit`` over the fleet's scope, split by model, must be exactly
+``tests/cross-language/python-fleet-holdout-estimate.json``; the .NET contract tests estimate the same rows with
+``AgentExperienceBenefit.EstimateAsync`` and must find the same numbers.
 """
 
 from __future__ import annotations
@@ -27,7 +33,8 @@ import pytest
 
 pytest.importorskip("agent_framework")
 
-from _contract import json_difference, read_json
+from _benefit import TOLERANCE, estimate_json
+from _contract import REPOSITORY, json_difference, read_json
 from _maf import ScriptedClient
 from _postgres import Server
 from _sync import run
@@ -55,9 +62,13 @@ from agentexperience.maf import (
     tool_succeeded,
     use_agent_experience,
 )
+from agentexperience.model import MODEL_METADATA_KEY
 from agentexperience.records import COLUMN_NAMES
 
 ROWS_GOLDEN = Path(__file__).resolve().parent / "cross-language" / "python-agent-holdout-rows.json"
+GO_ROWS = REPOSITORY / "go" / "maf" / "testdata" / "cross-language" / "go-agent-holdout-rows.json"
+FLEET_ESTIMATE_GOLDEN = Path(__file__).resolve().parent / "cross-language" / "python-fleet-holdout-estimate.json"
+MODEL = "python-agent-model"
 UPDATE_VARIABLE = "AGENTEXPERIENCE_CROSS_LANGUAGE_UPDATE"
 SCOPE = Scope("cross-language-holdout", "holdout-app", "holdout-project", agent_id="holdout-agent")
 IDENTITY = ExperienceIdentity("python-principal", SCOPE)
@@ -103,6 +114,15 @@ HOLDOUT_COLUMNS = (
 )
 
 
+class ModelClient(ScriptedClient):
+    """The scripted client, reporting the model it runs: what capture records as the run's model (contract 1.9)."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.model = MODEL
+        self.model_id = MODEL
+
+
 def task(n: int) -> str:
     return f"Ticket #{5100 + n}: a refund is stuck on a lock. Triage it."
 
@@ -140,9 +160,7 @@ def run_holdout_agent(store: ExperienceStore) -> tuple[list[Any], list[HoldoutRe
         return next(outcomes)
 
     agent = use_agent_experience(
-        Agent(
-            client=ScriptedClient(calls=1, arguments={"suite": "unit"}), name="Holdout Agent", tools=[tool(run_tests)]
-        ),
+        Agent(client=ModelClient(calls=1, arguments={"suite": "unit"}), name="Holdout Agent", tools=[tool(run_tests)]),
         store=store,
         identity=IDENTITY,
         verify=tool_succeeded("run_tests", artifact_revision="build-7"),
@@ -169,6 +187,7 @@ def run_holdout_agent(store: ExperienceStore) -> tuple[list[Any], list[HoldoutRe
     assert problems == []
     assert [item.record.source_run_id for item in finalized] == [LEARNING_RUN, *MEASURED_RUNS]
     assert finalized[0].record.status == "Validated"
+    assert all(item.record.environment.metadata.get(MODEL_METADATA_KEY) == MODEL for item in finalized)
     assert [item.record.outcome.status for item in finalized[1:]] == [
         "Verified" if passes else "Failed" for passes in PASSES
     ]
@@ -273,3 +292,73 @@ def test_the_python_agent_writes_the_holdout_rows_the_dotnet_estimate_reads(pg_s
         ROWS_GOLDEN.write_text(json.dumps(rows, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     difference = json_difference(read_json(ROWS_GOLDEN), rows)
     assert difference is None, f"{difference} (set {UPDATE_VARIABLE}=1 to rewrite {ROWS_GOLDEN.name} on purpose)"
+
+
+def _insert_raw(conninfo: str, table: str, row: dict[str, str | None]) -> None:
+    """One row of a rows file, every column from its PostgreSQL text form, as the application role under bounds
+    declared for the row's scope: how the .NET contract tests insert a port agent's rows."""
+    import psycopg
+    from psycopg import sql
+
+    from agentexperience.postgres import DECLARE_BOUNDS_SQL, contract_sql, to_driver_placeholders
+
+    scope = Scope(
+        str(row["tenant_id"]),
+        str(row["application_id"]),
+        str(row["project_id"]),
+        row["team_id"],
+        row["agent_id"],
+        row["user_id"],
+    )
+    with psycopg.connect(conninfo) as connection, connection.transaction():
+        connection.execute("SET LOCAL TIME ZONE 'UTC'")
+        connection.execute(
+            to_driver_placeholders(contract_sql(DECLARE_BOUNDS_SQL)), AuthorizationBounds.of(scope).parameters()
+        )
+        types: dict[str, str] = {
+            str(name): str(kind)
+            for name, kind in connection.execute(
+                "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = "
+                "('agent_experience.' || %s)::regclass AND attnum > 0 AND NOT attisdropped",
+                (table,),
+            ).fetchall()
+        }
+        names = list(row)
+        assert all(name in types for name in names), (table, names)
+        connection.execute(
+            sql.SQL("INSERT INTO {table} ({columns}) VALUES ({values})").format(
+                table=sql.Identifier("agent_experience", table),
+                columns=sql.SQL(", ").join(sql.Identifier(name) for name in names),
+                values=sql.SQL(", ").join([sql.SQL("CAST(%s AS {})").format(sql.SQL(types[name])) for name in names]),
+            ),
+            [row[name] for name in names],
+        )
+
+
+@pytest.mark.postgres
+def test_the_python_estimate_of_the_python_and_go_fleet_is_the_checked_in_one(pg_server: Server) -> None:
+    from _postgres import application_conninfo, create_database
+
+    from agentexperience import BenefitOptions, estimate_benefit
+    from agentexperience.postgres import PostgresExperienceStore
+
+    database = create_database(pg_server, "python_fleet_estimate")
+    conninfo = application_conninfo(pg_server, database)
+    for path in (ROWS_GOLDEN, GO_ROWS):
+        rows = read_json(path)
+        for table in ("experience_records", "lifecycle_events", "experience_holdout_assignments"):
+            for row in rows[table]:
+                _insert_raw(conninfo, table, row)
+
+    estimate = estimate_benefit(
+        PostgresExperienceStore(conninfo), AuthorizationBounds.of(SCOPE), SCOPE, BenefitOptions(split_by_model=True)
+    )
+    assert estimate.outcome == "Found" and estimate.tracked
+    assert estimate.overall.pending == 0 and estimate.overall.mixed_arm == 0
+    actual = json.loads(json.dumps(estimate_json(estimate, with_store=True)))
+    if os.environ.get(UPDATE_VARIABLE) == "1":
+        FLEET_ESTIMATE_GOLDEN.write_text(json.dumps(actual, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    difference = json_difference(read_json(FLEET_ESTIMATE_GOLDEN), actual, tolerance=TOLERANCE)
+    assert difference is None, (
+        f"{difference} (set {UPDATE_VARIABLE}=1 to rewrite {FLEET_ESTIMATE_GOLDEN.name} on purpose)"
+    )

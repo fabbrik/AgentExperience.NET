@@ -35,7 +35,9 @@ What it adds to the agent:
   scope, with each lesson's block, eligibility and last injection.
 - **The injection holdout** (contract 1.8), with ``holdout=HoldoutOptions(rate=...)``: a deterministic, run-ID-derived
   share of captured runs that have a block has it withheld (``Withheld``), and both arms are recorded in the background,
-  so the .NET benefit estimate counts this agent's runs. Off by default.
+  so the benefit estimate (``agentexperience.estimate_benefit``, or .NET's) counts this agent's runs. Off by default.
+- **The run's model** (contract 1.9): capture records the model the agent's chat client reports under the environment
+  metadata key ``agentexperience.model``, for the estimate's split by model; a key the host's environment sets wins.
 
 Nothing here raises into the agent: a store, identity, classifier or verifier failure means no block, or no stored
 record, and is reported through ``on_injection_failure`` or ``on_capture_failure``. Only the invocation's own
@@ -121,6 +123,7 @@ from .inmemory import (
     LessonsReader,
 )
 from .lessons import ExperienceLessons
+from .model import MODEL_METADATA_KEY, reported_model, with_model
 from .observer import classify as _classify_error
 from .observer import observe
 from .records import EnvironmentFingerprint, Provenance, RunExposure
@@ -286,6 +289,15 @@ def default_environment() -> EnvironmentFingerprint:
         application_version=None,
         metadata={"ProcessArchitecture": platform.machine() or "unknown"},
     )
+
+
+def _with_reported_model(environment: EnvironmentFingerprint, agent: Any) -> EnvironmentFingerprint:
+    """``environment`` with the model ``agent``'s chat client reports under ``agentexperience.model`` (contract 1.9);
+    unchanged when it reports none, or when the host's environment already names one."""
+    model = reported_model(agent)
+    if model is None or MODEL_METADATA_KEY in environment.metadata:
+        return environment
+    return dataclasses.replace(environment, metadata=with_model(environment.metadata, model))
 
 
 @dataclass
@@ -490,7 +502,8 @@ class _CaptureScope:
                 task_id=settings.task_id_for(self.agent),
                 task_description=task_text,
                 scope=identity.scope,
-                environment=settings.environment,
+                # Contract 1.9: the model the agent's chat client reports, unless the host's environment names one.
+                environment=_with_reported_model(settings.environment, self.agent),
                 provenance=Provenance(PROVENANCE_SOURCE, __version__, now, None),
                 started_at=now,
                 sanitization=settings.sanitization,

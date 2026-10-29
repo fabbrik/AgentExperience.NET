@@ -2357,3 +2357,52 @@ A captured run lives only in `InMemoryExperienceCaptureService`. It is dropped a
 the process exits, so an outcome that arrives days later cannot be finalized. Examples are a CI fix and a ticket
 resolution. A durable capture store, so a run can be finalized from another process, would let 26.1 finalize each
 failure when its fix lands instead of replaying only failures whose fix is already known.
+
+## Epic 27: Python and Go Reach Parity with .NET
+
+**Added:** 2026-10-29 · **Status:** in progress
+
+The Python and Go ports pass contract 1.8: they capture, finalize, reflect, search (text and vectors), inject, record
+exposure and the holdout, and read the lessons view. Everything after that is .NET-only today: measuring and acting on
+benefit, the lifecycle after finalization, sharing, signing, encryption and erasure, and owning the schema. This epic
+closes the gap. .NET stays the reference: each story first adds a contract minor version whose fixtures are generated
+from .NET, then implements it in both ports, so the three cannot drift.
+
+### Story 27.1: Ports Estimate Benefit (contract 1.9)
+Ports record the run's model as bookkeeping metadata, read the holdout's outcome rows through a contract SQL statement,
+and compute the same Wilson/Newcombe estimate as `ExperienceBenefitEstimator` (overall, per lesson, per model), checked
+against numeric fixtures generated from .NET.
+
+### Story 27.2: Ports Act on the Estimate
+The benefit policy (`MeasuredHarmful` omission, `PreferMeasuredHelpful`, per model) with its background cache, and the
+lessons view's measured benefit.
+
+### Story 27.3: Ports Measure Another Memory Provider
+The provider holdout wrapper (`UseMeasuredMemory` equivalent) with its own SQL, privileges and telemetry.
+
+### Story 27.4: Retrieval Policy and Injection Options
+`MaxAge`, per-domain confidence decay, configurable half-life, limits and timeouts, exclusion reasons, deciding and
+resolving the request, receiving-agent capabilities and tool risk, and the model-authored lesson policy.
+
+### Story 27.5: Lesson Export, the HTML View and the LLM Reflector
+The Markdown lesson export and the lessons HTML (byte fixtures), and a chat-client reflector with prompt and output
+fixtures.
+
+### Story 27.6: Confidence, Reuse Feedback and the Lifecycle
+The confidence engine, reuse feedback and evidence (derived ID tags 4 and 5), reinforce, contest, supersede and revoke
+with revision compare-and-set, reindex and deindex, then session tracking with withdrawal notices. Ports start changing
+stored records here, so storage conformance fixtures come first. Likely split into several stories.
+
+### Story 27.7: Provenance Signing and Independence Verification
+Shared-key signing fixtures, and the `Expired` and `ContentUnconfirmed` states.
+
+### Story 27.8: Sharing Through Grants
+The grant store, search with grants, disclosure and the access log.
+
+### Story 27.9: Encryption, Erasure and Retention
+Envelope keys and the key-encryption-key abstraction, sealed payload v2 read and write with cross-language fixtures,
+purge and retention sweeps. Go needs at-rest encryption from scratch. Likely split into several stories.
+
+### Story 27.10: Ports Own the Schema (optional)
+Freeze the migrations, privileges and row-level security as contract SQL, add port migrators, and give the upgrade
+tests a port leg, so a Python- or Go-only deployment needs no .NET process.

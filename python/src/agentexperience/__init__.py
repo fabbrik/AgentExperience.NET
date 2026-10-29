@@ -1,5 +1,5 @@
 """
-AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.8.
+AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.9.
 
 Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical Reference
 block, derives the task text, classifies errors, and (with the ``postgres`` extra) writes records to and searches them
@@ -11,6 +11,19 @@ from __future__ import annotations
 
 from importlib import metadata as _metadata
 
+from .benefit import (
+    BenefitAccumulator,
+    BenefitArm,
+    BenefitComparison,
+    BenefitEstimate,
+    BenefitOptions,
+    HoldoutOutcomeReader,
+    LessonBenefit,
+    ModelBenefit,
+    ModelPairBenefit,
+    estimate,
+    estimate_benefit,
+)
 from .block import Block, BlockOptions, RankedRecord, RankingComponent, render_block
 from .capture import CapturedRun, RawAttempt, RawToolCall, RunCapture
 from .embedding import (
@@ -34,6 +47,7 @@ from .holdout import (
     HoldoutArm,
     HoldoutAssignment,
     HoldoutOptions,
+    HoldoutOutcomeRow,
     assign_holdout,
     holdout_fraction,
 )
@@ -46,6 +60,7 @@ from .lessons import (
     LessonsQuery,
 )
 from .limits import CaptureLimits, SanitizationLimits
+from .model import MODEL_METADATA_KEY, normalize_model_id
 from .records import (
     Attempt,
     EnvironmentFingerprint,
@@ -77,19 +92,25 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.8"
-"""The contract version this package passes: every fixture of contract 1.8, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
-1.6 and 1.7 fixture."""
+CONTRACT_VERSION = "1.9"
+"""The contract version this package passes: every fixture of contract 1.9, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+1.6, 1.7 and 1.8 fixture."""
 
-SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8")
+SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9")
 """Every contract version whose fixtures this package passes."""
 
 __all__ = [
     "CONTRACT_VERSION",
     "DEFAULT_HOLDOUT_SALT",
+    "MODEL_METADATA_KEY",
     "SUPPORTED_CONTRACT_VERSIONS",
     "Attempt",
     "AuthorizationBounds",
+    "BenefitAccumulator",
+    "BenefitArm",
+    "BenefitComparison",
+    "BenefitEstimate",
+    "BenefitOptions",
     "Block",
     "BlockOptions",
     "CaptureLimits",
@@ -108,14 +129,19 @@ __all__ = [
     "HoldoutArm",
     "HoldoutAssignment",
     "HoldoutOptions",
+    "HoldoutOutcomeReader",
+    "HoldoutOutcomeRow",
     "InitialLifecycleEvent",
     "Instant",
     "Lesson",
+    "LessonBenefit",
     "LessonCheck",
     "LessonsPage",
     "LessonsQuery",
     "Message",
     "MessagePart",
+    "ModelBenefit",
+    "ModelPairBenefit",
     "Outcome",
     "Provenance",
     "RankedRecord",
@@ -144,12 +170,15 @@ __all__ = [
     "content_hash",
     "derive_task_text",
     "error_class",
+    "estimate",
+    "estimate_benefit",
     "experience_id_for",
     "finalize",
     "from_stored",
     "holdout_fraction",
     "initial_event_id_for",
     "merge_channels",
+    "normalize_model_id",
     "rank",
     "reflection_id_for",
     "render_block",

@@ -32,6 +32,7 @@ from ._text import (
     visible,
 )
 from .error_class import error_class, first_token
+from .model import without_model
 from .records import Attempt, EnvironmentFingerprint, ExperienceRecord, Reflection, ToolCall
 from .reflector import PRODUCER_PREFIX, UNKNOWN_VALUE, VERIFICATION_SCOPE_WARNING, is_model_authored
 
@@ -407,7 +408,8 @@ def _environment(environment: EnvironmentFingerprint) -> str:
         f"host {_clean(environment.host_name)}; runtime {_clean(environment.runtime_version)}; os "
         f"{_clean(environment.operating_system)}; application version {_clean(environment.application_version)}"
     )
-    for key in sorted(environment.metadata, key=utf16_sort_key):
+    # The run's model is bookkeeping for the benefit estimate (contract 1.9), never shown.
+    for key in sorted(without_model(environment.metadata), key=utf16_sort_key):
         text += f"; {_clean(key)} {_clean(environment.metadata[key])}"
     return text
 

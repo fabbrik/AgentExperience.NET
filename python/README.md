@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.8, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.8 (and so every 1.0 to 1.7 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.9, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.9 (and so every 1.0 to 1.8 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -169,8 +169,8 @@ for lesson in page.lessons:                             # newest first
 ### Measuring benefit: the injection holdout
 
 Off by default. With `holdout=HoldoutOptions(rate=0.1)` (contract 1.8), about one in ten captured runs that have a
-block to inject has it withheld, and both arms are recorded, so the .NET library's benefit estimate
-(`AgentExperienceBenefit.EstimateAsync`) counts this agent's runs alongside .NET's and Go's in the same store:
+block to inject has it withheld, and both arms are recorded, so the benefit estimate (`estimate_benefit`, below, or
+.NET's `AgentExperienceBenefit.EstimateAsync`) counts this agent's runs alongside .NET's and Go's in the same store:
 
 ```python
 from agentexperience.maf import HoldoutOptions
@@ -195,6 +195,59 @@ agent = use_agent_experience(agent, store=store, identity=identity, verify=verif
   reported `NotRecorded` and injection goes on.
 - **Same scope for capture and injection**, as in .NET: a run's outcome is its own finalized record in exactly that
   scope, so a run finalized elsewhere is never matched and stays pending in the estimate.
+
+### Reading the estimate
+
+`estimate_benefit` (contract 1.9) is .NET's `AgentExperienceBenefit.EstimateAsync`: the same estimate, with the same
+numbers, from the same rows, overall, per lesson and per model. It is synchronous, as the stores are:
+
+```python
+from agentexperience import BenefitOptions, estimate_benefit
+
+estimate = estimate_benefit(store, bounds, scope, BenefitOptions(split_by_model=True))
+print(estimate.overall.verdict, estimate.overall.treatment.rate, estimate.overall.holdout.rate)
+for lesson in estimate.lessons:
+    print(lesson.experience_id, lesson.comparison.verdict)
+```
+
+- **What it reads.** The store's `read_holdout_outcomes` (both `InMemoryExperienceStore` and `PostgresExperienceStore`
+  have it), 1,000 rows a page, under `bounds` and in exactly `scope` (the scope the blocks were built in); each page is
+  folded into a `BenefitAccumulator` before the next is read, so memory grows with runs and lessons, not rows.
+  PostgreSQL runs the contract's `sql/query-holdout-outcomes.sql` as written and needs no grants beyond 1.0 and 1.8.
+  `estimate(rows, options)` is the pure form over rows read any other way. Neither writes.
+- **The rules are .NET's** ([README-1.9](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README-1.9.md)):
+  `Verified` is a success and `Failed` a failure; a run with an `Unknown` outcome counts as `unverified`, one with no
+  record yet as `pending`, one recorded in both arms as `mixed_arm`; Wilson intervals per arm and Newcombe's hybrid
+  interval for the difference; `Helps` or `Hurts` only when each arm has `minimum_runs_per_arm` runs and the 95%
+  interval excludes zero, otherwise `NoEvidence`. The cautions of the .NET guide (many lessons mean many comparisons;
+  do not stop the first time it says `Helps`; watch `pending` and `unverified`) apply unchanged.
+- **A sealed record** (`payload_version` 2, written by .NET's crypto-shredding) cannot be read by the port: its run has
+  no outcome and counts as `pending`, exactly as .NET counts a run whose record is sealed under a destroyed key. A
+  sealed lesson names no model either, so in an encrypted store, where .NET opens sealed records, its model reads as
+  `unknown` here and the per-model pairs (`by_model_pair`) can differ from the .NET estimate's.
+- **The same answer as .NET** for the same rows: the same counts and verdicts, and every rate, difference and bound
+  equal within 1e-12.
+- **Edges.** `BenefitOptions(minimum_runs_per_arm=0)` raises `ValueError` before anything is read. A store without
+  `read_holdout_outcomes` gives an empty estimate with `tracked` `False`; a scope outside `bounds` gives an empty one
+  whose `outcome` is `Denied`, never an exception. A store that pages a run's rows apart raises `ValueError` rather
+  than count the run twice.
+- **The run's model.** Capture records the model the agent's chat client reports under the environment metadata key
+  `agentexperience.model`: the agent's default `model` option (Agent Framework sets it from the client), else the chat
+  client's `model` or `model_id` attribute; trimmed, cut to 256 UTF-16 code units, nothing when blank. A key the host's
+  `environment` already sets is kept. It is bookkeeping only: never a precondition, never in the block, never ranked.
+
+| Python (`BenefitEstimate` and its parts) | .NET (`ExperienceBenefitEstimate` and its parts) |
+| --- | --- |
+| `overall`, `lessons`, `by_consuming_model` | `Overall`, `Lessons`, `ByConsumingModel` |
+| `tracked`, `outcome` (`"Found"`, `"Denied"`), `minimum_runs_per_arm` | `Tracked`, `Outcome`, `MinimumRunsPerArm` |
+| `BenefitComparison.treatment`, `.holdout`, `.difference`, `.lower`, `.upper`, `.verdict` | `Treatment`, `Holdout`, `Difference`, `Lower`, `Upper`, `Verdict` |
+| `BenefitComparison.unverified`, `.pending`, `.mixed_arm` | `Unverified`, `Pending`, `MixedArm` |
+| `BenefitArm.runs`, `.successes`, `.rate` | `ExperienceBenefitArm.Runs`, `Successes`, `Rate` |
+| `LessonBenefit.experience_id`, `.comparison`, `.by_model_pair` | `ExperienceLessonBenefit.ExperienceId`, `Comparison`, `ByModelPair` |
+| `ModelBenefit.model`, `.comparison` | `ExperienceModelBenefit.Model`, `Comparison` |
+| `ModelPairBenefit.lesson_model`, `.run_model`, `.comparison` | `ExperienceModelPairBenefit.LessonModel`, `RunModel`, `Comparison` |
+| `BenefitOptions.minimum_runs_per_arm`, `.split_by_model` | `ExperienceBenefitOptions.MinimumRunsPerArm`, `SplitByModel` |
+| `"unknown"` (`agentexperience.benefit.UNKNOWN_MODEL`) | `ExperienceBenefitEstimate.UnknownModel` |
 
 ### Telemetry: the same spans and metrics as .NET
 
@@ -369,13 +422,13 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.8: capture, finalize, store, text and semantic retrieval, the injected block,
-injection recording, the lessons view, the injection holdout and telemetry. These .NET features have no counterpart
+The port covers contract 1.0 to 1.9: capture, finalize, store, text and semantic retrieval, the injected block,
+injection recording, the lessons view, the injection holdout and its benefit estimate, and telemetry. These .NET features have no counterpart
 here, so a mixed .NET and Python deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
-- **Reading the holdout:** the benefit estimate, the benefit policy, measuring another memory provider, exporting
-  lessons, and recording the run's model. The port records its arms; .NET estimates over them.
+- **Acting on the holdout:** the benefit policy (omitting lessons measured harmful), measuring another memory provider,
+  and exporting measured lessons. The port reads the estimate; only .NET acts on it.
 - **Withdrawal notices:** the port keeps no per-session account of what it injected, so it never retracts a record;
   a held-out invocation is always `Withheld`, never a notices-only `Retracted` block.
 - **Sharing:** grants, and so the grant-disclosure choices.

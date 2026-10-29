@@ -480,8 +480,10 @@ func environmentText(environment *EnvironmentFingerprint) string {
 	text := "host " + cleanBlockText(&environment.HostName) + "; runtime " +
 		cleanBlockText(&environment.RuntimeVersion) + "; os " + cleanBlockText(&environment.OperatingSystem) +
 		"; application version " + cleanBlockText(environment.ApplicationVersion)
-	for _, key := range sortedKeys(environment.Metadata) {
-		value := environment.Metadata[key]
+	// The run's model is bookkeeping (ModelMetadataKey): the block never shows it.
+	metadata := withoutModel(environment.Metadata)
+	for _, key := range sortedKeys(metadata) {
+		value := metadata[key]
 		text += "; " + cleanBlockText(&key) + " " + cleanBlockText(&value)
 	}
 	return text
