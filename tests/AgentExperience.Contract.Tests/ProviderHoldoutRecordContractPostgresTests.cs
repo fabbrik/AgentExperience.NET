@@ -115,7 +115,12 @@ public sealed class ProviderHoldoutRecordContractPostgresTests(ContractPostgresD
         }
 
         var after = await InjectionRecordContractPostgresTests.ClockAsync(owner);
-        return new JsonObject { [ProviderHoldoutStatements.Table] = await RowsAsync(owner, clamped, before, after) };
+        var rows = await RowsAsync(owner, clamped, before, after);
+
+        // Each case has a database of its own: release its pooled connections now, or the cases exhaust the server's slots.
+        await application.DisposeAsync();
+        await owner.DisposeAsync();
+        return new JsonObject { [ProviderHoldoutStatements.Table] = rows };
     }
 
     /// <summary>
@@ -238,6 +243,8 @@ public sealed class ProviderHoldoutRecordContractPostgresTests(ContractPostgresD
             CancellationToken.None);
         await RecordAsWrittenAsync(application, step with { RunId = Fixed.Id(0xd6, 0x902) });
         Assert.Equal(2, (await RowsAsync(owner, [], Fixed.T0, Fixed.T0)).Count);
+        await application.DisposeAsync();
+        await owner.DisposeAsync();
     }
 
     /// <summary><c>contract/sql/query-provider-holdout-outcomes.sql</c>'s page as written: each row's run and arm.</summary>

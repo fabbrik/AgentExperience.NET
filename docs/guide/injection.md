@@ -1137,8 +1137,8 @@ the arms.
   options; rate 0 by default). In a mixed fleet sharing one PostgreSQL store, the .NET estimate below counts the
   Python and Go agents' runs with the .NET ones. Apply the contract's `sql/application-role-privileges-1.8.sql` after
   its other privileges files, or run the .NET privileges call last. Since contract 1.9 the ports read the estimate too
-  (next section), and since contract 1.10 they act on it with the same benefit policy; measuring another memory
-  provider stays .NET-only.
+  (next section), since contract 1.10 they act on it with the same benefit policy, and since contract 1.11 they
+  measure another memory provider too ([below](#measuring-another-memory-provider)).
 
 ### Reading the estimate
 
@@ -1346,6 +1346,35 @@ AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
 var mem0 = await AgentExperienceBenefit.EstimateProviderAsync(app.Services, authorization, scope, "mem0");
 Console.WriteLine($"Mem0: {mem0.Overall.Verdict}, {mem0.Overall.Treatment.Rate:P0} with it, {mem0.Overall.Holdout.Rate:P0} without");
 ```
+
+In Python and Go (contract 1.11, [what it adds](../../contract/README-1.11.md)) the same wrapper goes around the
+framework's own context provider, after the one-call setup, and the same estimate reads it:
+
+```python
+from agentexperience import estimate_provider_benefit
+from agentexperience.maf import HoldoutOptions, use_agent_experience, use_measured_memory
+
+agent = use_agent_experience(Agent(client=client, context_providers=[mem0_memory]), store=store, identity=identity)
+use_measured_memory(agent, mem0_memory, "mem0", holdout=HoldoutOptions(rate=0.1))
+
+mem0 = estimate_provider_benefit(store, authorization, scope, "mem0")
+print(mem0.overall.verdict, mem0.overall.treatment.rate, mem0.overall.holdout.rate)
+```
+
+```go
+if err := maf.UseAgentExperience(&config, options); err != nil { /* ... */ }
+_, err := maf.UseMeasuredMemory(&config, mem0Memory, "mem0", maf.MeasuredMemoryOptions{Holdout: &maf.HoldoutOptions{Rate: 0.1}})
+
+mem0, err := ae.EstimateProviderBenefit(ctx, store, bounds, scope, "mem0", ae.BenefitOptions{})
+fmt.Println(mem0.Overall.Verdict, mem0.Overall.Treatment.Rate, mem0.Overall.Holdout.Rate)
+```
+
+The ports assign with the same function and salt, withhold the same way, and write and read the same rows, so in a
+mixed fleet sharing one PostgreSQL store each language's estimate counts every language's runs: a contract test runs a
+.NET, a Python and a Go agent under one key and checks that the three estimates agree. On PostgreSQL apply the
+contract's `sql/application-role-privileges-1.11.sql` after its other privileges files, or run the .NET privileges call
+last. Each port's README maps the names; Go has no `authorize` callback, since a run its capture captures always has
+an identity.
 
 Say a support agent uses Mem0 to remember customers. At a rate of 0.1, one captured run in ten gets no Mem0 context;
 Mem0 is still called on that run and still stores what the run said, so it keeps learning. Once each arm has enough

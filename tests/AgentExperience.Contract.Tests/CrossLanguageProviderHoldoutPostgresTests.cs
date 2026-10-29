@@ -132,6 +132,8 @@ public sealed class CrossLanguageProviderHoldoutPostgresTests(ContractPostgresDa
             await File.WriteAllTextAsync(RowsFile, text);
         }
 
+        await application.DisposeAsync();
+        await owner.DisposeAsync();
         Assert.True(File.Exists(RowsFile), $"{RowsFile} is missing; run with {ContractFiles.UpdateVariable}=1.");
         Assert.True(
             text == await File.ReadAllTextAsync(RowsFile),
@@ -213,6 +215,7 @@ public sealed class CrossLanguageProviderHoldoutPostgresTests(ContractPostgresDa
         Assert.Equal(new ExperienceBenefitArm(expected["Holdout"].Runs, expected["Holdout"].Successes), overall.Holdout);
         Assert.Equal(runs, overall.Treatment.Runs + overall.Holdout.Runs + overall.Unverified);
 
+        await application.DisposeAsync();
         var dotnet = ProviderBenefitEstimateContract.EstimateJson(estimate);
         dotnet["tracked"] = estimate.Tracked;
         dotnet["outcome"] = estimate.Outcome.ToString();
