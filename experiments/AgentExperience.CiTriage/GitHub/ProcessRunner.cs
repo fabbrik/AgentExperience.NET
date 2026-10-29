@@ -17,6 +17,9 @@ internal static class ProcessRunner
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        // gh and git need neither secret: keep the model key and the database connection out of their environment.
+        start.Environment.Remove("OPENROUTER_API_KEY");
+        start.Environment.Remove("AGENTEXPERIENCE_CITRIAGE_PG");
         if (workingDirectory is not null)
         {
             start.WorkingDirectory = workingDirectory;

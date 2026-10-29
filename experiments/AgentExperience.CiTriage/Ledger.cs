@@ -22,8 +22,18 @@ public sealed record LedgerRow(long RunId, DateTimeOffset Time, string Branch, s
 
     public bool Skipped => Predicted.StartsWith("skipped:", StringComparison.Ordinal);
 
-    /// <summary>A failure a later pass should not process again: anything but one still waiting for its fix or its log.</summary>
-    public bool Final => Label is not ("pending" or "unavailable");
+    /// <summary>
+    /// A failure a later pass should not process again. Retryable (not final): one still waiting for its fix or its commit,
+    /// one a stop or a fetch error kept from triage, and one whose triage hit a provider error. Ambiguous, no-log,
+    /// before-resume and finalized rows are final.
+    /// </summary>
+    public bool Final =>
+        Label is not ("pending" or "unavailable")
+        && Predicted is not ("skipped: stopped" or "skipped: fetch-error")
+        && !Note.StartsWith("error:", StringComparison.Ordinal);
+
+    /// <summary>A triage whose run an earlier pass finalized: its fix time bounds what a resumed pass may replay.</summary>
+    public bool Finalized => !Skipped && Note.Contains("finalized ", StringComparison.Ordinal);
 
     public string ToTsv() => string.Join('\t',
         RunId.ToString(CultureInfo.InvariantCulture),
@@ -71,7 +81,21 @@ public static class Ledger
             return [];
         }
 
-        return [.. File.ReadAllLines(path).Skip(1).Where(line => line.Length > 0).Select(LedgerRow.Parse)];
+        var lines = File.ReadAllLines(path).Skip(1).Where(line => line.Length > 0).ToList();
+        var rows = new List<LedgerRow>();
+        for (var i = 0; i < lines.Count; i++)
+        {
+            try
+            {
+                rows.Add(LedgerRow.Parse(lines[i]));
+            }
+            catch (FormatException) when (i == lines.Count - 1)
+            {
+                // A trailing line cut short by an interrupted write is ignored; a malformed line elsewhere is an error.
+            }
+        }
+
+        return rows;
     }
 
     public static void Write(string path, IEnumerable<LedgerRow> rows)

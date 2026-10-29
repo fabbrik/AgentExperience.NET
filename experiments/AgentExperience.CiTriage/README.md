@@ -61,14 +61,26 @@ export OPENROUTER_API_KEY=...                  # never printed or written anywhe
 export OPENROUTER_MODEL=openai/gpt-oss-120b    # the default
 dotnet run --project experiments/AgentExperience.CiTriage
 
-# Live, keeping the lessons in PostgreSQL between passes (migrates the schema first):
-dotnet run --project experiments/AgentExperience.CiTriage -- --postgres "Host=...;Username=...;Password=..."
-# or set AGENTEXPERIENCE_CITRIAGE_PG
+# Live, keeping the lessons in PostgreSQL between passes (migrates the schema first). Pass the connection string
+# through the environment, not on the command line, where a password lands in the shell history:
+export AGENTEXPERIENCE_CITRIAGE_PG="Host=...;Username=...;Password=..."
+dotnet run --project experiments/AgentExperience.CiTriage
+# --postgres <conn> also works, and wins over the variable. --scripted ignores both and always stays in memory.
 ```
 
 - **In memory** (the default), every pass is a full replay from the first failure, and the ledger is rewritten.
-- **With `--postgres`**, the lessons persist. The ledger is appended to, and failures it already records as processed
-  are skipped (all but `pending` and `unavailable`, which are retried).
+- **With PostgreSQL**, the lessons persist. Use a throwaway database owned by one role. The tool migrates the
+  schema and then runs on the same connection, so that role is both the schema owner and the application role. This is
+  not the two-role production deployment.
+  - The ledger is appended to.
+  - Failures it records as settled are skipped.
+  - These are retried: `pending` and `unavailable` failures, `skipped: stopped`, `skipped: fetch-error`, and triages that
+    ended in a provider error.
+  - **No hindsight across passes.** Retrieval cannot hide a lesson finalized later in simulated time. So a resumed pass
+    skips, as `skipped: before-resume`, every failure earlier than the latest fix an earlier pass finalized.
+- **The ledger and report are written even when a pass throws**, with whatever ran.
+- **A provider error is never finalized.** The library counts that run as Pending, and the ledger gives it no arm and
+  no score, so infrastructure noise never counts against an arm.
 
 Outputs go to `results/`:
 
@@ -108,6 +120,11 @@ triageable), one pass makes a few calls per failure and should stay well under t
   (`InMemoryExperienceCaptureService`), so it cannot be finalized after the process ends. Story 26.2 is durable capture.
 - **The ground truth is the fix that was actually made.** An answer that would also have fixed the failure, in another
   file, counts as wrong.
+- **Some flaky failures never appear.** Only a run's final attempt is listed. A failure that a re-run of the same run
+  turned green is a success, so the replay never sees it.
+- **A green commit on a different lineage can inflate the fix files.** An example is a branch rebased, or merged with
+  main, before it went green. The diff then holds unrelated files: below the 10-file cap they count as fix files, and
+  above it the failure is `ambiguous`.
 - **One pass, one look.** Running pass after pass until the verdict says `Helps` would overstate it.
 
 Tests: `dotnet test experiments/AgentExperience.CiTriage.Tests`. They run offline and use no model.

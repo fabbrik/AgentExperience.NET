@@ -39,6 +39,9 @@ public sealed record FinalizeEvent(DateTimeOffset At, CiFailure Failure) : Repla
 /// <param name="Correct">Whether it was right.</param>
 public sealed record TriageRecord(CiFailure Failure, Guid? RunId, IReadOnlyList<Guid> NamedExperienceIds, string Arm, TriagePrediction? Prediction, bool Correct)
 {
+    /// <summary>The model call failed (a provider error): the run is never finalized, so the library counts it Pending.</summary>
+    public bool Errored { get; init; }
+
     /// <summary>The finalized record's id, once its finalize event ran.</summary>
     public Guid? ExperienceId { get; set; }
 
@@ -69,6 +72,9 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
     public const string CheckKind = "HostCheck";
     public const string Producer = "ci-triage/green-run";
     public const int MaxErrorsInARow = 3;
+    public const string BeforeResume = "before-resume";
+    public const string FetchError = "fetch-error";
+    public const string Stopped = "stopped";
 
     /// <summary>The events for the triageable failures, in replay order.</summary>
     public static IReadOnlyList<ReplayEvent> Schedule(IEnumerable<CiFailure> failures)
@@ -86,15 +92,39 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
         return [.. events.OrderBy(e => e.At).ThenBy(e => e.Order).ThenBy(e => e.Failure.Run.Id)];
     }
 
-    public async Task<ReplayResult> RunAsync(IReadOnlyList<CiFailure> failures, IReadOnlySet<long> alreadyProcessed, CancellationToken cancellationToken)
+    /// <param name="failures">Every labelled failure.</param>
+    /// <param name="alreadyProcessed">Runs an earlier pass already handled.</param>
+    /// <param name="resumeCutoff">
+    /// In a resumed pass, the latest time an earlier pass finalized a lesson. A failure before it is skipped
+    /// (<c>before-resume</c>): the store already holds lessons from after it, and retrieval cannot hide them.
+    /// </param>
+    /// <param name="rows">Filled as the pass runs, so whatever ran can be written even if the pass throws.</param>
+    /// <param name="cancellationToken">Stops the pass.</param>
+    public async Task<ReplayResult> RunAsync(
+        IReadOnlyList<CiFailure> failures,
+        IReadOnlySet<long> alreadyProcessed,
+        DateTimeOffset? resumeCutoff,
+        Dictionary<long, LedgerRow> rows,
+        CancellationToken cancellationToken)
     {
-        var todo = failures.Where(failure => !alreadyProcessed.Contains(failure.Run.Id)).ToList();
-        var earlier = Accounted((await EstimateAsync(0, cancellationToken).ConfigureAwait(false)).Overall);
-        var rows = new Dictionary<long, LedgerRow>();
-        foreach (var failure in todo.Where(failure => !failure.Label.Triageable))
+        var todo = new List<CiFailure>();
+        foreach (var failure in failures.Where(failure => !alreadyProcessed.Contains(failure.Run.Id)))
         {
-            rows[failure.Run.Id] = Skipped(failure, failure.Label.Name);
+            if (!failure.Label.Triageable)
+            {
+                rows[failure.Run.Id] = Skipped(failure, failure.Label.Name);
+            }
+            else if (resumeCutoff is { } cutoff && failure.Run.CompletedAt < cutoff)
+            {
+                rows[failure.Run.Id] = Skipped(failure, BeforeResume);
+            }
+            else
+            {
+                todo.Add(failure);
+            }
         }
+
+        var earlier = Accounted((await EstimateAsync(0, cancellationToken).ConfigureAwait(false)).Overall);
 
         var triages = new Dictionary<long, TriageRecord>();
         string? stopped = null;
@@ -107,7 +137,7 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
             {
                 if (stopped is not null)
                 {
-                    rows[id] = Skipped(replayEvent.Failure, "stopped");
+                    rows[id] = Skipped(replayEvent.Failure, Stopped);
                     continue;
                 }
 
@@ -118,45 +148,61 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
                     if (record is not null)
                     {
                         triages[id] = record;
-                    }
 
-                    // A provider that keeps failing (a bad key, no credit) would otherwise fail every remaining triage.
-                    errorsInARow = row.Note.StartsWith("error:", StringComparison.Ordinal) ? errorsInARow + 1 : 0;
-                    if (errorsInARow == MaxErrorsInARow)
-                    {
-                        stopped = $"{MaxErrorsInARow} triages in a row ended in a provider error.";
+                        // A provider that keeps failing (a bad key, no credit) would otherwise fail every remaining
+                        // triage. Only triages that called the model count; a skipped failure leaves the count alone.
+                        errorsInARow = record.Errored ? errorsInARow + 1 : 0;
+                        if (errorsInARow == MaxErrorsInARow)
+                        {
+                            stopped = $"{MaxErrorsInARow} triages in a row ended in a provider error.";
+                        }
                     }
                 }
                 catch (BudgetExhaustedException ex)
                 {
                     stopped = ex.Message;
-                    rows[id] = Skipped(replayEvent.Failure, "stopped");
+                    rows[id] = Skipped(replayEvent.Failure, Stopped);
                 }
             }
-            else if (triages.TryGetValue(id, out var record) && record.RunId is { } runId)
+            else if (triages.TryGetValue(id, out var record) && record.RunId is { } runId && !record.Errored)
             {
-                var result = await FinalizeAsync(runId, record.Correct, replayEvent.Failure, cancellationToken).ConfigureAwait(false);
-                record.Finalized = result.Outcome;
-                record.ExperienceId = result.ExperienceId;
-                rows[id] = rows[id] with { Note = Join(rows[id].Note, "finalized " + result.Outcome.ToString()) };
+                try
+                {
+                    var result = await FinalizeAsync(runId, record.Correct, replayEvent.Failure, cancellationToken).ConfigureAwait(false);
+                    record.Finalized = result.Outcome;
+                    record.ExperienceId = result.ExperienceId;
+                    rows[id] = rows[id] with { Note = Join(rows[id].Note, "finalized " + result.Outcome.ToString()) };
+                }
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+                {
+                    rows[id] = rows[id] with { Note = Join(rows[id].Note, "finalize error: " + ex.GetType().Name) };
+                }
             }
         }
 
-        var assigned = rows.Values.Count(row => row.Arm is "treatment" or "holdout");
+        // Every captured run the holdout assigned, errored ones included (the library counts those Pending).
+        var assigned = triages.Values.Count(record => record.RunId is not null && record.Arm is "treatment" or "holdout");
         var estimate = await EstimateAsync(earlier + assigned, cancellationToken).ConfigureAwait(false);
         return new ReplayResult([.. rows.Values], [.. triages.Values], estimate, stopped, metered.ModelCalls, metered.InputTokens, metered.OutputTokens, metered.Cost);
     }
 
     private async Task<(LedgerRow Row, TriageRecord? Record)> TriageAsync(CiFailure failure, CancellationToken cancellationToken)
     {
-        var jobs = (await gitHub.ListJobsAsync(failure.Run.Id, cancellationToken).ConfigureAwait(false)).Where(job => job.Failed).ToList();
         var logs = new List<JobLog>();
-        foreach (var job in jobs)
+        try
         {
-            if (await gitHub.GetJobLogAsync(job.Id, cancellationToken).ConfigureAwait(false) is { } text)
+            var jobs = (await gitHub.ListJobsAsync(failure.Run.Id, cancellationToken).ConfigureAwait(false)).Where(job => job.Failed).ToList();
+            foreach (var job in jobs)
             {
-                logs.Add(new JobLog(job.Name, text));
+                if (await gitHub.GetJobLogAsync(job.Id, cancellationToken).ConfigureAwait(false) is { } text)
+                {
+                    logs.Add(new JobLog(job.Name, text));
+                }
             }
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return (Skipped(failure, FetchError), null);
         }
 
         if (logs.Count == 0)
@@ -213,17 +259,19 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
         }
 
         var correct = Scoring.IsCorrect(failure.Label, prediction);
+        var errored = note.StartsWith("error:", StringComparison.Ordinal);
+        // An errored or uncaptured run is never finalized, so the ledger gives it no arm and no score, as the library does.
         var row = new LedgerRow(
             failure.Run.Id,
             failure.Run.CompletedAt,
             failure.Run.Branch,
             failure.Label.Name,
-            arm,
+            errored || runId is null ? "-" : arm,
             prediction?.Describe() ?? "unparsed",
-            correct ? "true" : "false",
+            errored ? "-" : correct ? "true" : "false",
             metered.Cost - costBefore,
             note);
-        return (row, new TriageRecord(failure, runId, named, arm, prediction, correct));
+        return (row, new TriageRecord(failure, runId, named, arm, prediction, correct) { Errored = errored });
     }
 
     /// <summary>
@@ -281,7 +329,7 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
 
     private static int Accounted(ExperienceBenefitComparison o) => o.Treatment.Runs + o.Holdout.Runs + o.Pending + o.Unverified + o.MixedArm;
 
-    private static LedgerRow Skipped(CiFailure failure, string reason) =>
+    internal static LedgerRow Skipped(CiFailure failure, string reason) =>
         new(failure.Run.Id, failure.Run.CompletedAt, failure.Run.Branch, failure.Label.Name, "-", "skipped: " + reason, "-", 0m, string.Empty);
 
     private static string Join(string left, string right) => left.Length == 0 ? right : left + "; " + right;

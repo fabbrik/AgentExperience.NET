@@ -140,8 +140,130 @@ public sealed class ReplayTests
         Assert.Contains(result.Rows, row => row.Predicted == "skipped: stopped");
     }
 
+    [Fact]
+    public async Task An_errored_triage_is_not_finalized_has_no_arm_and_stays_pending_in_the_library()
+    {
+        var ci = new FakeCi();
+        var log = ScriptedScenario.CompileLog("Area0");
+        string[] changed = ["src/AgentExperience.Core/Area0/Area0Options.cs"];
+        ci.AddFailure("feat/a", "a1", T0.AddHours(1), changed, log, "a2", T0.AddHours(2), changed);
+        var b = ci.AddFailure("feat/b", "b1", T0.AddHours(3), changed, log, "b2", T0.AddHours(4), changed);
+
+        var (_, result) = await RunAsync(ci, new ThrowOnBranchModel("feat/b"));
+
+        var row = result.Rows.Single(r => r.RunId == b.Id);
+        Assert.StartsWith("error: InvalidOperationException", row.Note, StringComparison.Ordinal);
+        Assert.Equal("-", row.Arm);
+        Assert.Equal("-", row.Correct);
+        Assert.DoesNotContain("finalized", row.Note, StringComparison.Ordinal);
+        var triage = result.Triages.Single(t => t.Failure.Run.Id == b.Id);
+        Assert.True(triage.Errored);
+        Assert.Null(triage.Finalized);
+        Assert.NotEmpty(triage.NamedExperienceIds);          // it had a lesson, so the holdout assigned it
+        Assert.Equal(1, result.Estimate.Overall.Pending);    // never finalized: Pending, in neither arm's rates
+        Assert.Equal(0, result.Estimate.Overall.Treatment.Runs + result.Estimate.Overall.Holdout.Runs);
+        Assert.False(row.Final);
+    }
+
+    [Fact]
+    public async Task A_skipped_failure_does_not_reset_the_count_of_provider_errors()
+    {
+        var ci = new FakeCi();
+        ci.AddFailure("feat/1", "e1", T0.AddHours(1), ["a.cs"], "error x", "g1", T0.AddHours(20), ["a.cs"]);
+        ci.AddFailure("feat/2", "n2", T0.AddHours(2), ["a.cs"], null, "g2", T0.AddHours(20), ["a.cs"]);
+        ci.AddFailure("feat/3", "e3", T0.AddHours(3), ["a.cs"], "error x", "g3", T0.AddHours(20), ["a.cs"]);
+        ci.AddFailure("feat/4", "e4", T0.AddHours(4), ["a.cs"], "error x", "g4", T0.AddHours(20), ["a.cs"]);
+        var last = ci.AddFailure("feat/5", "e5", T0.AddHours(5), ["a.cs"], "error x", "g5", T0.AddHours(20), ["a.cs"]);
+
+        var (_, result) = await RunAsync(ci, new ThrowingModel());
+
+        Assert.NotNull(result.StoppedReason);
+        Assert.Equal("skipped: stopped", result.Rows.Single(r => r.RunId == last.Id).Predicted);
+    }
+
+    [Fact]
+    public async Task A_resumed_pass_skips_failures_before_the_latest_fix_an_earlier_pass_finalized()
+    {
+        var ci = new FakeCi();
+        var log = ScriptedScenario.CompileLog("Area0");
+        string[] changed = ["src/AgentExperience.Core/Area0/Area0Options.cs"];
+        var a = ci.AddFailure("feat/a", "a1", T0.AddHours(1), changed, log, "a2", T0.AddHours(5), changed);
+        var b = ci.AddFailure("feat/b", "b1", T0.AddHours(3), changed, log, "b2", T0.AddHours(6), changed);
+        var c = ci.AddFailure("feat/c", "c1", T0.AddHours(7), changed, log, "c2", T0.AddHours(8), changed);
+        LedgerRow[] earlier = [new(a.Id, a.CompletedAt, "feat/a", "code", "none", "code:x", "true", 0m, "finalized Validated")];
+
+        var (failures, result) = await RunAsync(ci, ci, null, null, earlier);
+
+        Assert.Equal(T0.AddHours(5), TriagePass.ResumeCutoff(failures, earlier));
+        Assert.DoesNotContain(result.Rows, r => r.RunId == a.Id);
+        var skipped = result.Rows.Single(r => r.RunId == b.Id);
+        Assert.Equal("skipped: before-resume", skipped.Predicted);
+        Assert.True(skipped.Final);
+        Assert.Contains(result.Triages, t => t.Failure.Run.Id == c.Id);
+    }
+
+    [Fact]
+    public async Task The_tools_only_ever_read_the_failing_commit()
+    {
+        var ci = ScriptedScenario.Create();
+        var recorder = new RecordingRepository(ci);
+
+        var (failures, result) = await RunAsync(ci, recorder, null, null, []);
+
+        Assert.NotEmpty(recorder.ToolShas);
+        var failing = failures.Select(f => f.Run.HeadSha).ToHashSet();
+        Assert.All(recorder.ToolShas, sha => Assert.Contains(sha, failing));
+        Assert.Contains(recorder.ToolShas, sha => sha.StartsWith("fail-", StringComparison.Ordinal));
+        Assert.True(result.Triages.Count > 0);
+    }
+
     private static Task<(IReadOnlyList<CiFailure>, ReplayResult)> RunAsync(FakeCi ci, IChatClient? model = null, Budget? budget = null) =>
-        TriagePass.RunAsync(ci, ci, model ?? new ScriptedTriageModel(), budget ?? Budget.Default, null, new HashSet<long>(), TriagePass.SeededIds(7), CancellationToken.None);
+        RunAsync(ci, ci, model, budget, []);
+
+    private static Task<(IReadOnlyList<CiFailure>, ReplayResult)> RunAsync(FakeCi ci, IRepository repository, IChatClient? model, Budget? budget, IReadOnlyList<LedgerRow> earlier) =>
+        TriagePass.RunAsync(ci, repository, model ?? new ScriptedTriageModel(), budget ?? Budget.Default, null, earlier, TriagePass.SeededIds(7), [], CancellationToken.None);
+
+    private sealed class RecordingRepository(IRepository inner) : IRepository
+    {
+        public List<string> ToolShas { get; } = [];
+
+        public Task<IReadOnlyList<string>?> ChangedFilesAsync(string sha, CancellationToken cancellationToken)
+        {
+            ToolShas.Add(sha);
+            return inner.ChangedFilesAsync(sha, cancellationToken);
+        }
+
+        public Task<IReadOnlyList<string>?> DiffNamesAsync(string fromSha, string toSha, CancellationToken cancellationToken) =>
+            inner.DiffNamesAsync(fromSha, toSha, cancellationToken);
+
+        public Task<string?> ShowFileAsync(string sha, string path, CancellationToken cancellationToken)
+        {
+            ToolShas.Add(sha);
+            return inner.ShowFileAsync(sha, path, cancellationToken);
+        }
+    }
+
+    private sealed class ThrowOnBranchModel(string branch) : IChatClient
+    {
+        private readonly ScriptedTriageModel _scripted = new();
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            var list = messages.ToList();
+            return list.Any(m => m.Text.Contains("branch " + branch + ".", StringComparison.Ordinal))
+                ? throw new InvalidOperationException("HTTP 502")
+                : _scripted.GetResponseAsync(list, options, cancellationToken);
+        }
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
+    }
 
     private sealed class ThrowingModel : IChatClient
     {
