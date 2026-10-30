@@ -13,6 +13,7 @@ them.
 from __future__ import annotations
 
 import datetime as _dt
+import functools
 import json
 import re
 import uuid
@@ -22,6 +23,7 @@ from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from ._text import is_null_or_whitespace
+from .confidence import ConfidenceUpdate
 from .embedding import (
     EmbeddingWrite,
     EmbeddingWriteResult,
@@ -52,6 +54,23 @@ from .inmemory import (
     check_lessons_read,
     injection_ids,
     permits,
+)
+from .lifecycle import (
+    AuthorizationContext,
+    HistoryQuery,
+    HistoryResult,
+    LifecycleCommitResult,
+    LifecycleEvent,
+    RecordReadResult,
+    StoredLifecycleEvent,
+    SupersessionCheckResult,
+    as_replay_of,
+    assessment_spent_error,
+    is_same_evidence,
+    validate_get,
+    validate_history_query,
+    validate_lifecycle_event,
+    validate_supersession_check,
 )
 from .model import model_of_metadata
 from .records import COLUMN_NAMES, PAYLOAD_VERSION, ExperienceRecord, Scope, from_columns, to_payload
@@ -173,6 +192,15 @@ RECORD_HOLDOUT_SQL = "record-holdout-assignment.sql"
 QUERY_HOLDOUT_OUTCOMES_SQL = "query-holdout-outcomes.sql"
 RECORD_PROVIDER_HOLDOUT_SQL = "record-provider-holdout-assignment.sql"
 QUERY_PROVIDER_HOLDOUT_OUTCOMES_SQL = "query-provider-holdout-outcomes.sql"
+LIFECYCLE_SQL = "lifecycle.sql"
+
+_UNIQUE_VIOLATION = "23505"
+_SERIALIZATION_FAILURES = frozenset({"40001", "40P01"})  # serialization_failure, deadlock_detected
+_EVENT_PRIMARY_KEY = "lifecycle_events_pkey"
+_EVENT_REVISION_INDEX = "ix_lifecycle_events_record_revision"
+_EVIDENCE_PRIMARY_KEY = "confidence_evidence_pkey"
+_EVIDENCE_INDEPENDENCE_INDEX = "ux_confidence_evidence_independence"
+_EVIDENCE_ASSESSMENT_INDEX = "ux_confidence_evidence_assessment"
 
 _INJECTIONS_UNREADABLE = frozenset({"42P01", "42501"})  # undefined_table, insufficient_privilege
 
@@ -213,10 +241,17 @@ _SELECT_RECORD = (
 class PostgresExperienceStore:
     """
     Records in PostgreSQL, through psycopg 3. ``connect`` opens a connection as the application role; each
-    operation uses one connection and one transaction.
+    operation uses one connection and one transaction. ``clock`` is the store's own clock, which a lifecycle commit
+    stamps on the event and the record (contract 1.16).
+
+    It moves a record through its lifecycle as .NET's PostgreSQL store does
+    (:class:`~agentexperience.lifecycle.LifecycleStore`), running ``sql/lifecycle.sql`` as written: every write is a
+    revision compare-and-set in the database, so writers in any language racing at one revision commit exactly once.
     """
 
-    def __init__(self, connect: str | Callable[[], psycopg.Connection[Any]]) -> None:
+    def __init__(
+        self, connect: str | Callable[[], psycopg.Connection[Any]], *, clock: Callable[[], Instant] = Instant.now
+    ) -> None:
         import psycopg
 
         if isinstance(connect, str):
@@ -248,6 +283,10 @@ class PostgresExperienceStore:
         self._lessons_statements = {
             key: to_driver_placeholders(text) for key, text in contract_statements(LIST_LESSONS_SQL).items()
         }
+        self._lifecycle = {
+            key: to_driver_placeholders(text) for key, text in contract_statements(LIFECYCLE_SQL).items()
+        }
+        self._clock = clock
 
     @contextmanager
     def _transaction(self, bounds: AuthorizationBounds) -> Iterator[psycopg.Cursor[Any]]:
@@ -729,6 +768,120 @@ class PostgresExperienceStore:
             for row in rows
         ]
 
+    # ---- Contract 1.16: the lifecycle (sql/lifecycle.sql) ------------------------------------------------------------
+
+    def read_record(
+        self, authorization: AuthorizationContext, scope: Scope, experience_id: uuid.UUID
+    ) -> RecordReadResult:
+        """
+        One record in exactly ``scope``, as the lifecycle reads it (``read-record``): validated, then authorized, then
+        in one transaction that declared the bounds. A tombstone is ``Deleted``; a sealed record (``payload_version``
+        2) is ``NotFound``, since a port cannot read it.
+        """
+        errors = validate_get(scope, experience_id)
+        if errors:
+            return RecordReadResult("Invalid", None, errors)
+        if not authorization.permits(scope):
+            return RecordReadResult("Denied", None)
+        with self._transaction(authorization.bounds) as cursor:
+            cursor.execute(self._lifecycle["read-record"], {"experience_id": experience_id, **_scope_parameters(scope)})
+            row = cursor.fetchone()
+        if row is None:
+            return RecordReadResult("NotFound", None)
+        if row[22] is not None:
+            return RecordReadResult("Deleted", None)
+        if row[16] != PAYLOAD_VERSION:
+            return RecordReadResult("NotFound", None)
+        columns = dict(zip(COLUMN_NAMES, row[: len(COLUMN_NAMES)], strict=True))
+        return RecordReadResult("Found", from_columns(columns, columns["payload"]))
+
+    def get_history(self, authorization: AuthorizationContext, query: HistoryQuery) -> HistoryResult:
+        """
+        One page of a record's history (``read-history``): its events after the cursor, oldest first, with the
+        record's revision and the next cursor. A tombstone is ``Deleted``; a sealed record ``NotFound``.
+        """
+        from psycopg.types.numeric import Int4, Int8
+
+        errors = validate_history_query(query)
+        if errors:
+            return HistoryResult("Invalid", 0, (), errors)
+        if not authorization.permits(query.scope):
+            return HistoryResult("Denied", 0, ())
+        cursor_value = query.start_after_revision
+        with self._transaction(authorization.bounds) as cursor:
+            # "No cursor" is a NULL bound as bigint: an untyped NULL leaves "@start_after_revision IS NULL" ambiguous.
+            cursor.adapters.register_dumper(_NullBigint, _null_bigint_dumper())
+            cursor.execute(
+                self._lifecycle["read-history"],
+                {
+                    "experience_id": query.experience_id,
+                    **_scope_parameters(query.scope),
+                    "start_after_revision": _NULL_BIGINT if cursor_value is None else Int8(cursor_value),
+                    "limit": Int4(query.limit),
+                },
+            )
+            rows = cursor.fetchall()
+        if not rows:
+            return HistoryResult("NotFound", 0, ())
+        first = rows[0]
+        if first[35] is not None:
+            return HistoryResult("Deleted", 0, ())
+        if first[36] != PAYLOAD_VERSION:
+            return HistoryResult("NotFound", 0, ())
+        events = tuple(_decode_event(row)[0] for row in rows if row[0] is not None)
+        return HistoryResult("Found", int(first[34]), events, (), events[-1].applied_revision if events else None)
+
+    def check_supersession(
+        self,
+        authorization: AuthorizationContext,
+        scope: Scope,
+        experience_id: uuid.UUID,
+        replacement_experience_id: uuid.UUID,
+    ) -> SupersessionCheckResult:
+        """Whether the replacement may replace the record (``check-supersession``), in one transaction."""
+        errors = validate_supersession_check(scope, experience_id, replacement_experience_id)
+        if errors:
+            return SupersessionCheckResult("Invalid", None, errors)
+        if not authorization.permits(scope):
+            return SupersessionCheckResult("Denied", None)
+        with self._transaction(authorization.bounds) as cursor:
+            cursor.execute(
+                self._lifecycle["check-supersession"],
+                {
+                    "experience_id": experience_id,
+                    "replacement_id": replacement_experience_id,
+                    **_scope_parameters(scope),
+                },
+            )
+            row = cursor.fetchone()
+        if row is None or row[0] is None:
+            return SupersessionCheckResult("RecordNotFound", None)
+        if row[1] is None:
+            return SupersessionCheckResult("ReplacementNotFound", None)
+        return SupersessionCheckResult("Cycle" if row[2] else "Allowed", row[1])
+
+    def commit_lifecycle_event(
+        self, authorization: AuthorizationContext, scope: Scope, event: LifecycleEvent
+    ) -> LifecycleCommitResult:
+        """
+        Commits one lifecycle event as ``sql/lifecycle.sql``'s header orders it: validated, then authorized, then one
+        transaction at READ COMMITTED that declares the bounds, refuses a sealed record, inserts the evidence under a
+        savepoint and the event, gates a supersession, and moves the projection by compare-and-set. A unique violation
+        is recognised by its constraint's name; a serialization failure or deadlock on the projection is a stale
+        revision. Any other failure raises the driver's error, with nothing written.
+        """
+        errors = validate_lifecycle_event(scope, event, authorization)
+        if errors:
+            return LifecycleCommitResult("Invalid", 0, None, errors)
+        if not authorization.permits(scope):
+            return LifecycleCommitResult("Denied", 0, None)
+        recorded_at = self._clock().truncate_to_microseconds()
+        with self._connect() as connection:
+            # Explicit transactions: the isolation level is pinned here, never inherited from the connection.
+            connection.autocommit = True
+            with connection.cursor() as cursor:
+                return _Commit(self._lifecycle, self._declare, cursor, authorization, scope, event, recorded_at).run()
+
 
 def _uuid(value: Any) -> uuid.UUID:
     return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
@@ -788,3 +941,463 @@ def _search_parameters(parameters: SearchParameters) -> dict[str, Any]:
     values["limit"] = Int4(values["limit"])
     values["minimum_matched_terms"] = Int4(values["minimum_matched_terms"])
     return values
+
+
+class _NullBigint:
+    """A NULL bound with the type ``bigint``."""
+
+
+_NULL_BIGINT = _NullBigint()
+
+
+@functools.cache
+def _null_bigint_dumper() -> type[Any]:
+    """The dumper that binds :data:`_NULL_BIGINT`, built on first use (psycopg is the ``postgres`` extra's)."""
+    from psycopg.adapt import Dumper
+    from psycopg.postgres import types
+
+    class NullBigintDumper(Dumper):
+        oid = types["int8"].oid
+
+        def dump(self, obj: Any) -> None:
+            return None
+
+    return NullBigintDumper
+
+
+def _scope_parameters(scope: Scope) -> dict[str, Any]:
+    return {
+        "tenant_id": scope.tenant_id,
+        "application_id": scope.application_id,
+        "project_id": scope.project_id,
+        "team_id": scope.team_id,
+        "agent_id": scope.agent_id,
+        "user_id": scope.user_id,
+    }
+
+
+def _instant(value: Any) -> Instant:
+    return Instant.from_datetime(value)
+
+
+def _decode_update(row: Sequence[Any]) -> ConfidenceUpdate | None:
+    """The confidence payload of an event row (columns 18 to 33), or ``None`` when it carried none."""
+    if row[18] is None:
+        return None
+    return ConfidenceUpdate(
+        evidence_id=_uuid(row[18]),
+        kind=row[19],
+        source=row[20],
+        run_id=_uuid(row[21]),
+        verification_round_id=None if row[22] is None else _uuid(row[22]),
+        reviewer_identity=row[23],
+        rule_version=row[24],
+        prior_reuse_confidence=float(row[26]),
+        new_reuse_confidence=float(row[27]),
+        prior_supporting_validations=int(row[28]),
+        new_supporting_validations=int(row[29]),
+        prior_contradictions=int(row[30]),
+        new_contradictions=int(row[31]),
+        detail=row[25],
+        assessment_id=None if row[32] is None else _uuid(row[32]),
+        admission=row[33],
+    )
+
+
+def _decode_event(row: Sequence[Any]) -> tuple[StoredLifecycleEvent, Scope]:
+    """An event row (the 34 columns of ``select-event``) and the scope it was committed in."""
+    event = LifecycleEvent(
+        event_id=_uuid(row[0]),
+        experience_record_id=_uuid(row[1]),
+        prior_status=row[8],
+        current_status=row[9],
+        reason=row[10],
+        producer=row[11],
+        occurred_at=_instant(row[12]),
+        expected_revision=int(row[14]),
+        replacement_experience_id=None if row[16] is None else _uuid(row[16]),
+        confidence=_decode_update(row),
+    )
+    scope = Scope(row[2], row[3], row[4], row[5], row[6], row[7])
+    return StoredLifecycleEvent(event, _instant(row[13]), int(row[15]), row[17]), scope
+
+
+def _constraint(error: Exception) -> str | None:
+    """The constraint a unique violation names, or ``None`` for any other error."""
+    if getattr(error, "sqlstate", None) != _UNIQUE_VIOLATION:
+        return None
+    diag = getattr(error, "diag", None)
+    return None if diag is None else diag.constraint_name
+
+
+class _Commit:
+    """One lifecycle commit, statement by statement as ``sql/lifecycle.sql``'s header orders it."""
+
+    def __init__(
+        self,
+        statements: dict[str, str],
+        declare: str,
+        cursor: psycopg.Cursor[Any],
+        authorization: AuthorizationContext,
+        scope: Scope,
+        event: LifecycleEvent,
+        recorded_at: Instant,
+    ) -> None:
+        self._statements = statements
+        self._declare = declare
+        self._cursor = cursor
+        self._authorization = authorization
+        self._scope = scope
+        self._event = event
+        self._occurred_at = event.occurred_at.truncate_to_microseconds()
+        self._recorded_at = recorded_at
+        self._applied_revision = event.expected_revision + 1
+        self._scope_parameters = _scope_parameters(scope)
+
+    # -- plumbing --
+
+    def _execute(self, name: str, parameters: dict[str, Any] | None = None) -> None:
+        self._cursor.execute(self._statements[name], parameters or {})
+
+    def _fetch(self, name: str, parameters: dict[str, Any]) -> tuple[Any, ...] | None:
+        self._execute(name, parameters)
+        return self._cursor.fetchone()
+
+    def _scalar(self, name: str, parameters: dict[str, Any]) -> bool:
+        row = self._fetch(name, parameters)
+        return bool(row is not None and row[0] is True)
+
+    def _begin(self, isolation: str | None) -> None:
+        self._cursor.execute("BEGIN" if isolation is None else f"BEGIN ISOLATION LEVEL {isolation}")
+        self._cursor.execute(self._declare, self._authorization.bounds.parameters())
+
+    def _commit(self) -> None:
+        self._cursor.execute("COMMIT")
+
+    def _rollback(self) -> None:
+        self._cursor.execute("ROLLBACK")
+
+    def _record_parameters(self) -> dict[str, Any]:
+        return {"experience_id": self._event.experience_record_id, **self._scope_parameters}
+
+    # -- the commit --
+
+    def run(self) -> LifecycleCommitResult:
+        import psycopg
+        from psycopg.types.numeric import Int4, Int8
+
+        event = self._event
+        self._begin("READ COMMITTED")
+        try:
+            # 0. A port holds no key store: a sealed record's events are not its to write.
+            if self._scalar("sealed-record", self._record_parameters()):
+                self._rollback()
+                return LifecycleCommitResult("NotFound", 0, None)
+
+            stored_confidence: ConfidenceUpdate | None = None
+            if event.confidence is not None:
+                settled = self._insert_evidence(event.confidence)
+                if settled is not None:
+                    return settled
+                stored_confidence = event.confidence
+
+            try:
+                self._execute("insert-event", self._event_parameters(stored_confidence))
+            except psycopg.Error as failure:
+                constraint = _constraint(failure)
+                if constraint == _EVENT_PRIMARY_KEY:
+                    self._rollback()
+                    return self._in_new_transaction(self._compare_stored_event)
+                if constraint == _EVENT_REVISION_INDEX:
+                    self._rollback()
+                    return self._in_new_transaction(self._stale_or_missing)
+                raise
+
+            replacement = event.replacement_experience_id
+            if replacement is not None:
+                self._execute("lock-supersession-rows", {"lock_ids": [event.experience_record_id, replacement]})
+                check = self._fetch(
+                    "check-supersession",
+                    {
+                        "experience_id": event.experience_record_id,
+                        "replacement_id": replacement,
+                        **self._scope_parameters,
+                    },
+                )
+                assert check is not None
+                found, status, cycle = check[0], check[1], check[2]
+                if found is None or status not in ("Validated", "Reinforced") or cycle:
+                    self._rollback()
+                    return LifecycleCommitResult("ReplacementNotAllowed", 0, None if found is None else status)
+
+            counted = stored_confidence is not None and stored_confidence.counted
+            recorded_only = stored_confidence is not None and not stored_confidence.counted
+            statement = (
+                "update-projection-with-confidence"
+                if counted
+                else "update-projection-recorded-only"
+                if recorded_only
+                else "update-projection"
+            )
+            parameters: dict[str, Any] = {
+                **self._record_parameters(),
+                "current_status": event.current_status,
+                "prior_status": event.prior_status,
+                "expected_revision": Int8(event.expected_revision),
+                "applied_revision": Int8(self._applied_revision),
+                "recorded_at": self._recorded_at.to_datetime(),
+            }
+            if counted:
+                assert stored_confidence is not None
+                parameters["new_reuse_confidence"] = float(stored_confidence.new_reuse_confidence)
+                parameters["new_supporting_validations"] = Int4(stored_confidence.new_supporting_validations)
+                parameters["new_contradictions"] = Int4(stored_confidence.new_contradictions)
+            try:
+                self._execute(statement, parameters)
+            except psycopg.Error as failure:
+                if failure.sqlstate not in _SERIALIZATION_FAILURES:
+                    raise
+                self._rollback()
+                return self._in_new_transaction(self._stale_or_missing)
+
+            if self._cursor.rowcount == 0:
+                current = self._fetch("select-revision-and-status", self._record_parameters())
+                self._rollback()
+                if current is None:
+                    return LifecycleCommitResult("NotFound", 0, None)
+                revision, status, deleted_at = int(current[0]), current[1], current[2]
+                if deleted_at is not None:
+                    return LifecycleCommitResult("Deleted", revision, None)
+                if revision != event.expected_revision:
+                    return LifecycleCommitResult("StaleRevision", revision, None)
+                return LifecycleCommitResult("StatusMismatch", revision, status)
+
+            self._commit()
+            return LifecycleCommitResult("Committed", self._applied_revision, None, (), stored_confidence)
+        except BaseException:
+            self._abandon()
+            raise
+
+    def _abandon(self) -> None:
+        """Rolls back whatever is open after an unexpected failure; the connection closes next either way."""
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._cursor.execute("ROLLBACK")
+
+    def _in_new_transaction(self, read: Callable[[], LifecycleCommitResult]) -> LifecycleCommitResult:
+        self._begin(None)
+        result = read()
+        self._rollback()
+        return result
+
+    def _event_parameters(self, confidence: ConfidenceUpdate | None) -> dict[str, Any]:
+        from psycopg.types.numeric import Int4, Int8
+
+        event = self._event
+
+        def number(value: int | None) -> Int4 | None:
+            return None if value is None else Int4(value)
+
+        return {
+            "event_id": event.event_id,
+            "experience_id": event.experience_record_id,
+            **self._scope_parameters,
+            "prior_status": event.prior_status,
+            "current_status": event.current_status,
+            "reason": event.reason,
+            "producer": event.producer,
+            "occurred_at": self._occurred_at.to_datetime(),
+            "recorded_at": self._recorded_at.to_datetime(),
+            "expected_revision": Int8(event.expected_revision),
+            "applied_revision": Int8(self._applied_revision),
+            "replacement_experience_id": event.replacement_experience_id,
+            "actor": self._authorization.actor,
+            "confidence_evidence_id": None if confidence is None else confidence.evidence_id,
+            "confidence_kind": None if confidence is None else confidence.kind,
+            "confidence_source": None if confidence is None else confidence.source,
+            "confidence_run_id": None if confidence is None else confidence.run_id,
+            "confidence_verification_round_id": None if confidence is None else confidence.verification_round_id,
+            "confidence_reviewer_identity": None if confidence is None else confidence.reviewer_identity,
+            "confidence_rule_version": None if confidence is None else confidence.rule_version,
+            "confidence_detail": None if confidence is None else confidence.detail,
+            "prior_reuse_confidence": None if confidence is None else float(confidence.prior_reuse_confidence),
+            "new_reuse_confidence": None if confidence is None else float(confidence.new_reuse_confidence),
+            "prior_supporting_validations": number(
+                None if confidence is None else confidence.prior_supporting_validations
+            ),
+            "new_supporting_validations": number(None if confidence is None else confidence.new_supporting_validations),
+            "prior_contradictions": number(None if confidence is None else confidence.prior_contradictions),
+            "new_contradictions": number(None if confidence is None else confidence.new_contradictions),
+            "confidence_assessment_id": None if confidence is None else confidence.assessment_id,
+            "confidence_admission": None if confidence is None else confidence.admission,
+        }
+
+    def _insert_one(self, update: ConfidenceUpdate, event_id: uuid.UUID | None, revision: int, status: str) -> None:
+        from psycopg.types.numeric import Int4, Int8
+
+        self._execute(
+            "insert-evidence",
+            {
+                "evidence_id": update.evidence_id,
+                "experience_id": self._event.experience_record_id,
+                "event_id": event_id,
+                "confidence_kind": update.kind,
+                "confidence_source": update.source,
+                "confidence_run_id": update.run_id,
+                "confidence_verification_round_id": update.verification_round_id,
+                "confidence_reviewer_identity": update.reviewer_identity,
+                "counted": update.counted,
+                "actor": self._authorization.actor,
+                "confidence_rule_version": update.rule_version,
+                "confidence_detail": update.detail,
+                "recorded_at": self._recorded_at.to_datetime(),
+                "applied_revision": Int8(revision),
+                "applied_status": status,
+                "prior_reuse_confidence": float(update.prior_reuse_confidence),
+                "new_reuse_confidence": float(update.new_reuse_confidence),
+                "prior_supporting_validations": Int4(update.prior_supporting_validations),
+                "new_supporting_validations": Int4(update.new_supporting_validations),
+                "prior_contradictions": Int4(update.prior_contradictions),
+                "new_contradictions": Int4(update.new_contradictions),
+                "confidence_assessment_id": update.assessment_id,
+                "confidence_admission": update.admission,
+            },
+        )
+
+    def _insert_evidence(self, submitted: ConfidenceUpdate) -> LifecycleCommitResult | None:
+        """Step 1: the evidence row under a savepoint. ``None`` when the commit goes on; otherwise how it settled."""
+        import psycopg
+
+        self._execute("savepoint")
+        try:
+            self._insert_one(submitted, self._event.event_id, self._applied_revision, self._event.current_status)
+        except psycopg.Error as failure:
+            constraint = _constraint(failure)
+            if constraint == _EVIDENCE_INDEPENDENCE_INDEX:
+                self._execute("rollback-to-savepoint")
+                return self._record_duplicate(submitted)
+            if constraint == _EVIDENCE_PRIMARY_KEY:
+                self._execute("rollback-to-savepoint")
+                result = self._compare_stored_evidence(submitted)
+                self._rollback()
+                return result
+            if constraint == _EVIDENCE_ASSESSMENT_INDEX:
+                result = self._replay_or_spent(submitted)
+                self._rollback()
+                return result
+            raise
+        if not submitted.counted and self._scalar("recorded-only-key-taken", {"evidence_id": submitted.evidence_id}):
+            self._execute("rollback-to-savepoint")
+            return self._record_duplicate(submitted)
+        self._execute("release-savepoint")
+        return None
+
+    def _record_duplicate(self, submitted: ConfidenceUpdate) -> LifecycleCommitResult:
+        """DUPLICATE: the key is taken, so the submission is recorded only, with nothing else written."""
+        import psycopg
+
+        event = self._event
+        current = self._fetch("lock-revision-and-status", self._record_parameters())
+        if current is None:
+            self._rollback()
+            return LifecycleCommitResult("NotFound", 0, None)
+        revision, status, deleted_at = int(current[0]), current[1], current[2]
+        if deleted_at is not None:
+            self._rollback()
+            return LifecycleCommitResult("Deleted", revision, None)
+        if revision != event.expected_revision:
+            self._rollback()
+            return LifecycleCommitResult("StaleRevision", revision, None)
+        if event.prior_status is not None and status != event.prior_status:
+            self._rollback()
+            return LifecycleCommitResult("StatusMismatch", revision, status)
+        recorded_only = submitted.as_recorded_only()
+        try:
+            self._insert_one(recorded_only, None, revision, status)
+        except psycopg.Error as failure:
+            constraint = _constraint(failure)
+            if constraint == _EVIDENCE_PRIMARY_KEY:
+                self._execute("rollback-to-savepoint")
+                result = self._compare_stored_evidence(submitted)
+                self._rollback()
+                return result
+            if constraint == _EVIDENCE_ASSESSMENT_INDEX:
+                result = self._replay_or_spent(submitted)
+                self._rollback()
+                return result
+            raise
+        self._execute("release-savepoint")
+        self._commit()
+        return LifecycleCommitResult("Committed", revision, status, (), recorded_only)
+
+    def _replay_or_spent(self, submitted: ConfidenceUpdate) -> LifecycleCommitResult:
+        self._execute("rollback-to-savepoint")
+        if self._scalar("evidence-id-taken", {"evidence_id": submitted.evidence_id, **self._scope_parameters}):
+            return self._compare_stored_evidence(submitted)
+        return LifecycleCommitResult("Conflict", 0, None, (assessment_spent_error(),))
+
+    def _compare_stored_evidence(self, submitted: ConfidenceUpdate) -> LifecycleCommitResult:
+        """EVIDENCE REPLAY: the same evidence about the same observation is the original replayed."""
+        from dataclasses import replace
+
+        event = self._event
+        row = self._fetch("select-evidence", {"evidence_id": submitted.evidence_id, **self._scope_parameters})
+        if row is None or _uuid(row[0]) != event.experience_record_id:
+            return LifecycleCommitResult("Conflict", 0, None)
+        same_content = (
+            (row[1] is None or _uuid(row[1]) == event.event_id)
+            and row[2] == submitted.kind
+            and row[3] == submitted.source
+            and _uuid(row[4]) == submitted.run_id
+            and (None if row[5] is None else _uuid(row[5])) == submitted.verification_round_id
+            and row[6] == submitted.reviewer_identity
+            and row[10] == submitted.rule_version
+            and row[11] == submitted.detail
+            and (None if row[18] is None else _uuid(row[18])) == submitted.assessment_id
+        )
+        if not same_content:
+            return LifecycleCommitResult("Conflict", 0, None)
+        stored = replace(
+            submitted,
+            prior_reuse_confidence=float(row[12]),
+            new_reuse_confidence=float(row[13]),
+            prior_supporting_validations=int(row[14]),
+            new_supporting_validations=int(row[15]),
+            prior_contradictions=int(row[16]),
+            new_contradictions=int(row[17]),
+            admission=row[19],
+        )
+        return LifecycleCommitResult("Committed", int(row[8]), row[9], (), stored)
+
+    def _compare_stored_event(self) -> LifecycleCommitResult:
+        """EVENT REPLAY: the same event, every field and the scope included, is the original replayed."""
+        from dataclasses import replace
+
+        event = self._event
+        row = self._fetch("select-event", {"event_id": event.event_id})
+        if row is None:
+            return LifecycleCommitResult("Conflict", 0, None)
+        stored, stored_scope = _decode_event(row)
+        if stored.event.experience_record_id != event.experience_record_id or stored_scope != self._scope:
+            return LifecycleCommitResult("Conflict", 0, None)
+        resubmitted = replace(
+            event,
+            occurred_at=self._occurred_at,
+            confidence=None if event.confidence is None else as_replay_of(event.confidence, stored.event.confidence),
+        )
+        if is_same_evidence(event.confidence, stored.event.confidence):
+            resubmitted = replace(resubmitted, current_status=stored.event.current_status)
+        if stored.event == resubmitted:
+            return LifecycleCommitResult("Committed", stored.applied_revision, None, (), stored.event.confidence)
+        return LifecycleCommitResult("Conflict", 0, None)
+
+    def _stale_or_missing(self) -> LifecycleCommitResult:
+        """STALE: the record moved on (or went) under this commit."""
+        current = self._fetch("select-revision-and-status", self._record_parameters())
+        if current is None:
+            return LifecycleCommitResult("NotFound", 0, None)
+        revision = int(current[0])
+        if current[2] is not None:
+            return LifecycleCommitResult("Deleted", revision, None)
+        return LifecycleCommitResult("StaleRevision", revision, None)
