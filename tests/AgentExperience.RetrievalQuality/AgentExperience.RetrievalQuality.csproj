@@ -50,6 +50,7 @@
     <!-- The corpus: experience records and labelled queries, written before the first run and never tuned to it. -->
     <EmbeddedResource Include="Corpus\records.json" LogicalName="AgentExperience.RetrievalQuality.Corpus.records.json" />
     <EmbeddedResource Include="Corpus\queries.json" LogicalName="AgentExperience.RetrievalQuality.Corpus.queries.json" />
+    <EmbeddedResource Include="Corpus\signatures.json" LogicalName="AgentExperience.RetrievalQuality.Corpus.signatures.json" />
     <!-- One checked-in report per adapter, compared byte for byte. Embedded so the comparison does not depend on where
          the repository root is at test time; one file per adapter, so a run without Docker still checks the in-memory
          one. -->

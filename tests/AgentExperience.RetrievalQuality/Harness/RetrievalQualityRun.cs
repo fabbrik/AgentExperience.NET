@@ -7,11 +7,22 @@ namespace AgentExperience.RetrievalQuality.Harness;
 /// <param name="Returned">The corpus IDs of the candidates, in the order the source returned them.</param>
 internal sealed record QueryOutcome(CorpusQuery Query, IReadOnlyList<string> Returned);
 
+/// <summary>Story 28.2: what one signature query's two lookups returned, by corpus record ID, in the source's order.</summary>
+/// <param name="Query">The signature query.</param>
+/// <param name="Exact">The exact match's candidates.</param>
+/// <param name="Coarse">The coarse match's (tool and error class) candidates.</param>
+internal sealed record SignatureOutcome(CorpusSignatureQuery Query, QueryOutcome Exact, QueryOutcome Coarse);
+
 /// <summary>One adapter's run over the whole corpus.</summary>
 /// <param name="Adapter">The adapter's name in the report.</param>
 /// <param name="Corpus">The corpus that was seeded and searched.</param>
 /// <param name="Outcomes">One outcome per query, in corpus order.</param>
-internal sealed record RetrievalQualityResult(string Adapter, RetrievalCorpus Corpus, IReadOnlyList<QueryOutcome> Outcomes);
+/// <param name="Signatures">Story 28.2: one outcome per signature query, in corpus order.</param>
+internal sealed record RetrievalQualityResult(
+    string Adapter,
+    RetrievalCorpus Corpus,
+    IReadOnlyList<QueryOutcome> Outcomes,
+    IReadOnlyList<SignatureOutcome> Signatures);
 
 /// <summary>
 /// Seeds the corpus into a record store and runs every query through a candidate source's
@@ -35,6 +46,7 @@ internal static class RetrievalQualityRun
         RetrievalCorpus corpus,
         IExperienceRecordStore store,
         IExperienceCandidateSource source,
+        IExperienceSignatureSource signatureSource,
         CancellationToken cancellationToken = default)
     {
         var (authorization, queryScope) = await SeedAsync(corpus, store, cancellationToken);
@@ -60,7 +72,53 @@ internal static class RetrievalQualityRun
                     : throw new InvalidOperationException($"Query {query.Id} returned {c.Record.ExperienceId}, which is not a corpus record."))]));
         }
 
-        return new RetrievalQualityResult(adapter, corpus, outcomes);
+        return new RetrievalQualityResult(
+            adapter, corpus, outcomes, await SignatureOutcomesAsync(corpus, authorization, queryScope, signatureSource, cancellationToken));
+    }
+
+    /// <summary>
+    /// Story 28.2: every signature query, looked up exactly and coarsely through
+    /// <see cref="IExperienceSignatureSource.FindBySignatureAsync"/>, directly, with the same statuses, floor and limit as
+    /// the text queries.
+    /// </summary>
+    public static async Task<IReadOnlyList<SignatureOutcome>> SignatureOutcomesAsync(
+        RetrievalCorpus corpus,
+        AuthorizationContext authorization,
+        Scope queryScope,
+        IExperienceSignatureSource source,
+        CancellationToken cancellationToken = default)
+    {
+        var byExperienceId = corpus.Records.ToDictionary(r => r.ExperienceId, r => r.Id);
+        var outcomes = new List<SignatureOutcome>();
+        foreach (var query in corpus.SignatureQueries)
+        {
+            outcomes.Add(new SignatureOutcome(
+                query,
+                await LookUpAsync(query, ExperienceSignatureMatch.Exact),
+                await LookUpAsync(query, ExperienceSignatureMatch.Coarse)));
+        }
+
+        return outcomes;
+
+        async Task<QueryOutcome> LookUpAsync(CorpusSignatureQuery query, ExperienceSignatureMatch match)
+        {
+            var result = await source.FindBySignatureAsync(
+                authorization,
+                queryScope,
+                new ExperienceSignatureQuery(query.Signature, ExperienceStatuses.EligibleForReuse, MinimumConfidence, match, Limit),
+                cancellationToken);
+            if (result.Outcome != ExperienceStoreOutcome.Found)
+            {
+                throw new InvalidOperationException(
+                    $"Signature query {query.Id} returned {result.Outcome}: {string.Join("; ", result.Errors.Select(e => $"{e.Path}: {e.Message}"))}");
+            }
+
+            return new QueryOutcome(
+                query.AsQuery(),
+                [.. result.Candidates.Select(c => byExperienceId.TryGetValue(c.Record.ExperienceId, out var id)
+                    ? id
+                    : throw new InvalidOperationException($"Signature query {query.Id} returned {c.Record.ExperienceId}, which is not a corpus record."))]);
+        }
     }
 
     /// <summary>
@@ -79,17 +137,23 @@ internal static class RetrievalQualityRun
 
         foreach (var record in corpus.Records)
         {
-            var created = await store.CreateAsync(
-                authorization,
-                ConformanceData.Record(
-                    record.Scope == RetrievalCorpus.QueryScope ? queryScope : otherScope,
-                    record.Status,
-                    record.ExperienceId,
-                    record.TaskId,
-                    record.Summary,
-                    record.Lesson,
-                    record.Confidence),
-                cancellationToken);
+            var seeded = ConformanceData.Record(
+                record.Scope == RetrievalCorpus.QueryScope ? queryScope : otherScope,
+                record.Status,
+                record.ExperienceId,
+                record.TaskId,
+                record.Summary,
+                record.Lesson,
+                record.Confidence);
+
+            // Story 28.2: the failed call the record's run made, if the corpus gives it one; the text search indexes
+            // none of it, so the text queries' numbers do not move.
+            if (corpus.Failures.SingleOrDefault(f => f.Record == record.Id) is { } failure)
+            {
+                seeded = WithFailure(seeded, failure);
+            }
+
+            var created = await store.CreateAsync(authorization, seeded, cancellationToken);
             if (created.Outcome != ExperienceStoreOutcome.Created)
             {
                 throw new InvalidOperationException(
@@ -98,5 +162,26 @@ internal static class RetrievalQualityRun
         }
 
         return (authorization, queryScope);
+    }
+
+    /// <summary>
+    /// <paramref name="record"/> as a verified run whose first attempt's call to the failure's tool failed with its error
+    /// and, when the failure was resolved, whose second attempt's call to the same tool succeeded.
+    /// </summary>
+    private static ExperienceRecord WithFailure(ExperienceRecord record, CorpusFailure failure)
+    {
+        ToolCallRecord Call(string? error) => new(
+            Guid.NewGuid(), 0, failure.Tool, new Dictionary<string, object?>(), ConformanceData.Time, TimeSpan.FromSeconds(1), error is null ? "ok" : null, error);
+
+        Attempt Attempt(int sequence, ToolCallRecord call) =>
+            new(Guid.NewGuid(), sequence, ConformanceData.Time, TimeSpan.FromSeconds(1), [call], null, null);
+
+        return record with
+        {
+            Attempts = failure.Resolved
+                ? [Attempt(0, Call(failure.Error)), Attempt(1, Call(null))]
+                : [Attempt(0, Call(failure.Error))],
+            Outcome = record.Outcome with { Status = TaskVerificationStatus.Verified },
+        };
     }
 }
