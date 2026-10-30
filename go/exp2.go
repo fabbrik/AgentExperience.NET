@@ -2,15 +2,20 @@ package agentexperience
 
 import "math"
 
-// exp2 is 2^x correctly rounded: what .NET's Math.Pow(2, x) gives where the platform's C library pow is correctly
-// rounded (glibc, on the Linux the contract's fixtures are checked on). Go's math.Pow and math.Exp2 are within a few
-// ulps but not correctly rounded (math.Pow(2, -803580.0/2592000) is 2 ulps above), and ranking orders records on the
-// last bit of a score: contract 1.18's retrieval-policy/ranking-near-tie pins it.
+// exp2 is 2^x correctly rounded (to nearest, ties to even), for ranking's recency and confidence decay.
+//
+// .NET's Math.Pow(2, x) is the platform C library's pow, which is not correctly rounded on every input: glibc's was
+// measured 1 ulp off on about 0.07% of x in (-60, 0) (about 1 in 1,500), macOS's on about 0.12%. Go's math.Pow is
+// further off (about 30% of inputs by an ulp or more; math.Pow(2, -803580.0/2592000) is 2 ulps above), and ranking
+// orders records on the last bit of a score. A correctly rounded 2^x agrees with .NET's pow except on those rare
+// inputs; contract 1.18's retrieval-policy/ranking-near-tie pins only its own inputs, which every one of them gives
+// alike. Near-tied records whose recency or decay falls on a misrounded input may still rank differently from .NET.
 //
 // It splits x into an integer k and a fraction f in [-1/2, 1/2] (exactly), evaluates 2^f = e^(f ln 2) in double-double
 // arithmetic (about 104 bits, so the one rounding at the end is correct unless 2^f lies within about 2^-100 of a
-// midpoint between two doubles), and scales by 2^k. Below 2^-1022, where the result is subnormal, the scaling rounds a
-// second time; such a value is 0 to every ranking score it enters.
+// midpoint between two doubles), and scales by 2^k. The scaling is exact, so the result is rounded once: a normal
+// result is the double-double's rounding scaled by 2^k; a subnormal one is rounded once, from the double-double, to
+// a whole multiple of 2^-1074.
 func exp2(x float64) float64 {
 	switch {
 	case math.IsNaN(x):
@@ -31,7 +36,23 @@ func exp2(x float64) float64 {
 	for n := 24; n >= 1; n-- {
 		sum = ddAddOne(ddDivInt(ddMul(t, sum), float64(n)))
 	}
-	return math.Ldexp(sum.hi+sum.lo, int(k))
+	if k > -1022 {
+		// 2^f is in [0.707, 1.415), so the result is at least 2^-1021.5: normal, and the scaling exact.
+		return math.Ldexp(sum.hi+sum.lo, int(k))
+	}
+	// Possibly subnormal: count in units of 2^-1074. Scaling both halves by 2^(k+1074) >= 2^-6 is exact, and the
+	// count is below 2^53, so rounding it to a whole number is the result's one rounding.
+	units := dd{hi: math.Ldexp(sum.hi, int(k)+1074), lo: math.Ldexp(sum.lo, int(k)+1074)}
+	n := math.RoundToEven(units.hi)
+	// units.hi - n is exact. Only when units.hi is itself a midpoint can the low half move the count, and then its
+	// sign alone decides: |lo| is at most half an ulp of units.hi, never enough to reach another midpoint.
+	switch remainder := units.hi - n; {
+	case remainder == 0.5 && units.lo > 0:
+		n++
+	case remainder == -0.5 && units.lo < 0:
+		n--
+	}
+	return math.Ldexp(n, -1074)
 }
 
 // ln 2 to 107 bits, as the sum of two doubles.

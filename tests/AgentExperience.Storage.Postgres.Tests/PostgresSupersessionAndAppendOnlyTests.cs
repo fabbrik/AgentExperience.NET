@@ -190,19 +190,8 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
         // any lock it would have to wait for (lock_timeout): a store that locked A's row would fail with 55P03 instead
         // of answering, so the outcome alone says whether it waited. No clock is read and nothing sleeps.
         await using var holder = await _fixture.RawDataSource.OpenConnectionAsync();
-        await using var held = await holder.BeginTransactionAsync();
-        await using (var lockRow = new NpgsqlCommand(
-            "SELECT experience_id FROM agent_experience.experience_records WHERE experience_id = @id FOR UPDATE", holder, held))
-        {
-            lockRow.Parameters.Add(new NpgsqlParameter<Guid>("id", victim.ExperienceId));
-            Assert.Equal(victim.ExperienceId, (Guid)(await lockRow.ExecuteScalarAsync())!);
-        }
-
-        await using var impatient = NpgsqlDataSource.Create(
-            new NpgsqlConnectionStringBuilder(_fixture.ConnectionString(PostgresFixture.StoreDatabase, PostgresFixture.ApplicationRoleName))
-            {
-                Options = "-c lock_timeout=10000",
-            }.ConnectionString);
+        await using var held = await HoldRowAsync(holder, victim.ExperienceId, "FOR UPDATE");
+        await using var impatient = Impatient(lockTimeoutMilliseconds: 10_000);
         var storeB = new PostgresExperienceRecordStore(impatient);
 
         // The store's own commit, which runs the lock, and the lifecycle service over it.
@@ -223,6 +212,65 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
         await AssertUnchangedAsync(authB, scopeB, record.ExperienceId, ExperienceStatus.Validated, 1, events: 1);
         await AssertUnchangedAsync(authA, scopeA, victim.ExperienceId, ExperienceStatus.Validated, 1, events: 1);
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Holding_the_in_scope_replacements_row_makes_the_supersession_wait(bool optionalScopeFieldsSet)
+    {
+        // The other side of the scoped lock: it still locks the caller's own replacement, whether the scope's optional
+        // fields are set or NULL (IS NOT DISTINCT FROM). The holder takes FOR NO KEY UPDATE, which conflicts with the
+        // supersession lock's FOR UPDATE but not with the key-share lock a foreign key takes, so only that lock can wait
+        // on it. lock_timeout ends the wait with 55P03: nothing sleeps and no duration is asserted.
+        var tenant = NewTenant();
+        var auth = Authorize(tenant);
+        var scope = optionalScopeFieldsSet ? new Scope(tenant, "app-1", "project-1", "team-1", "agent-1", "user-1") : Scope(tenant);
+        var record = await ValidatedAsync(auth, scope);
+        var replacement = await ValidatedAsync(auth, scope);
+
+        await using var holder = await _fixture.RawDataSource.OpenConnectionAsync();
+        await using var held = await HoldRowAsync(holder, replacement.ExperienceId, "FOR NO KEY UPDATE");
+        await using var impatient = Impatient(lockTimeoutMilliseconds: 500);
+        var store = new PostgresExperienceRecordStore(impatient);
+
+        var thrown = await Record.ExceptionAsync(() => store.CommitLifecycleEventAsync(
+            auth,
+            scope,
+            Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Superseded, 1, Guid.NewGuid(), replacement: replacement.ExperienceId),
+            CancellationToken.None));
+
+        Assert.NotNull(thrown);
+        var postgres = Assert.IsType<PostgresException>(Flatten(thrown).OfType<PostgresException>().FirstOrDefault(), exactMatch: false);
+        Assert.Equal(PostgresErrorCodes.LockNotAvailable, postgres.SqlState);
+        await held.RollbackAsync();
+        await AssertUnchangedAsync(auth, scope, record.ExperienceId, ExperienceStatus.Validated, 1, events: 1);
+    }
+
+    private static IEnumerable<Exception> Flatten(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            yield return current;
+        }
+    }
+
+    /// <summary>Opens a transaction on <paramref name="holder"/> that holds one record's row with <paramref name="lockClause"/>.</summary>
+    private static async Task<NpgsqlTransaction> HoldRowAsync(NpgsqlConnection holder, Guid experienceId, string lockClause)
+    {
+        var held = await holder.BeginTransactionAsync();
+        await using var lockRow = new NpgsqlCommand(
+            $"SELECT experience_id FROM agent_experience.experience_records WHERE experience_id = @id {lockClause}", holder, held);
+        lockRow.Parameters.Add(new NpgsqlParameter<Guid>("id", experienceId));
+        Assert.Equal(experienceId, (Guid)(await lockRow.ExecuteScalarAsync())!);
+        return held;
+    }
+
+    /// <summary>The application role's data source, giving up on any lock it waits for longer than the timeout.</summary>
+    private NpgsqlDataSource Impatient(int lockTimeoutMilliseconds) => NpgsqlDataSource.Create(
+        new NpgsqlConnectionStringBuilder(_fixture.ConnectionString(PostgresFixture.StoreDatabase, PostgresFixture.ApplicationRoleName))
+        {
+            Options = $"-c lock_timeout={lockTimeoutMilliseconds}",
+        }.ConnectionString);
 
     [Theory]
     [InlineData(ExperienceStatus.Quarantined)]

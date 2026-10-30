@@ -340,11 +340,14 @@ the six Go modules at one version.
   `retrieval-policy/ranking-near-tie`, two pairs of records whose scores differ by one ulp, ranked against their
   experience-ID tie-break, so a port whose arithmetic differs from .NET's in the last bit orders them differently
   and fails. Every 1.0-1.17 file is unchanged.
-- **The Python and Go ports run the scoped lock**, with a PostgreSQL test each. **Go now computes decay exactly as
-  .NET does**: its `math.Pow` is not correctly rounded (it was 2 ulps off on the new fixture's input, which tied two
-  records .NET orders), so the Go port computes `2^x` with its own correctly rounded double-double `exp2`, and rounds
-  each ranking component's product before adding it so the compiler cannot fuse the two (an FMA, which Go allows on
-  arm64). Python already matched.
+- **The Python and Go ports run the scoped lock**, with PostgreSQL tests. **Go's decay now agrees with .NET's on the
+  fixture**: its `math.Pow` was 2 ulps off on the new fixture's input (about 30% of inputs are off by an ulp or more),
+  which tied two records .NET orders, so the Go port computes `2^x` with its own correctly rounded double-double
+  `exp2`, which agrees with .NET's C-library `pow` except on rare inputs where that `pow` misrounds (about 1 in 1,500
+  measured on glibc); and it rounds each ranking component's product before adding it, so the compiler cannot fuse the
+  two (an FMA, which Go does on arm64). Python, which calls the platform's `pow` as .NET does, already matched. Only
+  the fixture's inputs are pinned: near-tied records whose recency or decay factor falls on a misrounded input may
+  still be ordered differently across runtimes.
 
 ### The failure signature (story 28.2)
 

@@ -727,10 +727,12 @@ err := maf.UseAgentExperience(&config, maf.Options{
   refuses (a timeout over a day, a candidate limit over 199, a confidence outside 0 to 1 or NaN, a blank domain key or
   domain, a zero or negative half-life in `HalfLives` or `DefaultHalfLife`), is refused, naming the .NET option. The
   zero `RetrievalPolicy` is .NET's `RetrievalPolicy.Default`, and ranks exactly as before 1.12.
-- **Scores to the bit.** Recency and decay are `2^(-age / halfLife)` correctly rounded, as .NET's `Math.Pow` is on
-  Linux, by the port's own double-double `exp2` (Go's `math.Pow` can be a few ulps off), and each component's value
-  times its weight is rounded before it is added, never fused into the sum. Two records whose scores differ in the
-  last bit rank as they do in .NET (contract 1.18's `retrieval-policy/ranking-near-tie`).
+- **Scores to the bit.** Recency and decay are `2^(-age / halfLife)` computed by the port's own correctly rounded
+  double-double `exp2` (Go's `math.Pow` is off by an ulp or more on about 30% of inputs), which agrees with .NET's
+  C-library `Math.Pow` except on rare inputs where that `pow` misrounds (about 1 in 1,500 measured on glibc). Each
+  component's value times its weight is rounded before it is added, never fused into the sum. Contract 1.18's
+  `retrieval-policy/ranking-near-tie` pins two near ties; two records whose scores differ in the last bit through a
+  misrounded `pow` input may still rank differently from .NET.
 - **Decay never excludes.** It only reorders: the confidence floor is the search's, on stored confidence. In the
   verbose block the `Confidence:` line shows the stored value and the applicability line the decayed one, as .NET's.
 - **Timing out.** Past `Timeout` the invocation gets no block, its inject outcome is `RetrievalTimedOut` (retrieve:

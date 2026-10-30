@@ -48,15 +48,23 @@ two pairs of records whose scores differ by one ulp, the higher score on the lar
 lesson 1, lesson 4, lesson 3) is compared exactly, as every `ranked` list is. A port reproduces it only with .NET's
 arithmetic:
 
-- **Recency and confidence decay are `2^(-age / halfLife)` correctly rounded**, `age` and `halfLife` each .NET's
-  `TimeSpan.TotalSeconds` (whole ticks as a double, divided by 10,000,000), the quotient negated and rounded to a double
-  before the power. .NET's `Math.Pow` is the platform C library's `pow`, which is correctly rounded on the Linux the
-  fixtures are checked on. Lesson 1's recency, `2^(-803580 / 2592000)`, is `0.8066288166995434`; an implementation
-  2 ulps off (Go's `math.Pow` gives `0.8066288166995436`) ties lesson 1 with lesson 2, and the tie-break then puts
-  lesson 1 first. The case's inputs are far from rounding midpoints, so any correctly rounded `pow` gives them exactly.
+- **Recency and confidence decay are `2^(-age / halfLife)` as .NET's `Math.Pow` gives it**, `age` and `halfLife` each
+  .NET's `TimeSpan.TotalSeconds` (whole ticks as a double, divided by 10,000,000), the quotient negated and rounded to a
+  double before the power. .NET's `Math.Pow` is the platform C library's `pow` (glibc on the Linux the fixtures are
+  checked on), which is not correctly rounded on every input. Lesson 1's recency, `2^(-803580 / 2592000)`, is
+  `0.8066288166995434`; an implementation 2 ulps off (Go's `math.Pow` gives `0.8066288166995436`) ties lesson 1 with
+  lesson 2, and the tie-break then puts lesson 1 first. The case's inputs are far from rounding midpoints, so glibc's
+  and macOS's `pow` and a correctly rounded `2^x` all give them exactly.
 - **Each component's contribution is its value times its weight, rounded to a double, then added** to the running
   total, which starts at 0 and takes the five in component order (relevance, confidence, recency, status,
   environment). A compiler that fuses the product into the sum (a fused multiply-add) ties lessons 3 and 4.
+
+**What 1.18 does not pin.** Only the fixture's inputs. C libraries' `pow` is not correctly rounded everywhere: glibc's
+`pow(2, x)` was measured 1 ulp from the correctly rounded value on about 0.07% of `x` in (-60, 0) (about 1 input in
+1,500), macOS's on about 0.12%. A port that computes `2^x` correctly rounded (the Go port does) agrees with .NET except
+on those rare inputs, and a port that calls its platform's `pow` (the Python port does) agrees with .NET on the same
+platform. Two near-tied records whose recency or decay factor falls on such an input may still be ordered differently
+by different runtimes.
 
 ## What 1.18 adds
 
