@@ -26,6 +26,7 @@ import binascii
 import hashlib
 import hmac
 import math
+import numbers
 import struct
 import uuid
 from collections.abc import Callable, Sequence
@@ -100,10 +101,13 @@ class ConfidenceArgumentError(ValueError):
     """
 
     def __init__(self, exception: str, parameter: str, message: str) -> None:
-        super().__init__(message)
+        super().__init__(exception, parameter, message)  # every argument, so the error pickles
         self.exception = exception
         self.parameter = parameter
         self.message = message
+
+    def __str__(self) -> str:
+        return self.message
 
 
 class ConfidenceEngineError(RuntimeError):
@@ -113,13 +117,16 @@ class ConfidenceEngineError(RuntimeError):
     """
 
     def __init__(self, rule: str, score: float) -> None:
+        super().__init__(rule, score)  # every argument, so the error pickles
         self.rule = rule
         self.score = score
         self.message = (
             f"The confidence engine '{rule}' returned {format_score(score)}, which is not a score in [0, 1]. "
             "Nothing was written."
         )
-        super().__init__(self.message)
+
+    def __str__(self) -> str:
+        return self.message
 
 
 def _out_of_range(parameter: str, message: str) -> ConfidenceArgumentError:
@@ -169,13 +176,14 @@ def accepts_evidence_in(status: ExperienceStatus) -> bool:
 def score(supporting_validations: int, contradictions: int) -> float:
     """
     The heuristic's reuse confidence, ``(1 + S) / (2 + S + F)``, in double precision: strictly inside (0, 1). A
-    negative count raises :class:`ConfidenceArgumentError` (``ArgumentOutOfRangeException``) naming
-    ``supportingValidations`` or ``contradictions``, the supporting count first.
+    count that is negative, or past .NET's 32-bit counters (:data:`MAX_COUNTER`), raises
+    :class:`ConfidenceArgumentError` (``ArgumentOutOfRangeException``) naming ``supportingValidations`` or
+    ``contradictions``, the supporting count first.
     """
-    if supporting_validations < 0:
-        raise _out_of_range("supportingValidations", "The supporting validations must not be negative.")
-    if contradictions < 0:
-        raise _out_of_range("contradictions", "The contradictions must not be negative.")
+    if not 0 <= supporting_validations <= MAX_COUNTER:
+        raise _out_of_range("supportingValidations", "The supporting validations must be 0 to 2147483647.")
+    if not 0 <= contradictions <= MAX_COUNTER:
+        raise _out_of_range("contradictions", "The contradictions must be 0 to 2147483647.")
     return (1.0 + supporting_validations) / (2.0 + supporting_validations + contradictions)
 
 
@@ -241,10 +249,10 @@ def apply(
     does a counter at :data:`MAX_COUNTER` that this evidence would increment (naming ``record``). The record's
     status is not checked here: see :func:`accepts_evidence_in`.
     """
-    if record.supporting_validations < 0:
-        raise _out_of_range("record.SupportingValidations", "The record's supporting validations are negative.")
-    if record.contradictions < 0:
-        raise _out_of_range("record.Contradictions", "The record's contradictions are negative.")
+    if not 0 <= record.supporting_validations <= MAX_COUNTER:
+        raise _out_of_range("record.SupportingValidations", "The record's supporting validations are out of range.")
+    if not 0 <= record.contradictions <= MAX_COUNTER:
+        raise _out_of_range("record.Contradictions", "The record's contradictions are out of range.")
     supporting = record.supporting_validations
     contradictions = record.contradictions
     if kind == "Supporting":
@@ -380,6 +388,9 @@ class ReuseConfidenceHeuristicEngine:
 ReuseConfidenceHeuristicEngine.INSTANCE = ReuseConfidenceHeuristicEngine()
 
 
+_PRIVATE = object()
+
+
 def _well_formed(value: object) -> bool:
     return (
         isinstance(value, str)
@@ -398,7 +409,10 @@ class ConfidenceEngineRule:
 
     DEFAULT: ClassVar[ConfidenceEngineRule]
 
-    def __init__(self, engine: ExperienceConfidenceEngine, recorded: str) -> None:
+    def __init__(self, engine: ExperienceConfidenceEngine, recorded: str, *, _key: object = None) -> None:
+        # Private, as .NET's constructor is: only for_engine checks an identity, so only it may build a rule.
+        if _key is not _PRIVATE:
+            raise TypeError("Use ConfidenceEngineRule.for_engine(engine).")
         self._engine = engine
         self.recorded = recorded
 
@@ -415,7 +429,7 @@ class ConfidenceEngineRule:
         ``rule_version`` (the ID first), or a host engine claiming :data:`HEURISTIC_RULE_ID`, raises
         :class:`ConfidenceArgumentError` (``ArgumentException``) naming ``parameter_name``.
         """
-        if engine is None or isinstance(engine, ReuseConfidenceHeuristicEngine):
+        if engine is None or type(engine) is ReuseConfidenceHeuristicEngine:
             return ConfidenceEngineRule.DEFAULT
         rule_id = engine.rule_id
         rule_version = engine.rule_version
@@ -436,7 +450,7 @@ class ConfidenceEngineRule:
                 f"A host confidence engine may not use the default engine's RuleId '{HEURISTIC_RULE_ID}': its scores "
                 "would be recorded as if the heuristic had produced them.",
             )
-        return ConfidenceEngineRule(engine, f"{rule_id}/{rule_version}")
+        return ConfidenceEngineRule(engine, f"{rule_id}/{rule_version}", _key=_PRIVATE)
 
     def score(self, record: ExperienceRecord, supporting_validations: int, contradictions: int) -> float:
         """
@@ -444,9 +458,12 @@ class ConfidenceEngineRule:
         value that is NaN, infinite or outside [0, 1] raises :class:`ConfidenceEngineError`, never clamped.
         """
         value = self._engine.score(ExperienceConfidenceInput(record, supporting_validations, contradictions))
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise TypeError("A confidence engine's score must be a float.")
-        value = float(value)
+        if isinstance(value, bool) or not isinstance(value, (numbers.Real, Decimal)):
+            raise TypeError("A confidence engine's score must be a real number.")
+        try:
+            value = float(value)
+        except OverflowError:  # an integer past every double: as .NET would see it, infinite
+            value = math.inf if value > 0 else -math.inf
         if not math.isfinite(value) or value < 0.0 or value > 1.0:
             raise ConfidenceEngineError(self.recorded, value)
         return value
@@ -475,7 +492,9 @@ class ConfidenceEngineRule:
         )
 
 
-ConfidenceEngineRule.DEFAULT = ConfidenceEngineRule(ReuseConfidenceHeuristicEngine.INSTANCE, RULE_VERSION)
+ConfidenceEngineRule.DEFAULT = ConfidenceEngineRule(
+    ReuseConfidenceHeuristicEngine.INSTANCE, RULE_VERSION, _key=_PRIVATE
+)
 
 
 # ---- Assessment tokens ---------------------------------------------------------------------------------------------
@@ -502,6 +521,9 @@ _EMPTY = uuid.UUID(int=0)
 _UNIX_EPOCH_MS = 62_135_596_800_000
 """The Unix epoch in milliseconds since 0001-01-01."""
 _TICKS_PER_MILLISECOND = 10_000
+_MIN_UNIX_MS = -_UNIX_EPOCH_MS
+_MAX_UNIX_MS = 253_402_300_799_999
+"""The last millisecond .NET's DateTimeOffset represents: 9999-12-31T23:59:59.999Z."""
 
 
 def _unix_ms(instant: Instant) -> int:
@@ -669,6 +691,10 @@ class _AssessmentTokenCodec:
     ) -> IssuedAssessmentToken:
         issued_at = _unix_ms(self._clock())
         expires_at = issued_at + _whole_ms(self._lifetime)
+        for milliseconds in (issued_at, expires_at):
+            if not _MIN_UNIX_MS <= milliseconds <= _MAX_UNIX_MS:
+                # .NET's DateTimeOffset.FromUnixTimeMilliseconds refuses an instant it cannot represent.
+                raise _out_of_range("milliseconds", "The token's times cannot be represented.")
         body = bytearray()
         body.append(_VERSION)
         body += assessment_id.bytes

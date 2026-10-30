@@ -7,8 +7,12 @@ not state. Each case's ``input.json`` names an operation (``score``, ``rule``, `
 from __future__ import annotations
 
 import math
+import pickle
 import uuid
+from dataclasses import replace
 from datetime import timedelta
+from decimal import Decimal
+from fractions import Fraction
 from typing import Any, cast
 
 import pytest
@@ -255,7 +259,18 @@ def _run_options(case: dict[str, Any], expected: dict[str, Any]) -> None:
 
 def _reviewer(value: dict[str, Any], scope: Scope) -> ExperienceIdentity:
     bounds = AuthorizationBounds(*_fields(value))
-    return ExperienceIdentity(value["principalId"], scope, bounds)
+    # Built without ExperienceIdentity's own check, which refuses a blank principal before the issuer could, so the
+    # issuer's reviewer check, and its order, are what is exercised.
+    identity = object.__new__(ExperienceIdentity)
+    for name, field_value in (
+        ("principal", value["principalId"]),
+        ("scope", scope),
+        ("bounds", bounds),
+        ("development", False),
+        ("environment_name", None),
+    ):
+        object.__setattr__(identity, name, field_value)
+    return identity
 
 
 def _run_issue(case: dict[str, Any], expected: dict[str, Any]) -> None:
@@ -273,11 +288,6 @@ def _run_issue(case: dict[str, Any], expected: dict[str, Any]) -> None:
         assert expected["token"] is None
         _assert_refusal(expected["refusal"], _refusal(error))
         return
-    except ValueError:
-        # This port's identity refuses a blank principal itself, before the issuer can.
-        assert expected["refusal"]["parameter"] == "reviewer"
-        assert case["reviewer"]["principalId"].strip() == ""
-        return
     assert expected["refusal"] is None
     assert str(issued.assessment_id) == expected["assessmentId"]
     assert issued.token == expected["token"]
@@ -285,12 +295,29 @@ def _run_issue(case: dict[str, Any], expected: dict[str, Any]) -> None:
     assert _unix_ms(issued.expires_at) == expected["expiresAtUnixMs"]
     assert random.assessment_id != issued.assessment_id
     assert (random.issued_at, random.expires_at) == (issued.issued_at, issued.expires_at)
+    # What the issuer itself emitted: its token is bound to the case's scope, run, reviewer and kind, and covers its
+    # records in order (a token issued before 1970 is invalid by construction).
+    principal = case["reviewer"]["principalId"]
+    verified = issuer._codec.verify(random.token, scope, _id(case["runId"]), principal, case["kind"])
+    if expected["issuedAtUnixMs"] < 0:
+        assert verified.refusal == "AssessmentTokenInvalid"
+    else:
+        assert (verified.refusal, verified.assessment_id, list(verified.covered)) == (None, random.assessment_id, ids)
+
+
+def _from_units(units: list[int]) -> str:
+    return b"".join(unit.to_bytes(2, "little") for unit in units).decode("utf-16-le", "surrogatepass")
 
 
 def _run_verify(case: dict[str, Any], expected: dict[str, Any]) -> None:
     codec = _AssessmentTokenCodec.create(_options(case["options"]))
     assert codec is not None
-    result = codec.verify(case["token"], _scope(case["scope"]), _id(case["runId"]), case["reviewer"], case["kind"])
+    scope, reviewer = _scope(case["scope"]), case["reviewer"]
+    if "utf16" in case:  # lone surrogates, which JSON text cannot carry
+        reviewer = _from_units(case["utf16"]["reviewer"])
+        team = case["utf16"]["teamId"]
+        scope = replace(scope, team_id=None if team is None else _from_units(team))
+    result = codec.verify(case["token"], scope, _id(case["runId"]), reviewer, case["kind"])
     assert result.refusal == expected["refusal"]
     assert str(result.assessment_id) == expected["assessmentId"]
     assert [str(value) for value in result.covered] == expected["covered"]
@@ -304,6 +331,10 @@ _OPERATIONS = {
     "issue": _run_issue,
     "verify": _run_verify,
 }
+
+
+def test_every_confidence_engine_case_is_found() -> None:
+    assert len(cases(FAMILY)) >= 150
 
 
 @pytest.mark.parametrize("name", cases(FAMILY))
@@ -405,3 +436,50 @@ class _TextEngine:
 def test_an_engine_returning_a_non_number_is_refused() -> None:
     with pytest.raises(TypeError):
         ConfidenceEngineRule.for_engine(_TextEngine()).score(cast(Any, None), 1, 0)
+
+
+def test_a_rule_is_built_only_by_for_engine() -> None:
+    with pytest.raises(TypeError):
+        ConfidenceEngineRule(HostEngine("bayes", "1", "bayes"), "1.0.0")
+
+
+def test_a_subclass_of_the_heuristic_engine_is_a_host_engine() -> None:
+    class Wrapped(ReuseConfidenceHeuristicEngine):
+        pass
+
+    with pytest.raises(ConfidenceArgumentError):  # it claims the heuristic's rule ID
+        ConfidenceEngineRule.for_engine(Wrapped())
+
+
+@pytest.mark.parametrize(("value", "expected"), [(Fraction(1, 4), 0.25), (Decimal("0.5"), 0.5), (1, 1.0)])
+def test_any_real_number_is_a_score(value: Any, expected: float) -> None:
+    rule = ConfidenceEngineRule.for_engine(HostEngine("x", "1", "stored"))
+    record = cast(Any, type("R", (), {"reuse_confidence": value})())
+    assert rule.score(record, 1, 0) == expected
+
+
+def test_an_integer_past_every_double_is_refused_as_infinite() -> None:
+    rule = ConfidenceEngineRule.for_engine(HostEngine("x", "1", "stored"))
+    record = cast(Any, type("R", (), {"reuse_confidence": 10**400})())
+    with pytest.raises(ConfidenceEngineError) as refused:
+        rule.score(record, 1, 0)
+    assert "returned Infinity" in str(refused.value)
+
+
+def test_the_errors_pickle() -> None:
+    argument = pickle.loads(pickle.dumps(ConfidenceArgumentError("ArgumentException", "kind", "m")))
+    assert (argument.exception, argument.parameter, str(argument)) == ("ArgumentException", "kind", "m")
+    engine = pickle.loads(pickle.dumps(ConfidenceEngineError("r/1", 1.5)))
+    assert (engine.rule, engine.score, engine.message) == ("r/1", 1.5, ConfidenceEngineError("r/1", 1.5).message)
+
+
+@pytest.mark.parametrize(("s", "f", "parameter"), [(2**31, 0, "supportingValidations"), (0, 2**31, "contradictions")])
+def test_a_count_past_dotnets_counters_is_refused(s: int, f: int, parameter: str) -> None:
+    with pytest.raises(ConfidenceArgumentError) as refused:
+        engine_module.score(s, f)
+    assert refused.value.parameter == parameter
+
+
+def test_this_ports_identity_refuses_a_blank_principal_before_the_issuer() -> None:
+    with pytest.raises(ValueError):
+        ExperienceIdentity(" ", _SCOPE)
