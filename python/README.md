@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.16, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.16 (and so every 1.0 to 1.15 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.17, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.17 (and so every 1.0 to 1.16 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -534,11 +534,75 @@ report = service.read_confidence(authorization, scope, record.experience_id, "Ex
   (the event moves only the revision), as .NET does with that effect; `"Counted"` is the opt-in above.
 - **No provenance signing** (27.7): a record's initial counters count as verified exactly when it was finalized.
 - **No de-indexing** (27.6d): a commit that takes a record out of eligibility removes no embedding; a vector search
-  already excludes it by status. **No reuse feedback** (27.6c), and finalization submits no reuse evidence.
+  already excludes it by status.
 - **A sealed record** (`payload_version` 2) is `NotFound` for a commit, a history and a read: a port holds no key store.
   The commit checks it only once it holds the record's row lock, so a seal that lands mid-commit still refuses it.
 - `reuse_evidence_id_for` and `reuse_event_id_for` derive the IDs .NET's finalization gives a run's reuse evidence.
 - Telemetry reports `lifecycle.commit` and `confidence.apply` as .NET does.
+
+### Recording what reuse was worth (contract 1.17)
+
+`ExperienceReuseFeedbackService` is .NET's reuse-feedback service: after a run that was given stored lessons, it records
+which records the run saw, how it came out and what you measured, in the feedback ledger
+(`InMemoryExperienceReuseFeedbackStore`, or `PostgresExperienceReuseFeedbackStore` running `sql/reuse-feedback.sql`),
+and then, only for the records an accepted attribution names, applies confidence evidence through the lifecycle service
+above.
+
+```python
+from agentexperience import (
+    ComparativeEvaluationResult, ExperienceLifecycleService, ExperienceReuseFeedback, ExperienceReuseFeedbackService,
+    ReuseMeasure,
+)
+from agentexperience.postgres import PostgresExperienceReuseFeedbackStore, PostgresExperienceStore
+
+lifecycle = ExperienceLifecycleService(PostgresExperienceStore(dsn))           # RecordedOnly by default
+feedback = ExperienceReuseFeedbackService(PostgresExperienceReuseFeedbackStore(dsn), lifecycle)
+
+result = feedback.record(authorization, ExperienceReuseFeedback(
+    feedback_id=feedback_id,                      # the whole submission's idempotency key: keep it for a retry
+    run_id=run_id, scope=scope, exposed_experience_ids=injected_ids,
+    run_outcome="Verified", measure=ReuseMeasure("tool-calls", 7), observed_at=observed_at,
+    trial_label="memory-enabled"))
+result.outcome, result.benefit   # ("Recorded", "Unknown"): exposure alone moves nothing
+```
+
+- **Exposure is not attribution.** Without a `HumanReuseAssessment` or a `ComparativeEvaluationResult` the submission
+  is recorded with benefit `Unknown` and moves nothing; `claimed_benefit` is stored and never acted on. Improvement
+  supports and harm contradicts (and contests), one attributed record at a time, under IDs derived from the feedback and
+  the record (`ExperienceReuseFeedbackService.evidence_id_for` and `event_id_for`), so resubmitting the same feedback
+  (`AlreadyRecorded`) converges instead of counting twice. A record's own store or engine failure is that record's
+  `Failed`, retryable (`result.is_retryable`); a store failure is an `ExperienceStoreError`, a psycopg error or an
+  `OSError`. A failure of the ledger write raises, with nothing recorded.
+- **The validation, every disposition and every reason are .NET's**, byte for byte: a structurally incoherent
+  submission is `Invalid` with nothing written; an attribution that fails its evidence requirements is dropped and the
+  exposure still recorded, with the reason.
+- **What it does not check** (story 27.7): as .NET under `TrustHostSuppliedIdentifiers`, no attribution is verified
+  before the ledger is written (no run lookup, no round or assessment token check, no exposure check), and the evidence
+  is admitted `HostTrusted`. So under the lifecycle service's default (`"RecordedOnly"`) attributed evidence is recorded
+  without moving the record; count it only by opting into `"Counted"`, and only with identifiers from your own
+  bookkeeping, never from an agent.
+- **No key store:** the PostgreSQL ledger writes the rationale in plaintext. A submission a .NET store sealed (its
+  rationale the placeholder `(sealed)`) is a `Conflict` when resubmitted from here; nothing is written either way.
+- **No cancellation:** the service is synchronous, so nothing interrupts a submission part-way; .NET's per-record
+  "Cancelled" reports have no counterpart.
+- Telemetry reports `reuse_feedback` (with `feedback_id` and `run_id`) as .NET does, and a `confidence.apply` per
+  attributed record.
+
+**Finalization's reuse evidence** (.NET's `ExperienceFinalizationOptions.ReuseEvidence = SameTask` and
+`ContradictOnFailure`) is `apply_reuse_evidence`, a call of its own because this port's `finalize` is a pure function.
+Call it once the finalized record is stored, and again, with the stored record, for a run already finalized (a replay
+reports the originals and counts nothing twice); `on_finalized` is a natural place in the MAF integration:
+
+```python
+store.insert_finalized(authorization.bounds, finalized, actor=principal)
+report = apply_reuse_evidence(lifecycle, authorization, finalized.record,
+                              reuse_evidence="SameTask", contradict_on_failure=False)   # "Off" by default
+```
+
+It submits Machine evidence about each record the run was given on the same task, bound to the round finalization
+closed (Supporting for a verified run, Contradicting for a failed one under `contradict_on_failure`), and reports every
+record, skipped or not, never raising. It has no time budget (.NET's `ReuseEvidenceTimeout`): the calls are synchronous.
+The MAF integration does not run it on its own yet (.NET's `AgentExperienceOptions.ReuseEvidence`).
 
 ### Measuring benefit: the injection holdout
 
@@ -748,7 +812,8 @@ telemetry.enable()  # the global tracer and meter providers your application con
 It emits `inject`, `retrieve`, `record_injection`, `record_holdout`, `record_provider_holdout` (with a measured memory
 provider), `benefit_refresh` (with the benefit policy on),
 `capture.start_run`, `capture.append_attempt`, `capture.complete_run`, `verify`, `reflect`, `finalize` and `index` (the
-background embedding write): the operations this port performs, and no other. The core and the agent integration import no OpenTelemetry; they call the small hook in `agentexperience.observer`
+background embedding write), and from the host's own calls `lifecycle.commit`, `confidence.apply` and `reuse_feedback`:
+the operations this port performs, and no other. The core and the agent integration import no OpenTelemetry; they call the small hook in `agentexperience.observer`
 (one `None` check when nothing is registered), and `agentexperience.telemetry` is the adapter. It configures no SDK and
 no exporter, and a provider, exporter or observer that raises is swallowed and never reaches the agent. Attributes
 carry identifiers and counts only, never record content, task text, scopes or exception messages.
@@ -779,7 +844,8 @@ which shares lessons with .NET agents on the same database.
 - **The error class.** `error_class` reduces a captured error to its short class.
 - **PostgreSQL** (the `postgres` extra, psycopg 3). `PostgresExperienceStore` writes a finalized record and its
   initial event as the application role, reads records back, runs the contract's text search, records injections
-  (`record_injection`, contract 1.4), and commits lifecycle events (`sql/lifecycle.sql`, contract 1.16). It ships the contract's SQL files and runs them as written. `rank` applies the
+  (`record_injection`, contract 1.4), and commits lifecycle events (`sql/lifecycle.sql`, contract 1.16);
+  `PostgresExperienceReuseFeedbackStore` is the reuse-feedback ledger (`sql/reuse-feedback.sql`, contract 1.17). It ships the contract's SQL files and runs them as written. `rank` applies the
   contract's safety checks, truncation, eligibility and ranking to the rows the search returns, under the retrieval
   policy (contract 1.12) when one is given. The store needs a schema the .NET
   migrator applied, with row-level security on; it never creates or alters a schema object. The application role's
@@ -787,8 +853,7 @@ which shares lessons with .NET agents on the same database.
   `sql/application-role-privileges.sql`, then `sql/application-role-privileges-1.4.sql` (without the second, every
   injection is still made and its record is reported `NotRecorded`).
 
-It does nothing outside contract 1.x: no grants, crypto-shredding or provenance signing, no reuse feedback, and no
-verified independence (the lifecycle, contract 1.16, admits evidence as host-trusted). It writes no logs at all, so no
+It does nothing outside contract 1.x: no grants, crypto-shredding or provenance signing, and no verified independence (the lifecycle, contract 1.16, admits evidence as host-trusted). It writes no logs at all, so no
 record content is ever logged.
 
 The pieces that need no run or database:
@@ -908,20 +973,21 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.16: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.17: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and every
 injection option that needs no session (the receiving agent's gate, the model-authored policy, the request resolver
 and the host's decision),
 injection recording, the lessons view with its HTML page and the export of measured lessons, the model-backed
 reflector and the content guard for model-authored lessons, computing confidence (the default rule, a host engine and
 assessment tokens), a stored lesson's lifecycle (transitions, reuse evidence and the confidence read, with host-trusted
-evidence), the injection holdout, its benefit estimate and the benefit policy that acts on
+evidence), reuse feedback and finalization's reuse evidence, the injection holdout, its benefit estimate and the benefit policy that acts on
 it, measuring another memory provider, and telemetry. These .NET features have no counterpart
 here, so a mixed .NET and Python deployment should keep them on the .NET side:
 
-- **Reuse feedback** (story 27.6c) and **de-indexing on leaving eligibility** (story 27.6d).
+- **De-indexing on leaving eligibility** (story 27.6d), and finalization's reuse evidence run by the MAF integration
+  on its own (`AgentExperienceOptions.ReuseEvidence`; call `apply_reuse_evidence` from `on_finalized`).
 - **Verified independence** (story 27.7): the lifecycle admits every piece of evidence `HostTrusted`; it verifies no
-  run, round or assessment token.
+  run, round or assessment token, and reuse feedback verifies no attribution.
 - **Session tracking and withdrawal notices** (`SessionLimits`, `SessionStateKey`; story 27.6): the port keeps no
   per-session account of what it injected, so it never deduplicates, budgets a session or retracts a record; a held-out
   invocation is always `Withheld`, never a notices-only `Retracted` block.

@@ -134,11 +134,9 @@ def test_the_cross_language_writer_records_and_reads_over_postgres(pg_server: Se
     assert results[1]["exposures"] == results[0]["exposures"]
     read = results[2]
     assert read["history"]["outcome"] == "Found"
+    # Only the first fixture step ran: its one event, and the record at the revision it produced.
     assert [event["event_id"] for event in read["history"]["events"]] == [
-        event["event_id"] for event in expected["histories"][0]["events"]
+        expected["histories"][0]["events"][0]["event_id"]
     ]
     assert read["confidence"]["outcome"] == "Found"
-    assert (
-        read["confidence"]["report"]["supportingValidations"]
-        == expected["records"][0]["columns"]["supporting_validations"]
-    )
+    assert read["confidence"]["report"]["revision"] == read["history"]["revision"] == 2
