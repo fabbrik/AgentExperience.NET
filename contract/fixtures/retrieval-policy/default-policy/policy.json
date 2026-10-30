@@ -1,0 +1,26 @@
+{
+  "description": "The default policy: a 500 ms timeout, a 0.5 confidence floor, no expiry, a 30-day recency half-life, 50 candidates and no confidence decay. The ranking is contract 1.0's, exactly: a year-old record is not expired and a record naming a domain does not decay. A record the store should never have returned (a Candidate) is excluded as IneligibleStatus.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {},
+  "excludeModelAuthored": false,
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.5,
+    "maxAgeTicks": null,
+    "recencyHalfLifeTicks": 25920000000000,
+    "candidateLimit": 50,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": null
+  },
+  "confidenceDecay": null
+}
