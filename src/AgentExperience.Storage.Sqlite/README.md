@@ -11,8 +11,9 @@ a coding agent, a CLI, an MCP server, a single agent on one machine. Set it up w
 
 It implements, over one database file, the storage ports the learning loop needs: the Experience Record store with its
 audited lifecycle (`SqliteExperienceRecordStore`), full-text search over it with SQLite's FTS5
-(`SqliteExperienceCandidateSource`), failure-signature lookup (`SqliteExperienceSignatureSource`) and the reuse-feedback
-ledger. Each passes the same store conformance suite as the PostgreSQL adapter.
+(`SqliteExperienceCandidateSource`), failure-signature lookup (`SqliteExperienceSignatureSource`), the reuse-feedback
+ledger, and the run store (`SqliteExperienceRunStore`) that keeps each completed run so it can be finalized in a later
+process. Each passes the same store conformance suite as the PostgreSQL adapter.
 
 Requires `Microsoft.Data.Sqlite` **10.0.12** (which brings the bundled native SQLite, built with FTS5) and
 `Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.12**, or any later release in the same major. Targets

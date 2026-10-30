@@ -168,6 +168,7 @@ public sealed class ExperienceFinalizationService
     private readonly ExperienceIndexingService? _indexingService;
     private readonly ProvenanceSigner? _signer;
     private readonly ISanitizer _reflectionSanitizer;
+    private readonly IExperienceRunStore? _runStore;
 
     /// <summary>Creates a finalization service over the capture snapshot, the reflector, the record store, and Core's lifecycle owner, with no indexing hook.</summary>
     /// <param name="captureService">Where the completed run's sanitized snapshot is read from.</param>
@@ -282,6 +283,52 @@ public sealed class ExperienceFinalizationService
         ExperienceProvenanceSigningOptions? provenanceSigning,
         ISanitizer? reflectionSanitizer,
         ExperienceFinalizationOptions? options)
+        : this(captureService, reflector, store, lifecycleService, indexingService, indexingTimeout, provenanceSigning, reflectionSanitizer, options, runStore: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a finalization service with every optional collaborator, and a run store it finalizes runs from when the
+    /// capture service no longer holds them: finalizing later, in another process.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Finalizing later.</b> When <paramref name="captureService"/> does not hold the requested run -- the process that
+    /// captured it has ended, or retention dropped it -- the run is read from <paramref name="runStore"/>
+    /// (<see cref="IExperienceRunStore.GetAsync"/>, within the request's authorization), and finalization goes on exactly as
+    /// for a run held in memory: the same evaluation against the request's own closed round and evidence, the same
+    /// authorization and storage decision, the same derived identifiers, so finalizing it twice, or in two processes, is the
+    /// same <see cref="FinalizationOutcome.AlreadyFinalized"/> replay. A run held in memory is always preferred.
+    /// </para>
+    /// <para>
+    /// After a durable outcome, the stored run is marked finalized (<see cref="IExperienceRunStore.MarkFinalizedAsync"/>),
+    /// best effort: a failure to mark it leaves it listed as waiting, and finalizing it again replays and marks it then.
+    /// </para>
+    /// </remarks>
+    /// <param name="captureService">Where the completed run's sanitized snapshot is read from first.</param>
+    /// <param name="reflector">Turns the evaluated run into an auditable reflection.</param>
+    /// <param name="store">The durable Experience Record store.</param>
+    /// <param name="lifecycleService">Core's lifecycle owner, which stamps and commits the initial event.</param>
+    /// <param name="indexingService">Optional. Embeds the committed record's sanitized retrieval summary after the fact.</param>
+    /// <param name="indexingTimeout">How long that hook may take before it is abandoned and reported as retryable. Must be strictly positive. <see langword="null"/> means <see cref="DefaultIndexingTimeout"/>.</param>
+    /// <param name="provenanceSigning">Optional. The key ring new records are signed under.</param>
+    /// <param name="reflectionSanitizer">Optional. The host sanitizer every reflection's free text goes through.</param>
+    /// <param name="options">Optional. The finalization options. <see langword="null"/> means <see cref="ExperienceFinalizationOptions.Default"/>.</param>
+    /// <param name="runStore">Optional. Where completed runs are kept for finalizing later.</param>
+    /// <exception cref="ArgumentNullException">Any non-optional argument is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="provenanceSigning"/> is set and <paramref name="lifecycleService"/> does not check its current key, or one of its keys is the assessment token key.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="indexingTimeout"/> is not strictly positive.</exception>
+    public ExperienceFinalizationService(
+        IExperienceCaptureService captureService,
+        IExperienceReflector reflector,
+        IExperienceRecordStore store,
+        ExperienceLifecycleService lifecycleService,
+        ExperienceIndexingService? indexingService,
+        TimeSpan? indexingTimeout,
+        ExperienceProvenanceSigningOptions? provenanceSigning,
+        ISanitizer? reflectionSanitizer,
+        ExperienceFinalizationOptions? options,
+        IExperienceRunStore? runStore)
     {
         ArgumentNullException.ThrowIfNull(captureService);
         ArgumentNullException.ThrowIfNull(reflector);
@@ -289,6 +336,7 @@ public sealed class ExperienceFinalizationService
         ArgumentNullException.ThrowIfNull(lifecycleService);
 
         _captureService = captureService;
+        _runStore = runStore;
         _reflector = reflector;
         _store = store;
         _lifecycleService = lifecycleService;
@@ -514,6 +562,7 @@ public sealed class ExperienceFinalizationService
             ExperienceDiagnostics.Tag(operation, ExperienceDiagnostics.RunIdAttribute, request.RunId.ToString("D"));
 
             result = await FinalizeCoreAsync(request, cursor, cancellationToken).ConfigureAwait(false);
+            await MarkStoredRunFinalizedAsync(request, result, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -545,6 +594,30 @@ public sealed class ExperienceFinalizationService
 
         ExperienceDiagnostics.Succeeded(operation, ExperienceOperationNames.Finalize, result.Outcome.ToString());
         return result;
+    }
+
+    /// <summary>
+    /// Marks the run's stored copy finalized after a durable outcome, when there is a run store. Best effort: a store that
+    /// throws or refuses leaves the run listed as waiting, and a later finalization replays and marks it then. Cancellation
+    /// still propagates.
+    /// </summary>
+    private async Task MarkStoredRunFinalizedAsync(FinalizeExperienceRequest request, FinalizeExperienceResult result, CancellationToken cancellationToken)
+    {
+        if (_runStore is null || !result.IsDurable || result.Record is not { } record)
+        {
+            return;
+        }
+
+        try
+        {
+            _ = await _runStore
+                .MarkFinalizedAsync(request.Authorization, record.Scope, request.RunId, TruncateToMicroseconds(request.FinalizedAt), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Best effort, by design: the record is durable whatever happens here.
+        }
     }
 
     /// <summary>
@@ -590,11 +663,17 @@ public sealed class ExperienceFinalizationService
 
         cursor.Stage = FinalizationStage.Load;
 
-        // Stage 1 -- Load. An unknown or unfinished run is an expected condition, not an exception.
+        // Stage 1 -- Load. An unknown or unfinished run is an expected condition, not an exception. A run the capture
+        // service no longer holds is read from the run store, when there is one: finalizing later, in another process.
         ExperienceRun? run;
         try
         {
             _ = _captureService.TryGetRun(request.RunId, out run);
+            if (run is null && _runStore is not null)
+            {
+                var stored = await _runStore.GetAsync(request.Authorization, request.RunId, cancellationToken).ConfigureAwait(false);
+                run = stored?.Outcome == ExperienceRunStoreOutcome.Found ? stored.Run?.Run : null;
+            }
         }
         catch (OperationCanceledException)
         {

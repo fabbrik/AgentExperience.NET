@@ -15,7 +15,7 @@ internal static class ExperiencePayload
     /// <summary>The payload version written by this adapter.</summary>
     public const int CurrentVersion = 1;
 
-    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.General)
+    internal static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.General)
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = false,

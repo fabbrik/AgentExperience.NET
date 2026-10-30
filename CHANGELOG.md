@@ -444,7 +444,7 @@ the six Go modules at one version.
 - **Experiment.** `experiments/AgentExperience.LiveReuse/recipe-amendment.md` proposes (not registered, not run) a
   recipe arm for the real-task experiment.
 
-### A SQLite store (story 28.7)
+### A SQLite store and durable capture (story 28.7)
 
 - **New package `AgentExperience.Storage.Sqlite`**: durable storage in one local SQLite file, for a single agent on one
   machine (a coding agent, a CLI, an MCP server). `.UseSqlite(path)` on the one-call builder (or
@@ -462,6 +462,17 @@ the six Go modules at one version.
   PostgreSQL. The retrieval benchmark gains a SQLite column (`GoldenSqliteReport.txt`).
 - **Erasure**: `SqliteExperienceRecordStore.DeleteAsync` leaves a payload-free tombstone and removes the record's search
   text, signatures, events, evidence, injection summary and holdout rows in one transaction.
+- **Durable capture**: a new optional port, `IExperienceRunStore` (save a completed run by run ID and completion event,
+  read it within an authorization, list a scope's unfinalized runs, mark one finalized, delete one), implemented by
+  `SqliteExperienceRunStore` (registered by `UseSqlite`) and `PostgresExperienceRunStore` (opt-in,
+  `AddAgentExperiencePostgresRunStore`, migration `0032_experience_runs.sql` with its grants and row-level security
+  policies; refused in crypto-shredding mode). With one registered, the capture service saves each run as it completes
+  it (new `InMemoryExperienceCaptureService` constructor; `CompleteRunResult.RunStoreFailure` reports a failed save, which
+  never fails the run, and the MAF adapter reports it at the new `ExperienceCaptureFailureStage.RunStore`), and
+  finalization reads a run the capture service no longer holds from the store (new `ExperienceFinalizationService`
+  constructor), with the same verification, closed-round and idempotency rules, then marks it finalized. Erasing a
+  record deletes the stored run it came from. The run store conformance suite runs on both stores; a run completed in
+  one service provider is finalized by another on SQLite and on PostgreSQL. Without a run store nothing changes.
 - **Not provided**: sharing grants and the access log, encryption and crypto-shredding, row-level security and database
   roles, vectors, retention sweeps. Internally, the PostgreSQL payload's attempt, outcome, environment and provenance
   mappings are each one method now, shared with the SQLite store; nothing stored changes.

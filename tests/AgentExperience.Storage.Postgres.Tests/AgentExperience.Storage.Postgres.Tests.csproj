@@ -27,6 +27,7 @@
     <Compile Include="..\Shared\LegacyInitialEventIds.cs" Link="Shared\LegacyInitialEventIds.cs" />
     <!-- Waits until a statement is really parked on a lock, instead of sleeping (story 19.3). -->
     <Compile Include="..\Shared\PostgresLockWait.cs" Link="Shared\PostgresLockWait.cs" />
+    <Compile Include="..\Shared\DurableCaptureScenario.cs" Link="Shared\DurableCaptureScenario.cs" />
   </ItemGroup>
 
   <ItemGroup>

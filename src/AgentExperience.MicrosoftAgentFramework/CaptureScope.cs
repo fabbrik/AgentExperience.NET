@@ -745,6 +745,11 @@ internal sealed class CaptureScope
             else
             {
                 Volatile.Write(ref _completedRun, 1);
+                if (completed.RunStoreFailure is { } runStoreFailure)
+                {
+                    // Reported on its own stage, and finalization goes on: the completion itself landed.
+                    ReportFailure(ExperienceCaptureFailureStage.RunStore, runStoreFailure, completed.RunStoreException);
+                }
             }
         }
         catch (Exception ex)

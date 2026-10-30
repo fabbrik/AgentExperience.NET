@@ -49,6 +49,15 @@ namespace AgentExperience.Storage.Sqlite
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceInjectionRecordResult> RecordInjectionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, System.DateTimeOffset injectedAt, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceHoldoutRecordResult> RecordProviderHoldoutAssignmentAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.ProviderHoldoutAssignment assignment, System.Threading.CancellationToken cancellationToken) { }
     }
+    public sealed class SqliteExperienceRunStore : AgentExperience.Abstractions.IExperienceRunStore
+    {
+        public SqliteExperienceRunStore(string connectionString, System.TimeProvider? timeProvider = null) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunStoreResult> DeleteAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid runId, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunGetResult> GetAsync(AgentExperience.Abstractions.AuthorizationContext authorization, System.Guid runId, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunListResult> ListUnfinalizedAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRunQuery query, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunStoreResult> MarkFinalizedAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid runId, System.DateTimeOffset finalizedAt, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunStoreResult> SaveAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRun run, System.Guid completionEventId, System.Threading.CancellationToken cancellationToken) { }
+    }
     public sealed class SqliteExperienceSignatureSource : AgentExperience.Abstractions.IExperienceSignatureSource
     {
         public SqliteExperienceSignatureSource(AgentExperience.Storage.Sqlite.SqliteExperienceRecordStore store) { }

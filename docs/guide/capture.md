@@ -132,7 +132,7 @@ Sanitization is name-based: it cannot guarantee that every arbitrary secret hidi
 | `CaptureToolCalls` | `true` | Registers function middleware. Requires a `ChatClientAgent`. |
 | `ClassifyToolResult` | none | Says that a tool call which *returned* failed: return an error class to record it as failed, or `null` to record it as returned. See [Tools that report failure in their result](#tools-that-report-failure-in-their-result). |
 | `FinalizationTimeout` | 5 s | Upper bound on the whole post-invocation step: appending the attempt, completing the run, and — when `FinalizationService` is set — finalizing it into a durable Experience Record. With finalization configured this bounds database round trips, not just in-memory capture, so 5 s may be too tight. Must be positive and at most `uint.MaxValue - 1` milliseconds. It uses its own token, never the caller's. |
-| `OnCaptureFailure` | none | Called when capture fails, at most once per failure stage per run. The stages are `ResolveRun`, `StartRun`, `Finalize` (recording the attempt and completing the run in memory), `ToolCall`, `Finalization` (turning the completed run into a durable Experience Record), `RecordExposure` (recording which records the context provider delivered into the run), `ToolResultClassification` (`ClassifyToolResult` threw or named an invalid class), `Embeddings` (the one-call setup cannot use the embedding generator) and `Recall` ([recall at the moment of failure](injection.md#recall-at-the-moment-of-failure) has no signature source). Exceptions it throws are swallowed. |
+| `OnCaptureFailure` | none | Called when capture fails, at most once per failure stage per run. The stages are `ResolveRun`, `StartRun`, `Finalize` (recording the attempt and completing the run in memory), `ToolCall`, `Finalization` (turning the completed run into a durable Experience Record), `RecordExposure` (recording which records the context provider delivered into the run), `ToolResultClassification` (`ClassifyToolResult` threw or named an invalid class), `Embeddings` (the one-call setup cannot use the embedding generator), `Recall` ([recall at the moment of failure](injection.md#recall-at-the-moment-of-failure) has no signature source) and `RunStore` (the run was completed, but the run store could not keep it for [finalizing later](#finalizing-later)). Exceptions it throws are swallowed. |
 | `FinalizationService` | none | Core's `ExperienceFinalizationService`. When set, each successfully captured run is finalized into a durable Experience Record. Requires exactly one of `ResolveFinalizationAsync` and `ResolveFinalization`. |
 | `ResolveFinalizationAsync` | none | Builds the `FinalizeExperienceRequest` for one completed run, awaited with the `FinalizationTimeout`-bounded token (never the caller's), so it can run checks or read CI for the evidence. Return `null` to skip finalizing that run. The preferred form. A throw or a faulted task is reported through `OnCaptureFailure` exactly as a synchronous throw is. |
 | `ResolveFinalization` | none | The synchronous form of `ResolveFinalizationAsync`, unchanged. With `FinalizationService` set, exactly one of the two is required; setting both, or either without `FinalizationService`, throws `ArgumentException` at `UseExperienceCapture`. |
@@ -265,8 +265,9 @@ running several at once keeps each cycle's identifier with that task's own state
 
 ## How long runs are kept
 
-The default capture service (`InMemoryExperienceCaptureService`) holds runs in process memory, so it bounds how many
-*completed* runs it keeps:
+The default capture service (`InMemoryExperienceCaptureService`) holds runs in process memory (and, with a run store,
+also keeps each completed run durably: see [Finalizing later](#finalizing-later)), so it bounds how many *completed* runs
+it keeps:
 
 - **By age.** A completed run is dropped once it is older than `CaptureLimits.CompletedRunRetention` (default 24
   hours), measured from when the service recorded the completion, on the `TimeProvider`'s monotonic timestamp, so a
@@ -346,6 +347,41 @@ new CaptureLimits(MaxAttemptsPerRun: 10, MaxToolCallsPerAttempt: 50, MaxResultLe
 can hold up to `MaxOpenRuns + MaxRetainedCompletedRuns` runs at once, not only the completed ones. At the defaults that
 is 20,000 runs: with the per-run limits of the earlier example (about 8 MB per run at worst), about 160 GB at worst,
 twice the completed-only figure above. Size the two counts so their sum fits your memory budget.
+
+## Finalizing later
+
+The default capture service keeps runs in process memory, so a run can be finalized only by the process that captured
+it. When the verdict arrives later -- a CI result, a merged pull request -- after that process has ended, register an
+`IExperienceRunStore`:
+
+- `.UseSqlite(path)` registers one (`SqliteExperienceRunStore`, in the same file as the records).
+- On PostgreSQL it is opt-in: `services.AddAgentExperiencePostgresRunStore()`, after migrating to `0032` and re-running
+  the privileges call. It is not available in crypto-shredding mode, because a stored run is not sealed.
+
+With a run store registered, `AddAgentExperienceCore` wires it into both services:
+
+- **The capture service writes each run through as it completes it.** `CompleteRunAsync` saves the completed run --
+  already sanitized: capture sanitized every attempt before it kept it -- under its completion event before it returns.
+  Nothing is written on the path of a tool call or an attempt. A save that throws or is refused never fails the run: the
+  completion stands, and `CompleteRunResult.RunStoreFailure` says why (the MAF adapter reports it through
+  `OnCaptureFailure` at stage `RunStore`). Completing the run again with the same completion event saves it again. A run
+  the service completes itself because it stayed open past `MaxOpenRunAge` is not saved.
+- **Finalization reads a run the capture service no longer holds from the run store**, within the request's
+  authorization, and then does exactly what it does for a run held in memory: the same evaluation against the request's
+  own closed round and evidence, the same storage decision, the same derived record and event IDs. Finalizing the run
+  twice, or from two processes, is the usual `AlreadyFinalized` replay. After a durable outcome it marks the stored run
+  finalized (best effort).
+
+```csharp
+// Process 1, the agent's run: captured and completed as usual; the run is now in the file.
+// Process 2, when CI reports back:
+var result = await finalization.FinalizeAsync(new FinalizeExperienceRequest(
+    runId, authorization, closedRound, requiredChecks, evidence, artifactRevision, StorageDecision.Permit, timeProvider.GetUtcNow()));
+```
+
+`IExperienceRunStore.ListUnfinalizedAsync` pages through a scope's runs still waiting for a verdict (optionally only
+those that ended before an instant), and `DeleteAsync` removes one: delete runs after finalization, or after a retention
+of your choosing -- nothing sweeps them for you. Erasing a record also deletes the stored run it came from.
 
 ## Supported agent types
 

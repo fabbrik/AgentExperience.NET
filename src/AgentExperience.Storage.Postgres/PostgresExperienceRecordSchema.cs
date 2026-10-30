@@ -460,6 +460,20 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string GrantRecipeExcerptsScriptName = "0031_grant_recipe_excerpts.sql";
 
+    /// <summary>
+    /// The script that keeps completed runs for finalizing later: it creates <c>agent_experience.experience_runs</c>, one
+    /// row per completed run (its scope, completion event, execution status, instants and the sanitized run as version-1
+    /// JSON), which <see cref="PostgresExperienceRunStore"/> saves, reads, lists, marks finalized and deletes; a trigger
+    /// that deletes a record's stored run when the record is erased (and no other live record came from that run); and the
+    /// table's row-level security policies, on <c>0019</c>'s helpers.
+    /// </summary>
+    /// <remarks>
+    /// It adds a table to the application role's manifest: re-run
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// after migrating. Nothing writes the table unless the host registers the run store. No existing table is rewritten.
+    /// </remarks>
+    public const string ExperienceRunsScriptName = "0032_experience_runs.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -467,7 +481,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0031</c> are present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0032</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -499,6 +513,7 @@ public static class PostgresExperienceRecordSchema
         ExperienceProviderHoldoutAssignmentsScriptName,
         ExperienceFailureSignaturesScriptName,
         GrantRecipeExcerptsScriptName,
+        ExperienceRunsScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

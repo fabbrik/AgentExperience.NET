@@ -2,7 +2,7 @@ namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
 /// The canonical row-level security policies: every <c>rls_*</c> policy <c>0019</c> creates on this
-/// package's tables, <c>0026</c> on <c>experience_injections</c>, <c>0027</c> on <c>experience_holdout_assignments</c>, <c>0029</c> on <c>experience_provider_holdout_assignments</c>, <c>0030</c> on <c>experience_failure_signatures</c>, and the vectors package's <c>0020</c> creates on
+/// package's tables, <c>0026</c> on <c>experience_injections</c>, <c>0027</c> on <c>experience_holdout_assignments</c>, <c>0029</c> on <c>experience_provider_holdout_assignments</c>, <c>0030</c> on <c>experience_failure_signatures</c>, <c>0032</c> on <c>experience_runs</c>, and the vectors package's <c>0020</c> creates on
 /// <c>experience_embeddings</c>, as the exact DDL those scripts contain. The privileges call re-runs this DDL, under
 /// the migrator's lock, every time it enables row-level security, so a policy altered or dropped by hand since the
 /// migration is put back before anything is enabled; and
@@ -385,6 +385,13 @@ $body$;
             "              AND r.deleted_at IS NULL)";
         policies.Add(new(ApplicationRolePrivileges.FailureSignaturesTable, "rls_failure_signatures_select", "SELECT", Readable(), null));
         policies.Add(new(ApplicationRolePrivileges.FailureSignaturesTable, "rls_failure_signatures_insert", "INSERT", null, $"{scope}\n        AND {signedRecord}"));
+
+        // Story 28.7 (0032): a stored run, in its own scope only, for every command. It is a run, not a record: a grant never
+        // admits one.
+        policies.Add(new(ApplicationRolePrivileges.RunsTable, "rls_runs_select", "SELECT", scope, null));
+        policies.Add(new(ApplicationRolePrivileges.RunsTable, "rls_runs_insert", "INSERT", null, scope));
+        policies.Add(new(ApplicationRolePrivileges.RunsTable, "rls_runs_update", "UPDATE", scope, scope));
+        policies.Add(new(ApplicationRolePrivileges.RunsTable, "rls_runs_delete", "DELETE", scope, null));
 
         policies.Add(new(ApplicationRolePrivileges.EmbeddingsTable, "rls_embeddings_select", "SELECT", Readable(), null));
         policies.Add(new(ApplicationRolePrivileges.EmbeddingsTable, "rls_embeddings_insert", "INSERT", null, scope));

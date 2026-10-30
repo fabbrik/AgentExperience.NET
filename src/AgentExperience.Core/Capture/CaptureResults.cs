@@ -208,4 +208,17 @@ public sealed record RecordExposureResult(RecordExposureOutcome Outcome, string?
 /// <param name="Reason">Optional, auditable explanation, e.g. why a completion attempt conflicted.</param>
 public sealed record CompleteRunResult(
     CompleteRunOutcome Outcome,
-    string? Reason);
+    string? Reason)
+{
+    /// <summary>
+    /// When the capture service keeps completed runs in an <see cref="IExperienceRunStore"/> and saving this one failed: a
+    /// content-free description of the failure; otherwise <see langword="null"/>. The completion itself stands either way
+    /// -- the run is completed in memory and can still be finalized in this process -- and a later
+    /// <see cref="IExperienceCaptureService.CompleteRunAsync"/> with the same completion event saves it again. Reported,
+    /// never thrown: a run store failure never fails the run.
+    /// </summary>
+    public string? RunStoreFailure { get; init; }
+
+    /// <summary>The exception the run store threw, when <see cref="RunStoreFailure"/> is set and one was; otherwise <see langword="null"/>.</summary>
+    public Exception? RunStoreException { get; init; }
+}

@@ -25,6 +25,12 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Sqlite\AgentExperience.Storage.Sqlite.csproj" />
     <ProjectReference Include="..\AgentExperience.Storage.Conformance\AgentExperience.Storage.Conformance.csproj" />
+    <!-- Durable capture: Core's capture and finalization services over the SQLite stores, as a host wires them. -->
+    <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Shared\DurableCaptureScenario.cs" Link="Shared\DurableCaptureScenario.cs" />
   </ItemGroup>
 
 </Project>

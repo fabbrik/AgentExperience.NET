@@ -57,3 +57,13 @@ public sealed class SqliteSignatureSourceConformanceTests : SignatureSourceConfo
 
     public void Dispose() => _database.Dispose();
 }
+
+/// <summary>Story 28.7: <see cref="SqliteExperienceRunStore"/> passes the run-store conformance suite.</summary>
+public sealed class SqliteRunStoreConformanceTests : RunStoreConformanceTests, IDisposable
+{
+    private readonly SqliteTestDatabase _database = new();
+
+    protected override IExperienceRunStore CreateStore() => new SqliteExperienceRunStore(_database.ConnectionString);
+
+    public void Dispose() => _database.Dispose();
+}

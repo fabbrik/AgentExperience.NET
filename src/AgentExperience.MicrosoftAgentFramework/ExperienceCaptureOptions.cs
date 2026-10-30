@@ -264,6 +264,14 @@ public enum ExperienceCaptureFailureStage
     /// excerpt, exactly as it would be with no callback. Reported once per run, naming only the exception's type.
     /// </summary>
     RecipeExcerpt,
+
+    /// <summary>
+    /// The run was completed, but the capture service could not keep it in its run store (the storage's
+    /// <see cref="IExperienceRunStore"/>, which lets a later process finalize it): the store threw or refused it. The
+    /// completion stands and finalization in this process goes on; only finalizing it in a later process is lost, unless
+    /// the run is completed again with the same completion event.
+    /// </summary>
+    RunStore,
 }
 
 /// <summary>

@@ -8,8 +8,8 @@ public sealed partial class SqliteExperienceRecordStore
 {
     /// <summary>
     /// Erases one record in exactly <paramref name="scope"/>: its payload, its task ID, its search text, its failure
-    /// signatures, its lifecycle events and confidence evidence, its injection summary and every holdout row naming it (or
-    /// its run) are removed in one transaction, and a payload-free tombstone stays under its ID, so the ID is never reused
+    /// signatures, its lifecycle events and confidence evidence, its injection summary, every holdout row naming it (or
+    /// its run) and the stored run it came from (when no other live record came from it) are removed in one transaction, and a payload-free tombstone stays under its ID, so the ID is never reused
     /// and the run it came from can never be finalized into it again. Erasing a tombstone again changes nothing.
     /// </summary>
     /// <remarks>
@@ -86,6 +86,12 @@ public sealed partial class SqliteExperienceRecordStore
                     "DELETE FROM experience_holdout_assignments WHERE experience_id = $id",
                     $"DELETE FROM experience_holdout_assignments WHERE run_id = $run AND {ScopePredicate}",
                     $"DELETE FROM experience_provider_holdout_assignments WHERE run_id = $run AND {ScopePredicate}",
+
+                    // The stored run it was finalized from holds the same captured content: gone too, when no other live
+                    // record in the tenant came from that run.
+                    "DELETE FROM experience_runs WHERE run_id = $run AND tenant_id = $tenant_id AND NOT EXISTS ("
+                    + "SELECT 1 FROM experience_records r WHERE r.tenant_id = $tenant_id AND r.source_run_id = $run "
+                    + "AND r.deleted_at IS NULL AND r.experience_id <> $id)",
                 ];
                 foreach (var statement in statements)
                 {

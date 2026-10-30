@@ -31,6 +31,9 @@
          run's attempts) is stored in exactly the same JSON by both durable stores, and a field added to it is added to
          both. It keeps that project's namespace; it is internal. -->
     <Compile Include="..\AgentExperience.Storage.Postgres\ExperiencePayload.cs" Link="Shared\ExperiencePayload.cs" />
+    <Compile Include="..\AgentExperience.Storage.Postgres\ExperienceRunPayload.cs" Link="Shared\ExperienceRunPayload.cs" />
+    <!-- The run store's validation rules, shared with the PostgreSQL run store. -->
+    <Compile Include="..\Shared\ExperienceRunValidator.Shared.cs" Link="Shared\ExperienceRunValidator.Shared.cs" />
     <!-- The in-memory candidate source's query terms (stopwords, minimum length, Unicode normalization), so the two
          development-friendly stores read a query the same way. -->
     <Compile Include="..\AgentExperience.Storage.InMemory\SearchText.cs" Link="Shared\SearchText.cs" />

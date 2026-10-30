@@ -99,6 +99,7 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     private readonly ISanitizer _sanitizer;
     private readonly CaptureLimits _limits;
     private readonly TimeProvider _timeProvider;
+    private readonly IExperienceRunStore? _runStore;
     private readonly ConcurrentDictionary<Guid, RunState> _runs = new();
 
     // Completed runs still held, earliest completion first. Guarded by _retentionGate, which is only ever
@@ -136,6 +137,31 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     /// <param name="limits">The positive capture limits this instance enforces.</param>
     /// <param name="timeProvider">The clock a completed run's age is measured on, against <see cref="CaptureLimits.CompletedRunRetention"/>.</param>
     public InMemoryExperienceCaptureService(ISanitizer sanitizer, CaptureLimits limits, TimeProvider timeProvider)
+        : this(sanitizer, limits, timeProvider, runStore: null)
+    {
+    }
+
+    /// <summary>Creates an <see cref="InMemoryExperienceCaptureService"/> that also keeps every run it completes in a run store.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Write-through, at completion.</b> When <see cref="CompleteRunAsync"/> records a completion -- or is called again
+    /// with the same completion event -- the completed run, already sanitized, is saved to <paramref name="runStore"/>
+    /// before the call returns, so a process that ends right after completing a run has kept it, and finalization can read
+    /// it in a later process. Nothing is written on the path of a tool call or an attempt. The save runs under an
+    /// authorization bounded to exactly the run's own scope.
+    /// </para>
+    /// <para>
+    /// <b>It never fails the run.</b> A save that throws or is refused leaves the completion standing and is reported on
+    /// the result (<see cref="CompleteRunResult.RunStoreFailure"/>); the MAF adapter reports it through its capture failure
+    /// callback. A run this service completes itself because it stayed open past <see cref="CaptureLimits.MaxOpenRunAge"/>
+    /// is not saved: it was abandoned, and has no verdict to wait for.
+    /// </para>
+    /// </remarks>
+    /// <param name="sanitizer">The port every raw tool-call/attempt field is sanitized through before storage.</param>
+    /// <param name="limits">The positive capture limits this instance enforces.</param>
+    /// <param name="timeProvider">The clock a completed run's age is measured on, against <see cref="CaptureLimits.CompletedRunRetention"/>.</param>
+    /// <param name="runStore">Where completed runs are kept; <see langword="null"/> keeps them in memory only, as the other constructors do.</param>
+    public InMemoryExperienceCaptureService(ISanitizer sanitizer, CaptureLimits limits, TimeProvider timeProvider, IExperienceRunStore? runStore)
     {
         ArgumentNullException.ThrowIfNull(sanitizer);
         ArgumentNullException.ThrowIfNull(limits);
@@ -144,6 +170,7 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
         _sanitizer = sanitizer;
         _limits = limits;
         _timeProvider = timeProvider;
+        _runStore = runStore;
     }
 
     /// <inheritdoc />
@@ -662,14 +689,12 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     }
 
     /// <summary>The body of <see cref="CompleteRunAsync"/>, unchanged by instrumentation: it neither reads nor writes a span.</summary>
-#pragma warning disable CS1998 // Deliberately async with no internal await: this captures a synchronous ThrowIfCancellationRequested() throw into the returned Task (matching AppendAttemptAsync's contract) instead of letting it escape synchronously at the call site.
     private async Task<CompleteRunResult> CompleteRunCoreAsync(
         Guid runId,
         Guid completionEventId,
         RunExecutionStatus executionStatus,
         DateTimeOffset endedAt,
         CancellationToken cancellationToken)
-#pragma warning restore CS1998
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -680,6 +705,8 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
             return new CompleteRunResult(CompleteRunOutcome.RunNotFound, $"No run with RunId '{runId}' exists.");
         }
 
+        CompleteRunResult result;
+        ExperienceRun completed;
         lock (state.Gate)
         {
             if (state.Completion is { } existing)
@@ -689,16 +716,66 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
                     return new CompleteRunResult(CompleteRunOutcome.Conflict, "The run was already finalized by a different completion event.");
                 }
 
-                return existing.Status == executionStatus && existing.EndedAt == endedAt
-                    ? new CompleteRunResult(CompleteRunOutcome.DuplicateNoOp, Reason: null)
-                    : new CompleteRunResult(CompleteRunOutcome.Conflict, "This completion event was already recorded with different content.");
+                if (existing.Status != executionStatus || existing.EndedAt != endedAt)
+                {
+                    return new CompleteRunResult(CompleteRunOutcome.Conflict, "This completion event was already recorded with different content.");
+                }
+
+                result = new CompleteRunResult(CompleteRunOutcome.DuplicateNoOp, Reason: null);
+            }
+            else
+            {
+                MarkCompleted(runId, state, completionEventId, executionStatus, endedAt);
+                result = new CompleteRunResult(CompleteRunOutcome.Recorded, Reason: null);
             }
 
-            MarkCompleted(runId, state, completionEventId, executionStatus, endedAt);
+            completed = state.Run;
+        }
 
-            return new CompleteRunResult(CompleteRunOutcome.Recorded, Reason: null);
+        // Outside the run's lock: the completed run is immutable from here on, and the save never holds up another call.
+        return _runStore is null ? result : await SaveCompletedRunAsync(completed, completionEventId, result, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Saves a completed run to the run store, under an authorization bounded to exactly its own scope, and reports a failure
+    /// on the result instead of throwing: the completion already stands.
+    /// </summary>
+    private async Task<CompleteRunResult> SaveCompletedRunAsync(ExperienceRun run, Guid completionEventId, CompleteRunResult result, CancellationToken cancellationToken)
+    {
+        var scope = run.Scope;
+        var authorization = new AuthorizationContext(
+            scope.TenantId,
+            RunStorePrincipal,
+            [],
+            _timeProvider.GetUtcNow(),
+            scope.ApplicationId,
+            scope.ProjectId,
+            scope.TeamId,
+            scope.AgentId,
+            scope.UserId);
+        try
+        {
+            var saved = await _runStore!.SaveAsync(authorization, run, completionEventId, cancellationToken).ConfigureAwait(false);
+            return saved?.Outcome is ExperienceRunStoreOutcome.Saved or ExperienceRunStoreOutcome.AlreadySaved
+                ? result
+                : result with
+                {
+                    RunStoreFailure = $"The run store did not keep the run: {saved?.Outcome.ToString() ?? "no result"}"
+                        + (saved is { Errors.Count: > 0 } ? $" ({string.Join(", ", saved.Errors.Select(error => error.Path))})." : "."),
+                };
+        }
+        catch (Exception ex)
+        {
+            return result with
+            {
+                RunStoreFailure = $"The run store threw {ex.GetType().FullName} saving the run.",
+                RunStoreException = ex,
+            };
         }
     }
+
+    /// <summary>The principal a run store save is attributed to: the capture service itself, never a caller.</summary>
+    private const string RunStorePrincipal = "agentexperience-capture";
 
     /// <summary>
     /// The one transition from open to completed, whether the host completes the run or the open-run age

@@ -12,7 +12,9 @@ public static class AgentExperienceSqliteServiceCollectionExtensions
     /// singleton <see cref="IExperienceRecordStore"/>, <see cref="SqliteExperienceCandidateSource"/> as the singleton
     /// <see cref="IExperienceCandidateSource"/>, <see cref="SqliteExperienceSignatureSource"/> as the singleton
     /// <see cref="IExperienceSignatureSource"/>, a SQLite reuse-feedback ledger as the singleton
-    /// <see cref="IExperienceReuseFeedbackStore"/>.
+    /// <see cref="IExperienceReuseFeedbackStore"/>, and <see cref="SqliteExperienceRunStore"/> as the singleton
+    /// <see cref="IExperienceRunStore"/>, so the capture service keeps each completed run and finalization can read it in a
+    /// later process.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -87,6 +89,11 @@ public static class AgentExperienceSqliteServiceCollectionExtensions
         {
             registration.EnsureMigrated();
             return new SqliteExperienceReuseFeedbackStore(connectionString);
+        });
+        services.TryAddSingleton<IExperienceRunStore>(provider =>
+        {
+            registration.EnsureMigrated();
+            return new SqliteExperienceRunStore(connectionString, provider.GetService<TimeProvider>());
         });
 
         return services;

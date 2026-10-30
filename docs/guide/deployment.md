@@ -706,8 +706,9 @@ timeout, and every write is one `BEGIN IMMEDIATE` transaction, so several proces
 from the same revision still have exactly one winner, and a writer waits for another rather than failing.
 
 It registers the record store, the full-text candidate source (FTS5, Porter-stemmed: closer to PostgreSQL's matching
-than to the in-memory store's), the failure-signature source and the reuse-feedback ledger, each passing the same
-conformance suite as PostgreSQL. `SqliteExperienceRecordStore.DeleteAsync` erases a record to a tombstone, removing its
+than to the in-memory store's), the failure-signature source, the reuse-feedback ledger and the run store, each passing
+the same conformance suite as PostgreSQL. With the run store, the capture service keeps each completed run in the file,
+so a later process can finalize it when its verdict arrives ([Finalizing later](capture.md#finalizing-later)). `SqliteExperienceRecordStore.DeleteAsync` erases a record to a tombstone, removing its
 search text and every row that named it; SQLite may keep erased bytes in free pages until `VACUUM`.
 
 **What it does not do.** No sharing grants or access log, no encryption or crypto-shredding, no row-level security or
@@ -799,6 +800,7 @@ then grants exactly this:
 | `experience_holdout_assignments` (`0027`, when it exists) | `SELECT`, `INSERT` — the injection holdout's assignment rows; no `UPDATE` (the insert is `ON CONFLICT DO NOTHING`) and no `DELETE` (erasure removes rows through `0027`'s trigger, as the owner). Contract 1.8's `sql/application-role-privileges-1.8.sql` grants the same |
 | `experience_provider_holdout_assignments` (`0029`, when it exists) | `SELECT`, `INSERT` — a measured memory provider's holdout rows; no `UPDATE` and no `DELETE` (erasure removes rows through `0029`'s trigger, as the owner). Contract 1.11's `sql/application-role-privileges-1.11.sql` grants the same |
 | `experience_failure_signatures` (`0030`, when it exists) | `SELECT`, `INSERT` — each record's failure signatures, written with the record and searched by `PostgresExperienceSignatureSource`; no `UPDATE` and no `DELETE` (erasure removes rows through `0030`'s trigger, as the owner). .NET-only: no contract privileges file grants it |
+| `experience_runs` (`0032`, when it exists) | `SELECT`, `INSERT`, `DELETE`, and `UPDATE` on `finalized_at` only — the run store's staging rows, saved at completion, marked finalized, deleted after finalization or a retention; never the run or its scope columns. .NET-only: no contract privileges file grants it |
 | `experience_embeddings` (when the vectors package created it) | `SELECT`, `INSERT`, `DELETE`, and `UPDATE` on `model_id`, `dimension`, `content_hash`, `source_revision`, `embedding`, `updated_at` only — derived, rebuildable data, not a ledger, but never its record ID or scope columns |
 | `purge_experience_record`, `purge_expired_grants` | `EXECUTE` only with `AllowErasure` |
 | `purge_grant_access` | `EXECUTE` only with `AllowAccessLogPurge` |
@@ -910,7 +912,7 @@ await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
    `experience_records` (tombstones included), `lifecycle_events`, `confidence_evidence`, `experience_grants`,
    `experience_grant_events`, `experience_grant_access`, `reuse_feedback`, `reuse_feedback_exposures`,
    `experience_injections`, `experience_holdout_assignments`, `experience_provider_holdout_assignments`,
-   `experience_failure_signatures`, and
+   `experience_failure_signatures`, `experience_runs`, and
    `experience_embeddings` when the vectors package
    created it;
 4. verifies the result like the privileges — each table enabled and not forced; each policy's name, command,

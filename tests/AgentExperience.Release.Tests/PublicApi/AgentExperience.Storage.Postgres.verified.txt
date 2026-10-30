@@ -12,6 +12,8 @@
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresGrantStore(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, Npgsql.NpgsqlDataSource dataSource) { }
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresReuseFeedbackStore(this Microsoft.Extensions.DependencyInjection.IServiceCollection services) { }
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresReuseFeedbackStore(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, Npgsql.NpgsqlDataSource dataSource) { }
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresRunStore(this Microsoft.Extensions.DependencyInjection.IServiceCollection services) { }
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresRunStore(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, Npgsql.NpgsqlDataSource dataSource) { }
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresStore(this Microsoft.Extensions.DependencyInjection.IServiceCollection services) { }
         public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperiencePostgresStore(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, Npgsql.NpgsqlDataSource dataSource) { }
     }
@@ -173,6 +175,7 @@ namespace AgentExperience.Storage.Postgres
         public const string ExperienceInjectionsScriptName = "0026_experience_injections.sql";
         public const string ExperienceProviderHoldoutAssignmentsScriptName = "0029_experience_provider_holdout_assignments.sql";
         public const string ExperienceRecordsSourceRunScriptName = "0028_experience_records_source_run_id.sql";
+        public const string ExperienceRunsScriptName = "0032_experience_runs.sql";
         public const string GrantAccessLogScriptName = "0009_grant_access_log.sql";
         public const string GrantAccessRetentionScriptName = "0012_grant_access_retention.sql";
         public const string GrantArgumentDisclosureScriptName = "0017_grant_argument_disclosure.sql";
@@ -233,6 +236,15 @@ namespace AgentExperience.Storage.Postgres
     {
         public PostgresExperienceReuseFeedbackStore(Npgsql.NpgsqlDataSource dataSource, System.TimeProvider? timeProvider = null, AgentExperience.Storage.Postgres.ExperienceEncryption? encryption = null) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceReuseFeedbackStoreResult> RecordAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.RecordedExperienceReuseFeedback feedback, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class PostgresExperienceRunStore : AgentExperience.Abstractions.IExperienceRunStore
+    {
+        public PostgresExperienceRunStore(Npgsql.NpgsqlDataSource dataSource) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunStoreResult> DeleteAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid runId, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunGetResult> GetAsync(AgentExperience.Abstractions.AuthorizationContext authorization, System.Guid runId, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunListResult> ListUnfinalizedAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRunQuery query, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunStoreResult> MarkFinalizedAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid runId, System.DateTimeOffset finalizedAt, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunStoreResult> SaveAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRun run, System.Guid completionEventId, System.Threading.CancellationToken cancellationToken) { }
     }
     public sealed class PostgresExperienceSignatureSource : AgentExperience.Abstractions.IExperienceSignatureSource
     {
