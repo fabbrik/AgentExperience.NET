@@ -115,7 +115,7 @@ for exporter options. For the sample's fixtures and limitations, read its
 | Name | Kind | Emitted by | Operations |
 | --- | --- | --- | --- |
 | `AgentExperience.Core` | `ActivitySource` and `Meter` | `AgentExperience.Core` | the fourteen Core operations below |
-| `AgentExperience.MicrosoftAgentFramework` | `ActivitySource` and `Meter` | `AgentExperience.MicrosoftAgentFramework` | `inject`, and `record_injection`, `record_holdout`, `record_provider_holdout` and `benefit_refresh` (measurements only, no span) |
+| `AgentExperience.MicrosoftAgentFramework` | `ActivitySource` and `Meter` | `AgentExperience.MicrosoftAgentFramework` | `inject`, `recall`, and `record_injection`, `record_holdout`, `record_provider_holdout` and `benefit_refresh` (measurements only, no span) |
 | `AgentExperience.Storage.Postgres` | `ActivitySource` and `Meter` | `AgentExperience.Storage.Postgres` | `delete`, `retention.sweep`, `grant.purge`, `grant.access.purge` (erasure and retention), `record.seal` (the crypto-shredding upgrade), the `record.authorship.backfill` and `record.signature.backfill` upgrade jobs, and `record.signature.write` (a record created without its failure signatures) only |
 
 - **One source and meter per assembly.** A text-only host can subscribe to Core without pulling in the adapters, and
@@ -167,7 +167,7 @@ spans only (see [Span attributes](#span-attributes)) and never as a metric dimen
 
 | Dimension | Values |
 | --- | --- |
-| `operation` | one of the twenty-seven values in [Operations](#operations) |
+| `operation` | one of the twenty-eight values in [Operations](#operations) |
 | `outcome` | an enum member name from that operation's own outcome enum, verbatim, or `Faulted` when it threw. See [Operations](#operations) |
 | `error.class` | `Cancelled`, `Timeout`, `Infrastructure`, `Unexpected`. See [`error.class`](#errorclass). Only on `agentexperience.operation.failures` |
 | `nested` | `true` or `false` (a boolean). See [`nested`](#nested) |
@@ -238,9 +238,10 @@ These are the only span attributes the library writes.
 | `agentexperience.reflection.screening_refusal` | a `ReflectionScreeningRefusal` member, such as `OverLimit`, `SanitizerRejected` or `SanitizerTimedOut` | `finalize`, only when screening refused the reflection and quarantined the record |
 | `agentexperience.independence.refusal` | an `IndependenceRefusal` member, such as `UnknownRun`, `NotExposed`, `HostWrittenRun` or `AssessmentTokenInvalid` | `confidence.apply`, only on `Unverified` |
 | `agentexperience.reuse_evidence.submitted` | integer: how many records finalization's reuse-evidence step submitted confidence evidence for (skipped records not included). Which ones stays on the typed result | `finalize`, on a durable result while `ExperienceFinalizationOptions.ReuseEvidence` is on (0 when it submitted nothing) |
-| `agentexperience.correlation_id` | the host-supplied correlation identifier, verbatim | `retrieve`, `retrieve.signature`, `inject`; omitted when the host supplied none |
+| `agentexperience.correlation_id` | the host-supplied correlation identifier, verbatim | `retrieve`, `retrieve.signature`, `inject`, `recall`; omitted when the host supplied none |
 | `agentexperience.retrieval.channel` | `signature`: the retrieval channel the lookup ran on | `retrieve.signature` |
-| `agentexperience.signature.match` | an `ExperienceSignatureMatch` member: `Exact` or `Coarse`. Never the signature, its tool name, error class or fingerprint | `retrieve.signature` |
+| `agentexperience.signature.match` | an `ExperienceSignatureMatch` member: `Exact` or `Coarse`. Never the signature, its tool name, error class or fingerprint | `retrieve.signature`; `recall`, when a record matched |
+| `agentexperience.record_count` | integer: how many records a recall hint named, or a held-out run would have been hinted. The IDs stay on the typed result | `recall` |
 | `agentexperience.omitted_count` | integer: how many ranked records the injection left out. The omission reasons stay on the typed result | `inject` |
 | `agentexperience.retracted_count` | integer: how many withdrawal notices the injected block carried, for records delivered earlier in the session. The IDs stay on the typed result | `inject`, only when the count is not zero (session tracking) |
 | `agentexperience.history_read` | `failed` or `timed_out`: why the single-call wiring's read of the chat history a `ChatClientAgent` replays joined nothing (the injection went on with the caller's messages alone) | `inject`, only under `UseAgentExperience` without the provider on the agent's options, and only when that read failed or ran past its 500-millisecond bound |
@@ -279,8 +280,8 @@ record was erased is out of the library's reach: see KL-2.
 
 ## Operations
 
-There are twenty-seven `operation` values: fourteen emitted on `AgentExperience.Core`, five on
-`AgentExperience.MicrosoftAgentFramework` (the nineteen `docs/telemetry-names.json` pins for the ports), and eight on
+There are twenty-eight `operation` values: fourteen emitted on `AgentExperience.Core`, six on
+`AgentExperience.MicrosoftAgentFramework` (the twenty `docs/telemetry-names.json` pins for the ports), and eight on
 `AgentExperience.Storage.Postgres` (pinned by the storage tests' diagnostics-agreement test, not by the names file). The set is closed: adding
 a value is a deliberate change that widens every instrument's cardinality.
 
@@ -301,6 +302,7 @@ a value is a deliberate change that widens every instrument's cardinality.
 | `reindex` | `ExperienceIndexingService.ReindexAsync` | `ExperienceReindexOutcome`: `Completed`, `Denied`, `Invalid`, `Failed` | none (a pass has no single record) | — |
 | `reuse_feedback` | `ExperienceReuseFeedbackService.RecordAsync` | `ExperienceReuseFeedbackOutcome`: `Recorded`, `AlreadyRecorded`, `Conflict`, `Denied`, `Invalid` | `feedback_id`, `run_id` | `confidence.apply` (once per attributed exposed record) |
 | `inject` | `ExperienceContextProvider` (MAF `AIContextProvider`) | `InjectionOutcome`: `Injected`, `NothingToInject`, `Skipped`, `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed`, `Failed`, `Retracted` (a block of withdrawal notices only), `SessionBudgetExhausted`, `Withheld` (the injection holdout withheld a built block from a captured run; see `ExperienceInjectionOptions.Holdout`) | `correlation_id`, `omitted_count`, `retracted_count`, `history_read` | none on its own meter; its `retrieve` is emitted on the Core meter with `nested=false` |
+| `recall` | `ExperienceContextProvider`, once per failed tool call it looks at when recall at the moment of failure is on (`ExperienceInjectionOptions.Recall`, off by default), inside the tool call, before the model's next call | `ExperienceRecallOutcome`: `Hinted`, `Withheld` (the run is in the injection holdout's holdout arm), `NoMatch`, `TimedOut`, `Failed`, `Bounded` (the signature was already looked up in the run, or a run or session bound was reached) | `correlation_id`, `signature.match`, `record_count` | none on its own meter; its `retrieve.signature` is emitted on the Core meter with `nested=false` |
 | `record_injection` | `ExperienceContextProvider`, in the background after an injected block is handed over: it records when the block's records were injected, for the lessons view. No span (the injection's has closed); counted, timed and failure-counted on the same instruments | `Recorded`; `NotTracked` (the store does not track injections, `IExperienceRecordStore.TracksInjections`); `NotRecorded` (the store refused or failed the write; `error.class` `Infrastructure` or `Unexpected` when it threw, `Timeout` when too many earlier writes are still running); `OutcomeUnknown` (the write overran its few-second bound, `Timeout`, or was cancelled, `Cancelled`: it may have landed) | — | — |
 | `record_holdout` | `ExperienceContextProvider`, in the background, when the injection holdout (`ExperienceInjectionOptions.Holdout`, off by default) assigned a captured run to an arm: it records the run's arm and the records its block named, delivered or withheld. No span; counted, timed and failure-counted on the same instruments | The same four as `record_injection`; `NotTracked` means the store does not record holdout assignments (`IExperienceRecordStore.TracksHoldout`) | — | — |
 | `record_provider_holdout` | `ExperienceHoldoutContextProvider`, in the background, when a measured memory provider's holdout assigned a captured run to an arm: it records the run, the provider key and the arm. No span; counted, timed and failure-counted on the same instruments | The same four as `record_injection`; `NotTracked` means the store does not record provider holdout assignments (`IExperienceRecordStore.TracksProviderHoldout`) | — | — |

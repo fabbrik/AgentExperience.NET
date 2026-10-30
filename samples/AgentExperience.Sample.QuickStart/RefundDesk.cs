@@ -37,17 +37,24 @@ public sealed class RefundDesk
         ApplicationVersion: "1.0.0-quick-start",
         Metadata: new Dictionary<string, string>(StringComparer.Ordinal));
 
-    private const string WorkingStrategy = "wait-for-lock";
+    /// <summary>The strategy that releases the refund unless a desk is built with another.</summary>
+    public const string DefaultWorkingStrategy = "wait-for-lock";
+
+    private readonly string _workingStrategy;
 
     private readonly List<RefundAttempt> _attempts = [];
 
-    public RefundDesk() =>
+    /// <param name="workingStrategy">The one strategy that works: <see cref="DefaultWorkingStrategy"/> unless named.</param>
+    public RefundDesk(string workingStrategy = DefaultWorkingStrategy)
+    {
+        _workingStrategy = workingStrategy;
         Tool = AIFunctionFactory.Create(
             RunRefundCheck,
             ToolName,
             "Runs the refund check for a ticket with the named strategy. It returns exit=0 when the refund is released; "
                 + "any other strategy fails with an error naming its exit code, and changes nothing. Valid strategies: "
                 + string.Join(", ", Strategies) + ". Exactly one of them works for a locked refund.");
+    }
 
     public AIFunction Tool { get; }
 
@@ -70,7 +77,7 @@ public sealed class RefundDesk
             throw new InvalidOperationException("exit=64 unknown strategy; nothing was changed");
         }
 
-        var succeeded = string.Equals(strategy, WorkingStrategy, StringComparison.Ordinal);
+        var succeeded = string.Equals(strategy, _workingStrategy, StringComparison.Ordinal);
         _attempts.Add(new RefundAttempt(strategy, succeeded));
         return succeeded
             ? "exit=0 the refund is released"

@@ -2200,6 +2200,122 @@ public static class HistoricalReferenceWriter
 
     private static int Utf8(string value) => Encoding.UTF8.GetByteCount(value);
 
+    /// <summary>The first line of a recall hint (<see cref="ExperienceRecallOptions"/>). It ends with <see cref="BlockEnd"/>.</summary>
+    public const string RecallBegin = "=== BEGIN HISTORICAL REFERENCE: EARLIER FIX FOR THIS FAILURE (UNTRUSTED REFERENCE MATERIAL) ===";
+
+    /// <summary>What begins the line of a recall hint that names the attempt that worked after the failure.</summary>
+    public const string RecallWorkedPrefix = "  - worked: ";
+
+    /// <summary>
+    /// The recall hint for a failure of <paramref name="toolName"/> with <paramref name="error"/>: one fixed-shape block
+    /// naming, for each of <paramref name="records"/> in order that fits <paramref name="maxBytes"/> (dropped whole, never
+    /// cut), the calls of the attempt its <c>Worked:</c> line would name, rendered exactly as that attempt's <c>Tried:</c>
+    /// line renders them (the same argument allowlist and grant rules, the same per-call markers, none for a borrowed
+    /// record), and its confidence and verification. A record whose content nothing confirms has that line inside the
+    /// model-authored fence, as the block puts it; a record with no verified working attempt, or borrowed under a grant
+    /// that withholds the approach, gives none. <see langword="null"/> when no record fits or gives a line.
+    /// </summary>
+    /// <param name="records">The records, re-read and checked, in the order to try them.</param>
+    /// <param name="toolName">The failed call's tool name, as capture records it.</param>
+    /// <param name="error">The failed call's error, as capture records it (an exception type name or a host's error class).</param>
+    /// <param name="match">How the records matched the failure.</param>
+    /// <param name="approachArguments">The reader's validated allowlist.</param>
+    /// <param name="isContentConfirmed">The caller's content confirmation, or <see langword="null"/> to confirm every record.</param>
+    /// <param name="failureDetail">How much a marker says about a failed call.</param>
+    /// <param name="maxBytes">The hint's UTF-8 budget, delimiters included.</param>
+    /// <param name="included">The records the hint names, in order.</param>
+    /// <param name="borrowedArgumentsShown">The borrowed records whose line shows at least one argument value.</param>
+    /// <param name="overBudget">The records that gave a line but did not fit.</param>
+    internal static string? RecallHint(
+        IReadOnlyList<RankedExperience> records,
+        string toolName,
+        string error,
+        ExperienceSignatureMatch match,
+        ApproachArgumentAllowlist approachArguments,
+        Func<ExperienceRecord, bool>? isContentConfirmed,
+        AttemptFailureDetail failureDetail,
+        int maxBytes,
+        out List<Guid> included,
+        out HashSet<Guid> borrowedArgumentsShown,
+        out List<Guid> overBudget)
+    {
+        ArgumentNullException.ThrowIfNull(records);
+        ArgumentNullException.ThrowIfNull(approachArguments);
+        included = [];
+        borrowedArgumentsShown = [];
+        overBudget = [];
+
+        var failure = Name(toolName) + " " + CallOutcome(error, failureDetail);
+        var opening = match == ExperienceSignatureMatch.Exact
+            ? "An earlier verified run hit this same failure (" + failure + ") and then:\n"
+            : "An earlier verified run hit a failure like this one (the same tool and error class: " + failure + ") and then:\n";
+        var header = RecallBegin + "\n";
+        var footer = BlockEnd + "\n";
+        var used = Utf8(header) + Utf8(footer);
+        var body = new StringBuilder();
+
+        foreach (var ranked in records)
+        {
+            if (ranked?.Record is not { } record || (ranked.SharedByGrant && !ShowsApproach(ranked.GrantDisclosure)))
+            {
+                continue;
+            }
+
+            if (FinalVerifiedAttempt(record, OrderedAttempts(record)) is not { } worked)
+            {
+                continue;
+            }
+
+            var effective = !ranked.SharedByGrant
+                ? approachArguments
+                : ranked.GrantDisclosure == ExperienceGrantDisclosure.LessonApproachAndArguments
+                    ? approachArguments.IntersectWithGrant(ranked.GrantApproachArguments)
+                    : ApproachArgumentAllowlist.Empty;
+            var argumentsShown = false;
+            var line = RecallWorkedPrefix + "attempt " + worked.SequenceNumber.ToString(CultureInfo.InvariantCulture) + ": "
+                + Calls(OrderedCalls(worked, out var clamped), clamped, effective, ranked.SharedByGrant ? null : failureDetail, ref argumentsShown)
+                + OutcomeSeparator + AttemptCompleted + "\n";
+
+            var section = new StringBuilder(opening);
+            if (ranked.SharedByGrant)
+            {
+                section.Append("Shared: ").Append(SharedLine).Append('\n');
+            }
+
+            if (isContentConfirmed is not null && !isContentConfirmed(record))
+            {
+                // Nothing confirms this record's content, so the line drawn from its attempts sits inside the fence, as
+                // the block puts it.
+                section.Append(ModelAuthoredLine).Append('\n').Append(line).Append(ModelAuthoredEndLine).Append('\n');
+            }
+            else
+            {
+                section.Append(line);
+            }
+
+            section.Append("Confidence: ").Append(Number(record.ReuseConfidence)).Append(ConfidenceSeparator)
+                .Append(record.Outcome.Status).Append('\n');
+
+            var text = section.ToString();
+            var bytes = Utf8(text);
+            if (used + bytes > maxBytes)
+            {
+                overBudget.Add(record.ExperienceId);
+                continue;
+            }
+
+            used += bytes;
+            body.Append(text);
+            included.Add(record.ExperienceId);
+            if (ranked.SharedByGrant && argumentsShown)
+            {
+                borrowedArgumentsShown.Add(record.ExperienceId);
+            }
+        }
+
+        return included.Count == 0 ? null : header + body + footer;
+    }
+
     /// <summary>
     /// Whether a grant at <paramref name="level"/> shows a borrowed record's <c>Tried:</c> and <c>Worked:</c> lines. Only the two
     /// levels that say so do; anything else, <see langword="null"/> and an undefined value included, is the least

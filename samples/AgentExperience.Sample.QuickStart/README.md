@@ -37,11 +37,32 @@ and then prints the Historical Reference block run 2's model was sent. Run it tw
 - **One fixture beyond the model.** `options.Capture` fixes the recorded environment, so the block's preconditions
   are the same on every machine. A real host keeps the default.
 
+## Recall at the moment of failure
+
+```bash
+dotnet run --project samples/AgentExperience.Sample.QuickStart -- --recall
+```
+
+The same wiring with `options.Recall = new ExperienceRecallOptions()`, and two changes: the working strategy is
+`skip-ledger-check`, the last one the stand-in tries, and run 2 is a different ticket whose words match nothing
+stored, so nothing is injected before it starts:
+
+```text
+Run 1 (no memory yet): tried retry-immediately ✗ → wait-for-lock ✗ → skip-ledger-check ✓  (2 failed attempts)
+Run 2 (hint after a failure): tried retry-immediately ✗ → skip-ledger-check ✓  (1 failed attempt)
+```
+
+Run 2's first call fails exactly as run 1's did (the same tool, the same exception), so the library looks that failure
+up, finds run 1's verified lesson, which recovered from it, and puts a short hint naming what worked in the
+instructions of the model's next call. The demo prints the hint. See
+[Recall at the moment of failure](../../docs/guide/injection.md#recall-at-the-moment-of-failure).
+
 ## The model is a stand-in
 
 By default the model is [ScriptedModel.cs](ScriptedModel.cs), a script, not a model. It reads only what a real model
 is sent: it tries the strategies in their listed order, one per call, unless its input holds a Historical Reference
-whose `Worked:` attempt has a call marked `[returned]` with a strategy, which it then tries first. (The tool throws on
+whose `Worked:` attempt has a call marked `[returned]` with a strategy, which it then tries first (and, under
+`--recall`, a hint in its instructions whose `worked:` line has one, which it tries before anything else). (The tool throws on
 a non-zero exit, so run 1's wrong strategy is recorded, and marked, as a failed call.) So run 2's change comes from what the library
 retrieved and injected, not from the script, but it shows the loop working, not that it helps a real model. For that,
 see [Does it help?](../../README.md#does-it-help).

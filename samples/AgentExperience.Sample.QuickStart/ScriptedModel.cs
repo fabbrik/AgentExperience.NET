@@ -10,10 +10,12 @@ namespace AgentExperience.Sample.QuickStart;
 /// as one: the demo's output says so.
 /// </summary>
 /// <remarks>
-/// It reads only what a real model is sent, the messages. It tries the tool's strategies in their listed order, one
-/// call per turn, until one exits 0, with one exception: when its input holds a Historical Reference whose
-/// <c>Worked:</c> attempt has a call marked <c>[returned]</c> with a strategy, it tries the first such one first. So whatever changes in the second run comes from
-/// what the library retrieved and injected, not from this script.
+/// It reads only what a real model is sent, the messages and the instructions. It tries the tool's strategies in their listed order, one
+/// call per turn, until one exits 0, with two exceptions: when its input holds a Historical Reference whose
+/// <c>Worked:</c> attempt has a call marked <c>[returned]</c> with a strategy, it tries the first such one first; and when
+/// its instructions hold a recall hint (<c>--recall</c>) whose <c>worked:</c> line has such a call, it tries that one
+/// before anything else. So whatever changes in the second run comes from what the library retrieved and injected, not
+/// from this script.
 /// </remarks>
 public sealed partial class ScriptedModel : IChatClient
 {
@@ -33,6 +35,11 @@ public sealed partial class ScriptedModel : IChatClient
             .ToHashSet(StringComparer.Ordinal);
         var block = list.Select(message => message.Text).FirstOrDefault(text => text.Contains(HistoricalReferenceWriter.BlockBegin, StringComparison.Ordinal));
         var order = new List<string>();
+        if (Hinted(options?.Instructions) is { } hinted)
+        {
+            order.Add(hinted);
+        }
+
         if (Remembered(block) is { } remembered)
         {
             order.Add(remembered);
@@ -68,9 +75,30 @@ public sealed partial class ScriptedModel : IChatClient
         }
 
         var tried = Regex.Match(block, "^  - attempt " + worked.Groups[1].Value + ": (.*)$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
-        foreach (Match call in ReturnedCall().Matches(tried.Groups[1].Value))
+
+        // Walks the arguments one by one, so a value can never be read as a key.
+        return FirstReturnedStrategy(tried.Groups[1].Value);
+    }
+
+    /// <summary>
+    /// The strategy of the first call marked <c>[returned]</c> on a recall hint's <c>worked:</c> line, when the
+    /// instructions carry one (<c>options.Recall</c>, after a failed call); otherwise <see langword="null"/>.
+    /// </summary>
+    internal static string? Hinted(string? instructions)
+    {
+        if (instructions is null || instructions.IndexOf(HistoricalReferenceWriter.RecallBegin, StringComparison.Ordinal) is not (>= 0 and var at))
         {
-            // Walk the arguments one by one, so a value can never be read as a key.
+            return null;
+        }
+
+        var worked = Regex.Match(instructions[at..], "^" + Regex.Escape(HistoricalReferenceWriter.RecallWorkedPrefix) + "(.*)$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        return worked.Success ? FirstReturnedStrategy(worked.Groups[1].Value) : null;
+    }
+
+    private static string? FirstReturnedStrategy(string line)
+    {
+        foreach (Match call in ReturnedCall().Matches(line))
+        {
             foreach (Match argument in Argument().Matches(call.Groups[1].Value))
             {
                 if (argument.Groups["key"].Value == "strategy" && argument.Groups["quoted"].Success)

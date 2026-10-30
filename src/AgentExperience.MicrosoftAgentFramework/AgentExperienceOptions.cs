@@ -339,6 +339,16 @@ public sealed class AgentExperienceOptions
     public Action<ExperienceInjectionOptions>? Injection { get; set; }
 
     /// <summary>
+    /// Recall at the moment of failure: when a tool call fails and a stored lesson holds the same failure signature as
+    /// resolved, a short labelled hint naming what worked is shown to the model before its next call in the same run.
+    /// <see langword="null"/> (the default) is off. The setup looks failures up through the
+    /// <see cref="AgentExperience.Abstractions.IExperienceSignatureSource"/> the storage registers (both stores do) unless
+    /// <see cref="ExperienceRecallOptions.SignatureSource"/> names one. Set as
+    /// <see cref="ExperienceInjectionOptions.Recall"/> before the <see cref="Injection"/> hook runs, which may change it.
+    /// </summary>
+    public ExperienceRecallOptions? Recall { get; set; }
+
+    /// <summary>
     /// Adjusts the capture options after the library has set its defaults (the run and finalization resolvers and the
     /// clock), for example <see cref="ExperienceCaptureOptions.OnCaptureFailure"/> or the environment fingerprint.
     /// </summary>

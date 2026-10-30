@@ -213,6 +213,13 @@ internal sealed record InjectionSessionState(
     }
 
     /// <summary>
+    /// Charges <paramref name="delivery"/> at once, as unsure: what a recall hint gives the session. The hint travels in the
+    /// run's instructions, never in the session's chat history, so its records are charged to the budget and tracked (so a
+    /// later block can withdraw them) but never deduplicated against: the history does not hold them. Never staged.
+    /// </summary>
+    public InjectionSessionState ChargeUnsure(PendingDelivery delivery) => Fold(delivery, settled: false, held: false);
+
+    /// <summary>
     /// The account every decision is taken on: each pending stage folded in, oldest first, as delivered but unsure --
     /// charged to the budget, tracked so it is re-checked and withdrawn like any delivery (with the wider of two
     /// renderings kept, so a narrowed grant still withdraws it), and its withdrawal notices still owed. Unlike a stage

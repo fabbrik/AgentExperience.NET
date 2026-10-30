@@ -129,6 +129,7 @@ public class TelemetryNamesFileTests
             }
 
             Operation(json, InjectionDiagnostics.Inject, adapterSource, true, Enum.GetNames<InjectionOutcome>());
+            Operation(json, InjectionDiagnostics.Recall, adapterSource, true, Enum.GetNames<ExperienceRecallOutcome>());
             foreach (var background in new[] { InjectionDiagnostics.RecordInjection, InjectionDiagnostics.RecordHoldout, InjectionDiagnostics.RecordProviderHoldout })
             {
                 Operation(

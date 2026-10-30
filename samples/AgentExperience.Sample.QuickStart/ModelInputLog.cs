@@ -12,12 +12,23 @@ public sealed class ModelInputLog(IChatClient model) : DelegatingChatClient(mode
     /// <summary>The block in the model's input since the last <see cref="Reset"/>, or <see langword="null"/> when there was none.</summary>
     public string? Block { get; private set; }
 
-    public void Reset() => Block = null;
+    /// <summary>
+    /// The recall hint in the instructions of a model call since the last <see cref="Reset"/>, or <see langword="null"/>
+    /// when there was none: with <c>options.Recall</c> on, what the library put in front of the model after a failure.
+    /// </summary>
+    public string? Hint { get; private set; }
+
+    public void Reset() => (Block, Hint) = (null, null);
 
     public override Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
         var list = messages as IList<ChatMessage> ?? messages.ToList();
         Block ??= list.Select(message => message.Text).FirstOrDefault(text => text.Contains(HistoricalReferenceWriter.BlockBegin, StringComparison.Ordinal));
+        if (Hint is null && options?.Instructions is { } instructions && instructions.IndexOf(HistoricalReferenceWriter.RecallBegin, StringComparison.Ordinal) is >= 0 and var at)
+        {
+            Hint = instructions[at..];
+        }
+
         return base.GetResponseAsync(list, options, cancellationToken);
     }
 }

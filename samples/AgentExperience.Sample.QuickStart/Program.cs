@@ -4,6 +4,7 @@ using AgentExperience.Abstractions;
 using AgentExperience.Core.DependencyInjection;
 using AgentExperience.Core.Verification;
 using AgentExperience.MicrosoftAgentFramework;
+using AgentExperience.MicrosoftAgentFramework.Injection;
 using AgentExperience.Sample.QuickStart;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -29,7 +30,16 @@ var label = string.IsNullOrEmpty(key)
     ? QuickStart.StandInLabel
     : $"{modelName} at {clientOptions.Endpoint?.Host ?? "api.openai.com"}";
 
-await QuickStart.RunAsync(model, label, Console.Out);
+// --recall shows recall at the moment of failure instead: run 2 is a different ticket, so no lesson is injected before
+// it starts, and the lesson reaches the model when its first call fails the way run 1's did.
+if (args.Contains("--recall", StringComparer.Ordinal))
+{
+    await QuickStart.RunRecallAsync(model, label, Console.Out);
+}
+else
+{
+    await QuickStart.RunAsync(model, label, Console.Out);
+}
 
 /// <summary>The README quick start's wiring, run twice on the same ticket.</summary>
 public static class QuickStart
@@ -39,9 +49,27 @@ public static class QuickStart
 
     public const string StandInLabel = "a scripted stand-in, not a real model (set OPENAI_API_KEY to use one)";
 
-    public static async Task<IReadOnlyList<QuickStartRun>> RunAsync(IChatClient model, string modelLabel, TextWriter output)
+    /// <summary>Run 2's ticket under <c>--recall</c>: none of its words is in run 1's ticket or lesson, so no block is injected.</summary>
+    public const string OtherTicket = "Payout #5120 blocked overnight; please unblock.";
+
+    /// <summary>The strategy that works under <c>--recall</c>: the last one the stand-in would try on its own.</summary>
+    public const string RecallWorkingStrategy = "skip-ledger-check";
+
+    public static Task<IReadOnlyList<QuickStartRun>> RunAsync(IChatClient model, string modelLabel, TextWriter output) =>
+        RunAsync(model, modelLabel, output, recall: false);
+
+    /// <summary>
+    /// <c>--recall</c>: the same wiring with <c>options.Recall</c> on. Run 1 learns on <see cref="Ticket"/>; run 2 is
+    /// <see cref="OtherTicket"/>, whose words match nothing stored, so it starts with no lesson, and is shown run 1's fix
+    /// when its first call fails the same way.
+    /// </summary>
+    public static Task<IReadOnlyList<QuickStartRun>> RunRecallAsync(IChatClient model, string modelLabel, TextWriter output) =>
+        RunAsync(model, modelLabel, output, recall: true);
+
+    private static async Task<IReadOnlyList<QuickStartRun>> RunAsync(IChatClient model, string modelLabel, TextWriter output, bool recall)
     {
-        var desk = new RefundDesk();   // the tool, and the state Verify reads
+        // The tool, and the state Verify reads. Under --recall the working strategy is the last one tried, so the hint shows.
+        var desk = recall ? new RefundDesk(RecallWorkingStrategy) : new RefundDesk();
         var services = new ServiceCollection();
         services.AddAgentExperience(options =>
         {
@@ -62,6 +90,11 @@ public static class QuickStart
             options.Injection = injection => injection.ApproachArguments[RefundDesk.ToolName] = ["strategy"];
             // A fixed environment, so the output is the same on every machine. A real host keeps the default.
             options.Capture = capture => capture.Environment = RefundDesk.Environment;
+            // Recall at the moment of failure: off by default.
+            if (recall)
+            {
+                options.Recall = new ExperienceRecallOptions();
+            }
         }).UseInMemoryStorageForDevelopment();
         await using var provider = services.BuildServiceProvider();
 
@@ -87,7 +120,12 @@ public static class QuickStart
         }).AsBuilder().UseAgentExperience(provider).Build();
 
         await output.WriteLineAsync($"Model: {modelLabel}");
-        await output.WriteLineAsync($"Task (both runs): {Ticket}");
+        await output.WriteLineAsync(recall ? $"Task (run 1): {Ticket}" : $"Task (both runs): {Ticket}");
+        if (recall)
+        {
+            await output.WriteLineAsync($"Task (run 2): {OtherTicket}");
+        }
+
         await output.WriteLineAsync();
 
         var runs = new List<QuickStartRun>();
@@ -95,15 +133,28 @@ public static class QuickStart
         {
             desk.Reset();
             log.Reset();
-            await agent.RunAsync(Ticket);
+            await agent.RunAsync(recall && number == 2 ? OtherTicket : Ticket);
 
-            var run = new QuickStartRun([.. desk.Attempts], log.Block);
+            var run = new QuickStartRun([.. desk.Attempts], log.Block) { Hint = log.Hint };
             runs.Add(run);
             var tried = run.Attempts.Count == 0
                 ? "nothing"
                 : string.Join(" → ", run.Attempts.Select(attempt => attempt.Strategy + (attempt.Succeeded ? " ✓" : " ✗")));
             var failed = run.FailedAttempts == 1 ? "1 failed attempt" : $"{run.FailedAttempts} failed attempts";
-            await output.WriteLineAsync($"Run {number} ({(run.Block is null ? "no memory yet" : "lesson injected")}): tried {tried}  ({failed})");
+            var memory = run.Block is not null ? "lesson injected" : run.Hint is not null ? "hint after a failure" : number == 1 ? "no memory yet" : "no lesson matched the ticket";
+            await output.WriteLineAsync($"Run {number} ({memory}): tried {tried}  ({failed})");
+        }
+
+        if (recall)
+        {
+            await output.WriteLineAsync();
+            await output.WriteLineAsync("What run 2's model was shown after its first call failed, in its instructions:");
+            await output.WriteLineAsync();
+            await output.WriteLineAsync(runs[1].Hint?.TrimEnd() ?? "(nothing: no hint was given)");
+            await output.WriteLineAsync();
+            await output.WriteLineAsync("Run 2's words matched no stored lesson, so nothing was injected before it started; its first failure had");
+            await output.WriteLineAsync("the same signature as one run 1 recovered from, so recall named what worked after it.");
+            return runs;
         }
 
         await output.WriteLineAsync();
@@ -121,5 +172,8 @@ public static class QuickStart
 /// <summary>One run: every call it made, and the Historical Reference block its model was sent, if any.</summary>
 public sealed record QuickStartRun(IReadOnlyList<RefundAttempt> Attempts, string? Block)
 {
+    /// <summary>The recall hint run's model was shown after a failure (<c>--recall</c>), or <see langword="null"/>.</summary>
+    public string? Hint { get; init; }
+
     public int FailedAttempts => Attempts.Count(attempt => !attempt.Succeeded);
 }

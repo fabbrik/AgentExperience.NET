@@ -250,6 +250,14 @@ public enum ExperienceCaptureFailureStage
     /// built with <c>UseAgentExperience</c>. See <c>AgentExperienceOptions.Embeddings</c>.
     /// </summary>
     Embeddings,
+
+    /// <summary>
+    /// Recall at the moment of failure is configured (<c>ExperienceInjectionOptions.Recall</c>) but has no failure
+    /// signature source to look failures up in -- neither <c>ExperienceRecallOptions.SignatureSource</c> nor a record store
+    /// that implements <see cref="IExperienceSignatureSource"/> -- so it does nothing. Reported once per context
+    /// provider, on the first captured run it would have served.
+    /// </summary>
+    Recall,
 }
 
 /// <summary>

@@ -142,6 +142,21 @@ internal sealed class CaptureScope
     internal bool IsFinalized => Volatile.Read(ref _finalized) != 0;
 
     /// <summary>
+    /// Recall at the moment of failure for this invocation, when the context provider set it up (recall is configured
+    /// and the provider ran inside this capture with a request); otherwise <see langword="null"/>.
+    /// </summary>
+    internal Injection.RecallRun? Recall
+    {
+        get => Volatile.Read(ref _recall);
+        set => Volatile.Write(ref _recall, value);
+    }
+
+    private Injection.RecallRun? _recall;
+
+    /// <summary>Reports, once per run at most, that recall is configured but cannot run (<see cref="ExperienceCaptureFailureStage.Recall"/>).</summary>
+    internal void ReportRecall(string reason) => ReportFailure(ExperienceCaptureFailureStage.Recall, reason, exception: null);
+
+    /// <summary>
     /// Resolves the run descriptor, opens the run -- or continues the one the descriptor names -- and
     /// (when the caller supplied a session) writes the run ID to it. Returns <see langword="null"/>
     /// -- the invocation then runs uncaptured -- when any of that fails; the failure is reported,
@@ -408,13 +423,14 @@ internal sealed class CaptureScope
     /// <see cref="ExperienceCaptureOptions.ClassifyToolResult"/> names an error class for it -- as failed with that class,
     /// keeping the result text the model saw.
     /// </summary>
-    internal void CompleteToolCall(PendingToolCall pending, object? result)
+    /// <returns>The error class the call is recorded as failed with, or <see langword="null"/> when it is recorded as returned or not recorded.</returns>
+    internal string? CompleteToolCall(PendingToolCall pending, object? result)
     {
         // A call finishing after finalization took its snapshot is not recorded (see AddToolCall), so it is not
         // classified either: the host's classifier runs only for a call capture can still record.
         if (IsFinalized)
         {
-            return;
+            return null;
         }
 
         // The call's duration ends when the tool returned, not after the host's classifier ran.
@@ -426,7 +442,7 @@ internal sealed class CaptureScope
         catch (Exception ex)
         {
             ReportFailure(ExperienceCaptureFailureStage.ToolCall, $"Measuring a tool call's duration threw {ex.GetType().FullName}; the tool call is not recorded.", ex);
-            return;
+            return null;
         }
 
         // On the raw result, before it is converted to text; never replaces what the model receives.
@@ -446,10 +462,11 @@ internal sealed class CaptureScope
         catch (Exception ex)
         {
             ReportFailure(ExperienceCaptureFailureStage.ToolCall, $"Converting a tool result to text threw {ex.GetType().FullName}; the tool call is not recorded.", ex);
-            return;
+            return null;
         }
 
         AddToolCall(pending, text, error, duration);
+        return error;
     }
 
     /// <summary>
