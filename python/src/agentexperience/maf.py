@@ -54,6 +54,7 @@ cancellation and the tool's own exceptions propagate, unchanged.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
 import dataclasses
 import functools
@@ -141,8 +142,9 @@ from .model import MODEL_METADATA_KEY, reported_model, with_model
 from .observer import classify as _classify_error
 from .observer import observe
 from .records import EnvironmentFingerprint, Provenance, RunExposure, Scope
+from .retrieval import ConfidenceDecayPolicy, RetrievalPolicy
 from .sanitization import Sanitization
-from .search import AuthorizationBounds, SearchParameters, SearchRow, rank
+from .search import AuthorizationBounds, ExcludedRecord, SearchParameters, SearchRow, rank
 from .task_text import CHAT_HISTORY, EXTERNAL, derive_task_text
 from .task_text import Message as TaskMessage
 from .task_text import MessagePart as TaskMessagePart
@@ -249,15 +251,20 @@ class InjectionResult:
     truncated: bool
     vector_fallback: VectorFallback | None = None
     """Why the injection answered from text alone (contract 1.6), or ``None`` when the vector channel contributed."""
-    outcome: Literal["Injected", "Withheld", "NothingToInject"] = "Injected"
+    outcome: Literal["Injected", "Withheld", "NothingToInject", "RetrievalTimedOut", "RetrievalDenied"] = "Injected"
     """``Injected``; ``Withheld`` when the holdout withheld the block (contract 1.8); or, as .NET reports it,
     ``NothingToInject`` when there was no task text or every ranked record was omitted (``omitted`` says why: a scope
-    measured ``Hurts`` omits them all as ``MeasuredHarmful``)."""
+    measured ``Hurts`` omits them all as ``MeasuredHarmful``); ``RetrievalTimedOut`` when retrieval ran past the
+    retrieval policy's timeout or was refused at its abandoned-search cap, and ``RetrievalDenied`` when the identity's
+    bounds do not permit its scope (contract 1.12; nothing delivered)."""
     withheld_experience_ids: tuple[uuid.UUID, ...] = ()
     """The records a held-out invocation's block named and did not deliver; empty otherwise."""
     omitted: tuple[OmittedRecord, ...] = ()
     """Every ranked record that was not delivered, and why (contract 1.10): ``MeasuredHarmful`` (the benefit policy),
     ``ModelAuthored``, ``OverRecordLimit`` or ``OverByteBudget``, each with .NET's detail, in .NET's order."""
+    excluded: tuple[ExcludedRecord, ...] = ()
+    """The candidates retrieval's eligibility checks left out before ranking, and why (contract 1.12, .NET's
+    ``ExperienceInjectionResult.Excluded``): ``IneligibleStatus``, ``ModelAuthored`` or ``Expired``."""
 
 
 InjectionRecordOutcome = Literal["Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"]
@@ -347,6 +354,12 @@ class ExperienceSettings:
     min_vector_relevance: float | None = None
     """When set (0 to 1), vector candidates whose relevance is below it are dropped; text candidates never are."""
     on_vector_fallback: Callable[[VectorFallback], None] | None = None
+    retrieval_policy: RetrievalPolicy = field(default_factory=RetrievalPolicy)
+    """The retrieval policy (contract 1.12): the timeout bounding a retrieval, the confidence floor, the expiry, the
+    recency half-life, the candidate limit, the abandoned-search cap, the minimum of matched terms and the vector
+    floor, with .NET's defaults."""
+    confidence_decay: ConfidenceDecayPolicy | None = None
+    """Decays each record's confidence at ranking time by its domain (contract 1.12); ``None``: no decay."""
     holdout: HoldoutOptions = field(default_factory=HoldoutOptions)
     """The injection holdout (contract 1.8): off by default (rate 0)."""
     benefit: BenefitPolicy = field(default_factory=BenefitPolicy)
@@ -405,6 +418,15 @@ class ExperienceSettings:
             raise ValueError("vector_timeout must be a positive number of seconds.")
         if self.min_vector_relevance is not None and not 0.0 <= self.min_vector_relevance <= 1.0:
             raise ValueError("min_vector_relevance must be between 0 and 1.")
+        if not isinstance(self.retrieval_policy, RetrievalPolicy):
+            raise TypeError("retrieval_policy must be a RetrievalPolicy.")
+        if self.confidence_decay is not None and not isinstance(self.confidence_decay, ConfidenceDecayPolicy):
+            raise TypeError("confidence_decay must be a ConfidenceDecayPolicy or None.")
+        floor = self.retrieval_policy.minimum_vector_relevance
+        if floor is not None and self.min_vector_relevance is not None and floor != self.min_vector_relevance:
+            raise ValueError(
+                "min_vector_relevance and retrieval_policy.minimum_vector_relevance are both set and differ; set one."
+            )
         if self.embedder is not None and not (
             isinstance(getattr(self.embedder, "model_id", None), str)
             and hasattr(self.embedder, "dimension")
@@ -431,6 +453,12 @@ class ExperienceSettings:
             # reported) outside a development or test environment.
             ensure_development_environment(resolved.environment_name)
         return resolved
+
+    @property
+    def vector_floor(self) -> float | None:
+        """The vector channel's floor: the retrieval policy's, else ``min_vector_relevance``."""
+        floor = self.retrieval_policy.minimum_vector_relevance
+        return floor if floor is not None else self.min_vector_relevance
 
     def task_id_for(self, agent: Any) -> str:
         return self.task_id or reduce_name(getattr(agent, "name", None)) or DEFAULT_TASK_ID
@@ -833,6 +861,75 @@ def _task_messages(inputs: Sequence[Any], context: Sequence[tuple[str, Sequence[
 # ---- Injection ---------------------------------------------------------------------------------------------------
 
 
+class _AbandonedSearches:
+    """
+    The text searches one provider abandoned (contract 1.12, .NET's ``MaxAbandonedSearches``): a search still running
+    past the retrieval policy's timeout, or when the caller cancelled, is not stopped (a thread cannot be) but counted
+    until its thread actually ends. While the count is at the cap no new search starts.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._count = 0
+
+    @property
+    def count(self) -> int:
+        with self._lock:
+            return self._count
+
+    def start(self, call: Callable[[], Any]) -> _Search:
+        """Starts ``call`` on a thread; the returned search is awaited for its answer and abandoned on a timeout."""
+        return _Search(self, call)
+
+
+class _Search:
+    """One text search on a daemon thread of its own (so an abandoned one never holds the event loop's shutdown up):
+    its thread always runs to its end, which is when an abandoned search stops counting."""
+
+    def __init__(self, owner: _AbandonedSearches, call: Callable[[], Any]) -> None:
+        self._owner = owner
+        self._ended = False
+        self._abandoned = False
+        loop = asyncio.get_running_loop()
+        self._future: asyncio.Future[Any] = loop.create_future()
+        context = contextvars.copy_context()
+
+        def settle(value: Any, error: BaseException | None) -> None:
+            if not self._future.done():
+                if error is None:
+                    self._future.set_result(value)
+                else:
+                    self._future.set_exception(error)
+
+        def run() -> None:
+            try:
+                try:
+                    value, error = context.run(call), None
+                except BaseException as ex:
+                    value, error = None, ex
+                try:
+                    loop.call_soon_threadsafe(settle, value, error)
+                except RuntimeError:  # the loop closed first
+                    pass
+            finally:
+                with owner._lock:
+                    self._ended = True
+                    if self._abandoned:
+                        owner._count -= 1
+
+        threading.Thread(target=run, name="agentexperience-search", daemon=True).start()
+
+    async def answer(self) -> Any:
+        return await self._future
+
+    def abandon(self) -> None:
+        """Counts the search as abandoned until its thread ends (at once, when it already has)."""
+        with self._owner._lock:
+            if not self._ended and not self._abandoned:
+                self._abandoned = True
+                self._owner._count += 1
+
+
 class _BackgroundRecords:
     """
     The background records of one provider (contract 1.4's injection records, 1.8's holdout assignments, 1.11's
@@ -1016,6 +1113,7 @@ class ExperienceContextProvider(ContextProvider):
         super().__init__(source_id)
         self.settings = settings
         self._background = _BackgroundRecords(lambda: self.settings.injection_record_timeout)
+        self._searches = _AbandonedSearches()
         # Contract 1.10: the cached benefit estimates, only with the policy on.
         self._benefit = (
             BenefitCache(settings.store, settings.benefit, settings.clock) if settings.benefit.enabled else None
@@ -1034,6 +1132,12 @@ class ExperienceContextProvider(ContextProvider):
         await self._background.settled()
         for measured in list(self.settings._measured):
             await measured.wait_for_records()
+
+    @property
+    def abandoned_searches(self) -> int:
+        """How many text searches abandoned on a retrieval timeout (or a cancellation) are still running against the
+        store (contract 1.12); at the retrieval policy's ``max_abandoned_searches`` no new search starts."""
+        return self._searches.count
 
     @property
     def abandoned_injection_records(self) -> int:
@@ -1117,8 +1221,14 @@ class ExperienceContextProvider(ContextProvider):
                 return [], VectorFallback("ProviderUnavailable", "The embedder reported no model ID.")
             validate_model_id(model_id)
             vector = validate_vector(raw, dimension)
+            policy = settings.retrieval_policy
             query = VectorQuery(
-                identity.scope, model_id, vector, exclude_model_authored=settings.exclude_model_authored
+                identity.scope,
+                model_id,
+                vector,
+                min_confidence=policy.minimum_confidence,
+                limit=policy.statement_limit,
+                exclude_model_authored=settings.exclude_model_authored,
             )
         except (asyncio.TimeoutError, TimeoutError) as ex:
             return [], VectorFallback("ProviderUnavailable", "The embedder did not answer in time.", ex)
@@ -1192,54 +1302,98 @@ class ExperienceContextProvider(ContextProvider):
             if task_text is None:
                 settings.report_injected(InjectionResult((), 0, False, outcome="NothingToInject"))
                 return "NothingToInject"
-            parameters = SearchParameters(
-                identity.scope, task_text, exclude_model_authored=settings.exclude_model_authored
+            policy = settings.retrieval_policy
+            parameters = SearchParameters.for_policy(
+                identity.scope, task_text, policy, exclude_model_authored=settings.exclude_model_authored
             )
+            stopped: Literal["RetrievalTimedOut", "RetrievalDenied"] | None = None
             with observe("retrieve") as retrieval:
-                text_search = asyncio.ensure_future(
-                    asyncio.to_thread(settings.store.search, identity.authorization, parameters)
-                )
-                vector_search = asyncio.ensure_future(self._vector_channel(task_text, identity))
-                # Both channels run together; the vector channel never raises (it answers with a fallback instead).
-                text_found, vector_found = await asyncio.gather(text_search, vector_search, return_exceptions=True)
-                if isinstance(vector_found, BaseException):
-                    vector_found = (
-                        [],
-                        VectorFallback("VectorSearchFailed", "The vector channel failed unexpectedly."),
+                if not identity.authorization.permits(identity.scope):
+                    # Contract 1.12, as .NET: a scope outside the bounds is Denied before anything is searched or
+                    # embedded.
+                    if retrieval is not None:
+                        retrieval.outcome("Denied")
+                    stopped = "RetrievalDenied"
+                elif self._searches.count >= policy.max_abandoned_searches:
+                    # Too many earlier searches are still running against the store: none is started, and the call
+                    # ends as the timeout it would almost certainly become.
+                    if retrieval is not None:
+                        retrieval.outcome("TimedOut")
+                    stopped = "RetrievalTimedOut"
+                    settings.report_injection(
+                        InjectionFailure(
+                            "The candidate store has too many abandoned searches still running (at least "
+                            f"{policy.max_abandoned_searches}), so no search was started."
+                        )
                     )
-                vector_rows, fallback = vector_found
-                if fallback is not None:
-                    settings.report_vector_fallback(fallback)
-                if isinstance(text_found, BaseException):
-                    # The text channel's failure fails the call, whatever the vector channel found. Retrieval reports
-                    # it as its outcome, as .NET does; it is not thrown.
-                    if retrieval is not None:
-                        retrieval.outcome("Failed")
-                    retrieval_failed = True
                 else:
-                    rows = text_found
-                    # The instant the block is built at: ranking's "now", and the injection's instant.
-                    now = settings.clock()
-                    if vector_rows:
-                        ranked = rank_hybrid(
-                            rows,
-                            vector_rows,
-                            identity.scope,
-                            now,
-                            settings.preferred_environment,
-                            minimum_vector_relevance=settings.min_vector_relevance,
-                            exclude_model_authored=settings.exclude_model_authored,
+                    search = self._searches.start(
+                        functools.partial(settings.store.search, identity.authorization, parameters)
+                    )
+                    text_search = asyncio.ensure_future(search.answer())
+                    vector_search = asyncio.ensure_future(self._vector_channel(task_text, identity))
+                    try:
+                        # Both channels run together, bounded together by the policy's timeout; the vector channel
+                        # never raises (it answers with a fallback instead).
+                        text_found, vector_found = await asyncio.wait_for(
+                            asyncio.gather(text_search, vector_search, return_exceptions=True),
+                            policy.timeout.total_seconds(),
                         )
-                    else:
-                        ranked = rank(
-                            rows,
-                            identity.scope,
-                            now,
-                            settings.preferred_environment,
-                            exclude_model_authored=settings.exclude_model_authored,
-                        )
-                    if retrieval is not None:
-                        retrieval.outcome("Completed")
+                    except (asyncio.TimeoutError, TimeoutError):
+                        search.abandon()
+                        if retrieval is not None:
+                            retrieval.outcome("TimedOut")
+                        stopped = "RetrievalTimedOut"
+                    except BaseException:
+                        # The caller's own cancellation: it propagates, and the search is abandoned too.
+                        search.abandon()
+                        raise
+                    if stopped is None:
+                        if isinstance(vector_found, BaseException):
+                            vector_found = (
+                                [],
+                                VectorFallback("VectorSearchFailed", "The vector channel failed unexpectedly."),
+                            )
+                        vector_rows, fallback = vector_found
+                        if fallback is not None:
+                            settings.report_vector_fallback(fallback)
+                        if isinstance(text_found, BaseException):
+                            # The text channel's failure fails the call, whatever the vector channel found.
+                            # Retrieval reports it as its outcome, as .NET does; it is not thrown.
+                            if retrieval is not None:
+                                retrieval.outcome("Failed")
+                            retrieval_failed = True
+                        else:
+                            rows = text_found
+                            # The instant the block is built at: ranking's "now", and the injection's instant.
+                            now = settings.clock()
+                            if vector_rows:
+                                ranked = rank_hybrid(
+                                    rows,
+                                    vector_rows,
+                                    identity.scope,
+                                    now,
+                                    settings.preferred_environment,
+                                    minimum_vector_relevance=settings.vector_floor,
+                                    exclude_model_authored=settings.exclude_model_authored,
+                                    policy=policy,
+                                    confidence_decay=settings.confidence_decay,
+                                )
+                            else:
+                                ranked = rank(
+                                    rows,
+                                    identity.scope,
+                                    now,
+                                    settings.preferred_environment,
+                                    exclude_model_authored=settings.exclude_model_authored,
+                                    policy=policy,
+                                    confidence_decay=settings.confidence_decay,
+                                )
+                            if retrieval is not None:
+                                retrieval.outcome("Completed")
+            if stopped is not None:
+                settings.report_injected(InjectionResult((), 0, False, outcome=stopped))
+                return stopped
             if retrieval_failed:
                 assert isinstance(text_found, BaseException)
                 raise text_found
@@ -1262,7 +1416,13 @@ class ExperienceContextProvider(ContextProvider):
                 # As .NET reports it: nothing injected, and every omission.
                 settings.report_injected(
                     InjectionResult(
-                        (), 0, ranked.truncated, fallback, outcome="NothingToInject", omitted=selection.omitted
+                        (),
+                        0,
+                        ranked.truncated,
+                        fallback,
+                        outcome="NothingToInject",
+                        omitted=selection.omitted,
+                        excluded=ranked.excluded,
                     )
                 )
                 return "NothingToInject"
@@ -1298,7 +1458,16 @@ class ExperienceContextProvider(ContextProvider):
             if settings.on_injected is not None:
                 try:
                     settings.on_injected(
-                        InjectionResult((), 0, ranked.truncated, fallback, "Withheld", withheld, selection.omitted)
+                        InjectionResult(
+                            (),
+                            0,
+                            ranked.truncated,
+                            fallback,
+                            "Withheld",
+                            withheld,
+                            selection.omitted,
+                            ranked.excluded,
+                        )
                     )
                 except Exception:
                     pass
@@ -1313,7 +1482,14 @@ class ExperienceContextProvider(ContextProvider):
         if settings.on_injected is not None:
             try:
                 settings.on_injected(
-                    InjectionResult(delivered, block.byte_count, ranked.truncated, fallback, omitted=selection.omitted)
+                    InjectionResult(
+                        delivered,
+                        block.byte_count,
+                        ranked.truncated,
+                        fallback,
+                        omitted=selection.omitted,
+                        excluded=ranked.excluded,
+                    )
                 )
             except Exception:
                 pass
@@ -1900,6 +2076,8 @@ def use_agent_experience(
     holdout: HoldoutOptions | None = None,
     on_holdout_recorded: Callable[[HoldoutRecordResult], None] | None = None,
     benefit: BenefitPolicy | None = None,
+    retrieval_policy: RetrievalPolicy | None = None,
+    confidence_decay: ConfidenceDecayPolicy | None = None,
 ) -> AgentT:
     """
     Wires capture and injection into a MAF agent (an ``Agent``, or any agent with ``context_providers`` and
@@ -1935,6 +2113,13 @@ def use_agent_experience(
     measured as hurting is not injected (``InjectionResult.omitted`` says ``MeasuredHarmful``), a scope whose lessons
     together hurt gets none, and with ``prefer_measured_helpful`` the helpful ones go first. The estimate is cached and
     refreshed in the background, never on the request path. Off by default.
+
+    ``retrieval_policy`` (contract 1.12), .NET's ``RetrievalPolicy`` with its defaults, bounds each retrieval by its
+    ``timeout`` (500 ms; past it nothing is injected, ``RetrievalTimedOut``), caps the searches abandoned on a timeout
+    that are still running, and sets the confidence floor, the expiry (``max_age``, records excluded as ``Expired``),
+    the recency half-life, the candidate limit, the minimum of matched terms and the vector floor.
+    ``confidence_decay``, a :class:`~agentexperience.retrieval.ConfidenceDecayPolicy`, fades each record's confidence
+    by its domain at ranking time. Neither ever changes a stored record.
     """
     providers = getattr(agent, "context_providers", None)
     if not isinstance(providers, list):
@@ -1973,6 +2158,8 @@ def use_agent_experience(
         holdout=HoldoutOptions() if holdout is None else holdout,
         on_holdout_recorded=on_holdout_recorded,
         benefit=BenefitPolicy() if benefit is None else benefit,
+        retrieval_policy=RetrievalPolicy() if retrieval_policy is None else retrieval_policy,
+        confidence_decay=confidence_decay,
     )
 
     # Capture first, so it wraps everything else on the agent: injection runs inside it and reuses its identity.

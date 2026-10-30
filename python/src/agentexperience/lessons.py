@@ -9,10 +9,11 @@ scope only (a sharing grant is outside contract 1.x), and never writes. A scope 
 the outcome ``Denied``, not an exception. A record that cannot be rendered is listed as ``Unrenderable`` and the rest
 are still listed. Listing lessons discloses them: serve the view only behind the host's own authorization.
 
-Two of .NET's ineligibility codes do not exist here: ``Expired`` (this port has no maximum-age policy) and
-``ContentUnconfirmed`` (no provenance signing). The port decides ``Status``, ``BelowConfidenceFloor`` (the floor is
-retrieval's minimum confidence, 0.5), ``ModelAuthored`` (when the settings exclude model-authored lessons),
-``OverByteBudget`` (the block options' ``max_bytes``) and ``Unrenderable``. It renders no HTML.
+Two of .NET's ineligibility codes do not exist here: ``Expired`` (the lessons view does not apply a retrieval
+policy's maximum age) and ``ContentUnconfirmed`` (no provenance signing). The port decides ``Status``,
+``BelowConfidenceFloor`` (the floor is the default retrieval minimum confidence, 0.5), ``ModelAuthored`` (when the
+settings exclude model-authored lessons), ``OverByteBudget`` (the block options' ``max_bytes``) and
+``Unrenderable``. It renders no HTML.
 """
 
 from __future__ import annotations

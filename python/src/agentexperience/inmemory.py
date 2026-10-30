@@ -237,14 +237,7 @@ class AuthorizationDenied(PermissionError):
 
 def permits(bounds: AuthorizationBounds, scope: Scope) -> bool:
     """Whether ``bounds`` permit ``scope``: the tenant always, and every bounded field exactly."""
-    pairs = (
-        (bounds.application_id, scope.application_id),
-        (bounds.project_id, scope.project_id),
-        (bounds.team_id, scope.team_id),
-        (bounds.agent_id, scope.agent_id),
-        (bounds.user_id, scope.user_id),
-    )
-    return bounds.tenant_id == scope.tenant_id and all(bound is None or bound == value for bound, value in pairs)
+    return bounds.permits(scope)
 
 
 def _words(text: str) -> list[str]:

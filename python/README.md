@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.11, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.11 (and so every 1.0 to 1.10 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.12, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.12 (and so every 1.0 to 1.11 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -133,6 +133,70 @@ agent = use_agent_experience(agent, store=store, identity=identity, verify=verif
   an embedder was registered have no vector until one is written; the .NET library's re-index does it for a shared
   database.
 
+### The retrieval policy (contract 1.12)
+
+Injection retrieves under .NET's `RetrievalPolicy` and, optionally, its `ConfidenceDecayPolicy`, with .NET's defaults
+and validation, so a Python agent configured like a .NET one ranks exactly as it does:
+
+```python
+from datetime import timedelta
+from agentexperience import ConfidenceDecayPolicy, RetrievalPolicy
+
+agent = use_agent_experience(
+    agent, store=store, identity=identity, verify=verify,
+    retrieval_policy=RetrievalPolicy(max_age=timedelta(days=180), recency_half_life=timedelta(days=14)),
+    confidence_decay=ConfidenceDecayPolicy(
+        half_lives={"framework-api": timedelta(days=30), "math": None},  # None: never decays
+        default_half_life=timedelta(days=365),
+    ),
+)
+```
+
+| Python (`RetrievalPolicy`) | .NET (`RetrievalPolicy`) | Default |
+| --- | --- | --- |
+| `timeout` (`timedelta`, more than zero, at most a day) | `Timeout` | 500 ms |
+| `minimum_confidence` (0 to 1) | `MinimumConfidence` | 0.5 |
+| `max_age` (`timedelta` or `None`) | `MaxAge` | `None`: no expiry |
+| `recency_half_life` | `RecencyHalfLife` | 30 days |
+| `candidate_limit` (1 to 199) | `CandidateLimit` | 50 |
+| `max_abandoned_searches` | `MaxAbandonedSearches` | 16 |
+| `minimum_matched_terms` | `MinimumMatchedTerms` | 3 |
+| `minimum_vector_relevance` (0 to 1 or `None`) | `MinimumVectorRelevance` | `None` |
+
+| Python (`ConfidenceDecayPolicy`) | .NET (`ConfidenceDecayPolicy`) | Default |
+| --- | --- | --- |
+| `domain_key` | `DomainKey` | `"domain"` |
+| `half_lives` (domain to `timedelta` or `None`; copied, read-only) | `HalfLives` | empty |
+| `default_half_life` | `DefaultHalfLife` | `None`: no decay |
+
+- **Validation.** An invalid value raises `RetrievalPolicyError` (a `ValueError`) when the policy is built; its
+  `option` is the option .NET's `ArgumentException` names (`Timeout`, `HalfLives`, ...). NaN is refused.
+- **The search** is asked for `minimum_confidence`, `candidate_limit + 1` rows (`SearchParameters.for_policy`) and
+  `minimum_matched_terms`; the vector channel for the same floor and limit. `min_vector_relevance` still works: the
+  policy's `minimum_vector_relevance` wins when set, and setting both to different values raises `ValueError`.
+- **Ranking** (`rank(..., policy=, confidence_decay=)`, and `rank_hybrid`) considers the first `candidate_limit`
+  candidates of each channel and reports what it excluded, in order, on `RankedResult.excluded` and
+  `InjectionResult.excluded` (.NET's `Excluded`): `IneligibleStatus`, `ModelAuthored`, or `Expired` (last activity,
+  `updated_at`, more than `max_age` ago). The `Confidence` component decays by the record's domain (its environment
+  metadata entry named `domain_key`) from `created_at`, and then carries the stored value as `undecayed_value` (.NET's
+  `UndecayedValue`); decay never excludes. With no arguments `rank` ranks exactly as before.
+- **Bounded.** The whole retrieval (the text search and the vector channel together) is bounded by `timeout`: past it
+  nothing is injected and the injection reports `RetrievalTimedOut` (`retrieve` outcome `TimedOut`), with no failure.
+  The search keeps running on its own daemon thread and counts as abandoned until it ends
+  (`provider.abandoned_searches`); while `max_abandoned_searches` are still running, an injection reports
+  `RetrievalTimedOut` at once without searching, with an `InjectionFailure` naming the cap. An identity whose bounds do
+  not permit its scope is `RetrievalDenied` (`retrieve` outcome `Denied`) before anything is searched or embedded. Both
+  are reported to `on_injected` too, with nothing delivered. The caller's own cancellation still propagates.
+
+| .NET | Python |
+| --- | --- |
+| `RetrievalOutcome` `Completed`, `TimedOut`, `Denied`, `Failed` | the `retrieve` operation's outcome (`RetrievalOutcome`) |
+| `InjectionOutcome` `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed` | the `inject` operation's outcome; `InjectionResult.outcome` for the first two |
+| `RetrievalExclusionReason` `IneligibleStatus`, `ModelAuthored`, `Expired` | `ExcludedRecord.reason` (`ExclusionReason`); never `EnvironmentMismatch` or `UnconfirmedContent` (no required attributes, no provenance signing) |
+
+The lessons view does not apply `max_age` or `minimum_confidence`: it never reports a lesson as `Expired`, and its
+confidence floor is the default 0.5.
+
 ### See what it learned: the lessons view
 
 A read-only list of what was learned in a scope (contract 1.7), as .NET's `AgentExperienceLessons` lists it:
@@ -153,7 +217,7 @@ for lesson in page.lessons:                             # newest first
   when not), and `last_injected_at` and `injection_count`.
 - **Eligibility codes** this port decides: `Status`, `BelowConfidenceFloor` (retrieval's 0.5), `ModelAuthored` (when the
   setup's `exclude_model_authored` is on), `OverByteBudget` (the block options' `max_bytes`) and `Unrenderable`. .NET's
-  `Expired` and `ContentUnconfirmed` do not exist here: this port has no maximum-age policy and no provenance signing.
+  `Expired` and `ContentUnconfirmed` do not exist here: the lessons view does not apply the retrieval policy's `max_age` (nor its `minimum_confidence`: the floor is the default 0.5), and this port has no provenance signing.
 - **The page** has `outcome`, `generated_at`, `has_more`, `out_of_scope_dropped` and `injections_tracked`. When it is
   false (a store that records no injections, or a PostgreSQL role without the 1.4 grants or table), a `None`
   `last_injected_at` means "not known", not "never". A scope outside the authorization bounds is an empty page with the
@@ -412,7 +476,8 @@ which shares lessons with .NET agents on the same database.
 - **PostgreSQL** (the `postgres` extra, psycopg 3). `PostgresExperienceStore` writes a finalized record and its
   initial event as the application role, reads records back, runs the contract's text search, and records injections
   (`record_injection`, contract 1.4). It ships the contract's SQL files and runs them as written. `rank` applies the
-  contract's safety checks, truncation and ranking to the rows the search returns. The store needs a schema the .NET
+  contract's safety checks, truncation, eligibility and ranking to the rows the search returns, under the retrieval
+  policy (contract 1.12) when one is given. The store needs a schema the .NET
   migrator applied, with row-level security on; it never creates or alters a schema object. The application role's
   privileges are the .NET privileges call's, or the contract's two files, in this order:
   `sql/application-role-privileges.sql`, then `sql/application-role-privileges-1.4.sql` (without the second, every
@@ -539,7 +604,8 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.11: capture, finalize, store, text and semantic retrieval, the injected block,
+The port covers contract 1.0 to 1.12: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block,
 injection recording, the lessons view, the injection holdout, its benefit estimate and the benefit policy that acts on
 it, measuring another memory provider, and telemetry. These .NET features have no counterpart
 here, so a mixed .NET and Python deployment should keep them on the .NET side:
@@ -549,7 +615,7 @@ here, so a mixed .NET and Python deployment should keep them on the .NET side:
 - **Withdrawal notices:** the port keeps no per-session account of what it injected, so it never retracts a record;
   a held-out invocation is always `Withheld`, never a notices-only `Retracted` block.
 - **Sharing:** grants, and so the grant-disclosure choices.
-- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5), and **provenance signing** (so no `Expired` or `ContentUnconfirmed` lesson state).
+- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5), and **provenance signing** (so no `ContentUnconfirmed` lesson state).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
 - **Lessons view HTML and endpoint mapping.**
 

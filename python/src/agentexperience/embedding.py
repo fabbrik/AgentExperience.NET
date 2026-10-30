@@ -21,9 +21,9 @@ from dataclasses import dataclass
 from typing import Generic, Literal, Protocol, TypeVar, runtime_checkable
 
 from ._text import format_round_trip, is_null_or_whitespace, utf16_len
-from .block import RankedRecord
 from .encoding import Instant
 from .records import ExperienceRecord, ExperienceStatus, Scope
+from .retrieval import DEFAULT_POLICY, ConfidenceDecayPolicy, RetrievalPolicy
 from .search import (
     CANDIDATE_LIMIT,
     DEFAULT_MIN_CONFIDENCE,
@@ -31,8 +31,8 @@ from .search import (
     STATEMENT_LIMIT,
     RankedResult,
     SearchRow,
-    SearchSafetyError,
-    rank,
+    check_rows,
+    rank_checked,
 )
 
 MAX_SUMMARY_LENGTH = 8192
@@ -390,18 +390,10 @@ def merge_channels(
     return merged
 
 
-def check_channel(rows: Sequence[SearchRow], scope: Scope) -> list[SearchRow]:
-    """Contract 1.6 step 2 for one channel: over its first 50 candidates, one outside ``scope`` or a repeated
-    ``experience_id`` raises :class:`SearchSafetyError`; returns the first 50."""
-    considered = list(rows[:CANDIDATE_LIMIT])
-    seen: set[uuid.UUID] = set()
-    for row in considered:
-        if row.shared_by_grant or row.record.scope != scope:
-            raise SearchSafetyError("A row lies outside the requested scope; nothing is returned.")
-        if row.record.experience_id in seen:
-            raise SearchSafetyError("The same record came back more than once; nothing is returned.")
-        seen.add(row.record.experience_id)
-    return considered
+def check_channel(rows: Sequence[SearchRow], scope: Scope, candidate_limit: int = CANDIDATE_LIMIT) -> list[SearchRow]:
+    """Contract 1.6 step 2 for one channel: over its first ``candidate_limit`` candidates (50 by default), one outside
+    ``scope`` or a repeated ``experience_id`` raises :class:`SearchSafetyError`; returns those candidates."""
+    return check_rows(rows, scope, candidate_limit)
 
 
 def rank_hybrid(
@@ -413,35 +405,35 @@ def rank_hybrid(
     *,
     minimum_vector_relevance: float | None = None,
     exclude_model_authored: bool = False,
+    policy: RetrievalPolicy | None = None,
+    confidence_decay: ConfidenceDecayPolicy | None = None,
 ) -> RankedResult:
     """
-    The whole of steps 1 to 4: floor, per-channel checks and truncation, merge, then the existing
-    :func:`~agentexperience.search.rank` over the merged candidates (each with the relevance kept). ``rank`` looks at
-    50 rows, so the merged list (up to 100) is ranked in slices of 50: a row's score does not depend on the others, and
-    the slices are put back in the order ``rank`` itself uses (score descending, then experience ID).
+    The whole of steps 1 to 4: floor, per-channel checks and truncation (at the policy's candidate limit, 50 by
+    default), merge, then eligibility and ranking over the merged candidates (each with the relevance kept), as
+    :func:`~agentexperience.search.rank` ranks. ``minimum_vector_relevance`` is the floor (``None``: the policy's,
+    which is none by default); ``policy`` and ``confidence_decay`` are contract 1.12's.
     """
+    limit = (policy or DEFAULT_POLICY).candidate_limit
+    if minimum_vector_relevance is None and policy is not None:
+        minimum_vector_relevance = policy.minimum_vector_relevance
     floored = [
         row
-        for row in vector_rows[: CANDIDATE_LIMIT + 1]
+        for row in vector_rows[: limit + 1]
         if minimum_vector_relevance is None or row.relevance >= minimum_vector_relevance
     ]
-    # Checks are over each channel's first 50 candidates as returned (the floor only drops vector candidates).
-    text = check_channel(text_rows, scope)
-    vector = check_channel([row for row in floored], scope)
+    # Checks are over each channel's first candidates as returned (the floor only drops vector candidates).
+    text = check_channel(text_rows, scope, limit)
+    vector = check_channel(floored, scope, limit)
     merged = merge_channels(text, vector, lambda row: row.record.experience_id, lambda row: row.relevance)
     rows = [SearchRow(entry.item.record, entry.relevance) for entry in merged]
-    ranked: list[RankedRecord] = []
-    for start in range(0, len(rows), CANDIDATE_LIMIT):
-        ranked.extend(
-            rank(
-                rows[start : start + CANDIDATE_LIMIT],
-                scope,
-                now,
-                preferred_environment,
-                exclude_model_authored=exclude_model_authored,
-            ).ranked
-        )
-    ranked.sort(key=lambda entry: str(entry.record.experience_id))
-    ranked.sort(key=lambda entry: entry.score, reverse=True)
-    truncated = len(text_rows) > CANDIDATE_LIMIT or len(floored) > CANDIDATE_LIMIT
-    return RankedResult(tuple(ranked), truncated)
+    ranked, excluded = rank_checked(
+        rows,
+        now,
+        preferred_environment,
+        exclude_model_authored=exclude_model_authored,
+        policy=policy,
+        confidence_decay=confidence_decay,
+    )
+    truncated = len(text_rows) > limit or len(floored) > limit
+    return RankedResult(ranked, truncated, excluded)

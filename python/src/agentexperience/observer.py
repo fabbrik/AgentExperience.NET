@@ -56,10 +56,21 @@ OPERATIONS: Mapping[str, OperationSpec] = {
     "verify": OperationSpec(CORE_SOURCE, True, ("Unknown", "Verified", "Failed")),
     "reflect": OperationSpec(CORE_SOURCE, True, ("Unknown", "Verified", "Failed")),
     "finalize": OperationSpec(CORE_SOURCE, True, ("Validated", "Quarantined")),
-    "retrieve": OperationSpec(CORE_SOURCE, True, ("Completed", "Failed")),
+    "retrieve": OperationSpec(CORE_SOURCE, True, ("Completed", "TimedOut", "Denied", "Failed")),
     "index": OperationSpec(CORE_SOURCE, True, ("Indexed", "Stale", "Missing", "ProviderFailed", "IndexFailed")),
     "inject": OperationSpec(
-        MAF_SOURCE, True, ("Injected", "NothingToInject", "Skipped", "RetrievalFailed", "Failed", "Withheld")
+        MAF_SOURCE,
+        True,
+        (
+            "Injected",
+            "NothingToInject",
+            "Skipped",
+            "RetrievalTimedOut",
+            "RetrievalDenied",
+            "RetrievalFailed",
+            "Failed",
+            "Withheld",
+        ),
     ),
     "record_injection": OperationSpec(MAF_SOURCE, False, ("Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown")),
     "record_holdout": OperationSpec(MAF_SOURCE, False, ("Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown")),
