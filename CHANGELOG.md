@@ -223,6 +223,24 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   that blocks Python's event loop cannot be timed out; Unicode tables differ by language, which can change the content
   guard's verdict on rare characters.
 
+### The confidence engine in Python and Go: contract 1.15 (story 27.6a)
+
+- **Contract 1.15** ([what it adds](contract/README-1.15.md)) brings the confidence engine into the language-neutral
+  contract, add-only: `confidence-engine` fixtures generated through .NET's own `ReuseConfidenceHeuristic`,
+  `ReuseConfidenceHeuristicEngine`, the lifecycle service's engine check (`ConfidenceEngineRule`) and the assessment
+  token issuer and codec. They cover the default rule and its boundaries, applying evidence against every status in
+  both directions and from both sources, repeated and conflicting evidence, the independence keys, a host engine's
+  identity and every score it may or may not return, the assessment token's options, the issuer's refusals in order,
+  the token's exact bytes and every path by which a token is refused. Every 1.0-1.14 file is unchanged.
+- **The Python and Go ports compute confidence** as .NET does, with .NET's defaults, validation, refusal parameter names
+  and, where the library wrote one, messages: Python `agentexperience.confidence` (`score`, `apply`, `status_after`,
+  `independence_key_for`, `ConfidenceEngineRule`, the `ExperienceConfidenceEngine` protocol, `AssessmentTokenIssuer`),
+  Go `ConfidenceScore`, `ApplyConfidenceEvidence`, `StatusAfter`, `IndependenceKeyFor`, `NewConfidenceEngineRule`, the
+  `ConfidenceEngine` interface and `NewAssessmentTokenIssuer`. A host can supply its own engine, checked and recorded
+  as `{RuleId}/{RuleVersion}` as in .NET. They only compute: applying an update to a stored record, verifying a key's
+  inputs and reuse feedback stay .NET-only. Where a port differs, forced by its language: Go reads a zero token lifetime
+  as the default rather than refusing it, and Python states a lifetime in whole microseconds.
+
 ## 0.1.0-preview.17
 
 This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of

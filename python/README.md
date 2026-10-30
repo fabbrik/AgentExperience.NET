@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.14, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.14 (and so every 1.0 to 1.13 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.15, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.15 (and so every 1.0 to 1.14 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -438,6 +438,48 @@ Differences from .NET, each forced by Python or agent_framework:
 - The cause type in `ReflectionFailed` is the Python exception's (`RuntimeError`, `asyncio.exceptions.CancelledError`),
   where .NET names its own.
 
+### Computing confidence (contract 1.15)
+
+`agentexperience.confidence` computes how a record's reuse confidence moves when evidence about reusing it arrives,
+exactly as .NET's confidence engine does. It only computes: nothing here reads or writes a store.
+
+```python
+from agentexperience import ConfidenceEngineRule, ExperienceConfidenceInput, independence_key_for, status_after
+
+rule = ConfidenceEngineRule.for_engine(None)   # the default engine: (1 + S) / (2 + S + F), recorded as "1.0.0"
+update = rule.apply(record, evidence_id, "Supporting", "Machine", run_id, round_id, None)
+update.new_reuse_confidence       # 0.75 for a freshly validated record (S 1 -> 2)
+status_after(record.status, "Contradicting")   # "Contested" for a Validated or Reinforced record
+independence_key_for(update).value             # "machine:<run>:<round>"
+
+
+class BayesianEngine:  # a host engine, as .NET's IExperienceConfidenceEngine
+    rule_id = "bayes"
+    rule_version = "2.1"
+
+    def score(self, input: ExperienceConfidenceInput) -> float:
+        return (2 + input.supporting_validations) / (4 + input.supporting_validations + input.contradictions)
+
+
+rule = ConfidenceEngineRule.for_engine(BayesianEngine())   # records "bayes/2.1"
+```
+
+- **The default rule** (`confidence.score`) is a heuristic for ranking, never a probability, strictly inside (0, 1).
+  `confidence.apply` is .NET's `ReuseConfidenceHeuristic.Apply`: the counters after one piece of evidence, refusing a
+  negative stored counter or one at 2,147,483,647 that would overflow .NET's. `accepts_evidence_in` is
+  `Validated`, `Reinforced` or `Contested`.
+- **A host engine** (`ExperienceConfidenceEngine`: `rule_id`, `rule_version`, `score(input)`) is checked once by
+  `ConfidenceEngineRule.for_engine`: each identity 1 to 64 characters from `[A-Za-z0-9._-]`, never the default's
+  `reuse-heuristic`. `rule.apply` asks it for the score of the record as read with the counters after the evidence; a
+  score that is NaN, infinite or outside [0, 1] raises `ConfidenceEngineError` with .NET's message, never clamped, and
+  an exception the engine raises propagates unchanged. Refusals raise `ConfidenceArgumentError`, carrying .NET's
+  exception type and parameter name (`.exception`, `.parameter`).
+- **Assessment tokens.** `AssessmentTokenIssuer(ExperienceIndependenceOptions(assessment_token_key=...))` mints the
+  token a human assessment carries (`issue(reviewer, scope, run_id, kind, experience_ids)`, with the reviewer's
+  `ExperienceIdentity`), byte for byte .NET's format: call it from your review flow, never from code an agent drives.
+  The key is at least 32 bytes; the lifetime a day by default, at most 30 days (a `timedelta`, so whole microseconds).
+  Checking a token is internal, as in .NET.
+
 ### Measuring benefit: the injection holdout
 
 Off by default. With `holdout=HoldoutOptions(rate=0.1)` (contract 1.8), about one in ten captured runs that have a
@@ -686,7 +728,8 @@ which shares lessons with .NET agents on the same database.
   injection is still made and its record is reported `NotRecorded`).
 
 It does nothing outside contract 1.x: no grants, crypto-shredding or provenance signing, and no lifecycle
-after finalization (reuse evidence, reinforcement, contest, revocation). It writes no logs at all, so no record
+after finalization (reuse evidence, reinforcement, contest, revocation) beyond computing how confidence would move
+(contract 1.15). It writes no logs at all, so no record
 content is ever logged.
 
 The pieces that need no run or database:
@@ -806,16 +849,19 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.14: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.15: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and every
 injection option that needs no session (the receiving agent's gate, the model-authored policy, the request resolver
 and the host's decision),
 injection recording, the lessons view with its HTML page and the export of measured lessons, the model-backed
-reflector and the content guard for model-authored lessons, the injection holdout, its benefit estimate and the benefit policy that acts on
+reflector and the content guard for model-authored lessons, computing confidence (the default rule, a host engine and
+assessment tokens), the injection holdout, its benefit estimate and the benefit policy that acts on
 it, measuring another memory provider, and telemetry. These .NET features have no counterpart
 here, so a mixed .NET and Python deployment should keep them on the .NET side:
 
-- **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
+- **Lifecycle after finalization:** applying evidence to a stored record (the port computes the update, contract 1.15,
+  but nothing stores it: no lifecycle event, evidence ledger or independence index), reuse feedback, reinforcement,
+  contest and revocation.
 - **Session tracking and withdrawal notices** (`SessionLimits`, `SessionStateKey`; story 27.6): the port keeps no
   per-session account of what it injected, so it never deduplicates, budgets a session or retracts a record; a held-out
   invocation is always `Withheld`, never a notices-only `Retracted` block.
