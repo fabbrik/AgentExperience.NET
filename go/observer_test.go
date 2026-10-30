@@ -128,12 +128,12 @@ func TestClassificationMirrorsNet(t *testing.T) {
 func TestObservedOperationsAreTheOnesThePortPerforms(t *testing.T) {
 	operations := ObservedOperations()
 	for _, forbidden := range []string{"retention.sweep", "delete", "grant.purge", "grant.access.purge", "record.seal",
-		"record.authorship.backfill", "reuse_feedback", "deindex", "reindex"} {
+		"record.authorship.backfill", "deindex", "reindex"} {
 		if _, ok := operations[forbidden]; ok {
 			t.Errorf("the port reports %s, which it does not perform", forbidden)
 		}
 	}
-	if len(operations) != 15 {
+	if len(operations) != 16 {
 		t.Errorf("%d operations", len(operations))
 	}
 }

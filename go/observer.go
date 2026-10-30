@@ -78,10 +78,12 @@ var observedOperations = map[string]OperationSpec{
 	"confidence.apply": {SourceCore, true,
 		[]string{"Applied", "Ineligible", "StaleRevision", "StatusMismatch", "Conflict", "NotFound", "Denied",
 			"Invalid", "Deleted", "Unverified"}},
+	// Contract 1.17's reuse feedback: ReuseFeedbackService.Record.
+	"reuse_feedback": {SourceCore, true, []string{"Recorded", "AlreadyRecorded", "Conflict", "Denied", "Invalid"}},
 }
 
 // ObservedOperations is every operation this port reports, by its operation value. The port reports no other: not
-// retention.sweep, delete, grants, seal, backfill, reuse-feedback, deindex or reindex. A new map is returned each
+// retention.sweep, delete, grants, seal, backfill, deindex or reindex. A new map is returned each
 // time.
 func ObservedOperations() map[string]OperationSpec {
 	result := make(map[string]OperationSpec, len(observedOperations))
@@ -126,7 +128,7 @@ const (
 func ObservedAttributes() []string {
 	attributes := []string{AttributeAttemptID, AttributeCorrelationID, AttributeExperienceID, AttributeOmittedCount,
 		AttributeReflectionID, AttributeScreeningRefusal, AttributeRunID, AttributeStage, AttributeEventID,
-		AttributeConfidenceAdmission, AttributeIndependenceRefusal}
+		AttributeConfidenceAdmission, AttributeIndependenceRefusal, AttributeFeedbackID}
 	sort.Strings(attributes)
 	return attributes
 }
