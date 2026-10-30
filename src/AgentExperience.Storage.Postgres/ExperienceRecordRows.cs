@@ -84,6 +84,23 @@ internal static class ExperienceRecordRows
     }
 
     /// <summary>
+    /// Reads the permitting grant's recipe-excerpt consent by name. A reader that did not select it, a null, and a
+    /// stored value that does not parse are all "the owner named no tool": no borrowed excerpt is shown.
+    /// </summary>
+    internal static IReadOnlyList<string>? ReadPermittingRecipeExcerpts(DbDataReader reader)
+    {
+        try
+        {
+            var ordinal = reader.GetOrdinal(PermittingRecipeExcerptsAlias);
+            return reader.IsDBNull(ordinal) ? null : GrantRecipeExcerptsCodec.Parse(reader.GetString(ordinal));
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Parses a stored disclosure level by its exact name. Anything else is <see langword="null"/>:
     /// a level this build cannot name is never widened into one it can.
     /// </summary>

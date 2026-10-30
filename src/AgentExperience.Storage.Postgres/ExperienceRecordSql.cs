@@ -155,7 +155,7 @@ internal static class ExperienceRecordSql
     /// </summary>
     internal const string GetSelectFrom =
         $"SELECT {SelectColumns}, {SharedByGrantColumn}, {PermittingGrantColumn}, {PermittingDisclosureColumn}, " +
-        $"{PermittingApproachArgumentsColumn}, {DeletedAtColumn} FROM {Table} r " +
+        $"{PermittingApproachArgumentsColumn}, {PermittingRecipeExcerptsColumn}, {DeletedAtColumn} FROM {Table} r " +
         $"{PermittingGrantJoin} ";
 
     /// <summary>The readability rule <see cref="GetSql"/> and <see cref="GetManySql"/> share, byte for byte.</summary>
@@ -180,7 +180,8 @@ internal static class ExperienceRecordSql
     /// <summary>Everything <see cref="GetExactSql"/> says before its <c>WHERE</c>, shared with <see cref="GetManyExactSql"/>.</summary>
     internal const string GetExactSelectFrom =
         $"SELECT {SelectColumns}, false AS {SharedByGrantAlias}, NULL::uuid AS {PermittingGrantAlias}, " +
-        $"NULL::text AS {PermittingDisclosureAlias}, NULL::jsonb AS {PermittingApproachArgumentsAlias}, {DeletedAtColumn} " +
+        $"NULL::text AS {PermittingDisclosureAlias}, NULL::jsonb AS {PermittingApproachArgumentsAlias}, " +
+        $"NULL::jsonb AS {PermittingRecipeExcerptsAlias}, {DeletedAtColumn} " +
         $"FROM {Table} r ";
 
     /// <summary><see cref="GetExactSql"/> for several records in one statement: the fallback <see cref="GetManySql"/> takes when grants are unavailable.</summary>
@@ -333,6 +334,17 @@ internal static class ExperienceRecordSql
     /// </summary>
     internal const string PermittingApproachArgumentsColumn =
         PermittingGrantSource + ".approach_arguments AS " + PermittingApproachArgumentsAlias;
+
+    /// <summary>The alias the permitting grant's recipe-excerpt consent is selected under, read back by name.</summary>
+    internal const string PermittingRecipeExcerptsAlias = "permitting_grant_recipe_excerpts";
+
+    /// <summary>
+    /// The permitting grant's recipe-excerpt consent (<c>0031</c>): the same grant row <see cref="PermittingGrantColumn"/>
+    /// names, looked up by its key and read through <c>to_jsonb</c>, so a schema without the column reads NULL and the
+    /// lateral join every grant-aware read shares stays as it was. Null for a record the requester owns.
+    /// </summary>
+    internal const string PermittingRecipeExcerptsColumn =
+        $"(SELECT {GrantRecipeExcerptsCodec.Column} FROM {GrantsTable} g WHERE g.grant_id = {PermittingGrantSource}.grant_id) AS {PermittingRecipeExcerptsAlias}";
 
     /// <summary>
     /// <see cref="ReadableRecordScopePredicate"/> expressed against <see cref="PermittingGrantJoin"/>:

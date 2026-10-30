@@ -50,6 +50,7 @@
         public string TaskId { get; set; }
         public System.TimeProvider? TimeProvider { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>>? Verify { get; set; }
+        public void Recipe(string toolName, System.Collections.Generic.IReadOnlyList<string>? arguments = null, System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceToolResultContext, string?>? resultExcerpt = null) { }
         public void UseDevelopmentIdentity(string? tenant = null) { }
     }
     public sealed class ExperienceApproval : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceApproval>
@@ -83,6 +84,7 @@
         ToolResultClassification = 6,
         Embeddings = 7,
         Recall = 8,
+        RecipeExcerpt = 9,
     }
     public sealed class ExperienceCaptureOptions
     {
@@ -98,6 +100,7 @@
         public System.Func<System.Guid> NewId { get; set; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.ExperienceCaptureFailure>? OnCaptureFailure { get; set; }
         public System.Action<AgentExperience.Core.Finalization.FinalizeExperienceResult>? OnRunFinalized { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceToolResultContext, string?>? RecipeResultExcerpt { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext, AgentExperience.Core.Finalization.FinalizeExperienceRequest?>? ResolveFinalization { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.Core.Finalization.FinalizeExperienceRequest?>>? ResolveFinalizationAsync { get; set; }
         public required System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceRunContext, AgentExperience.MicrosoftAgentFramework.ExperienceRunDescriptor> ResolveRun { get; set; }
@@ -366,6 +369,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public AgentExperience.Abstractions.ExperienceRecord Current { get; init; }
         public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? GrantApproachArguments { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
+        public System.Collections.Generic.IReadOnlyList<string>? GrantRecipeExcerpts { get; init; }
         public bool ModelAuthored { get; init; }
         public System.Guid? PermittingGrantId { get; init; }
         public bool SharedByGrant { get; init; }
@@ -399,6 +403,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOptions? Recall { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ReceivingAgentCapabilities? ReceivingAgent { get; set; }
+        public System.Collections.Generic.ICollection<string> RecipeExcerpts { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceRendering Rendering { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?>? ResolveRequest { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.Core.Retrieval.RetrieveExperienceRequest?>>? ResolveRequestAsync { get; set; }
@@ -512,8 +517,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
     public sealed class HistoricalReferenceWriteSettings : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceWriteSettings>
     {
         public HistoricalReferenceWriteSettings() { }
+        public System.Func<AgentExperience.Abstractions.ExperienceRecord, bool>? AreRecipeExcerptsConfirmed { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.AttemptFailureDetail FailureDetail { get; init; }
         public System.Func<AgentExperience.Abstractions.ExperienceRecord, bool>? IsContentConfirmed { get; init; }
+        public System.Collections.Generic.IEnumerable<string>? RecipeExcerpts { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceRendering Rendering { get; init; }
     }
     public static class HistoricalReferenceWriter
@@ -531,12 +538,14 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const string CallFailedClassPrefix = "[failed: ";
         public const string CallMarkerEnd = "]";
         public const string CallReturned = "[returned]";
+        public const string CallReturnedExcerptPrefix = "[returned: ";
         public const string ClampedName = "[...]";
         public const string MatchedWithoutRanking = "no ranking data";
         public const int MaxApproachArgumentsLength = 512;
         public const int MaxApproachToolNames = 20;
         public const int MaxArgumentValueLength = 64;
         public const int MaxErrorExcerptLength = 120;
+        public const int MaxRecipeExcerptLength = 200;
         public const int MaxToolNameLength = 96;
         public const int MaxTriedAttempts = 4;
         public const string ModelAuthoredEndLine = "End authored: the model-written text ends here.";

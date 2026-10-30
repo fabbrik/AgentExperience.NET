@@ -457,6 +457,89 @@ public sealed class AgentExperienceOptions
     /// </summary>
     public object? EmbeddingGeneratorKey { get; set; }
 
+    private readonly List<RecipeEntry> _recipes = [];
+
+    /// <summary>One <see cref="Recipe"/> call: the tool, its argument keys, and its excerpt callback.</summary>
+    internal sealed record RecipeEntry(string ToolName, IReadOnlyList<string> Arguments, Func<ExperienceToolResultContext, string?>? ResultExcerpt);
+
+    /// <summary>The recipes set through <see cref="Recipe"/>, in the order they were set.</summary>
+    internal IReadOnlyList<RecipeEntry> Recipes => _recipes;
+
+    /// <summary>
+    /// The one place to consent, per tool, to what a later agent may see of how it worked: the argument values
+    /// (<paramref name="arguments"/>) and the excerpt of its result (<paramref name="resultExcerpt"/>). It sets together
+    /// what would otherwise be four settings in three places: the capture-time sanitization allowlist (the argument
+    /// names are added to <see cref="Sanitization"/>'s <c>ToolArguments</c> policy, a dotted path by each of its
+    /// non-index steps), <see cref="ExperienceInjectionOptions.ApproachArguments"/> for the tool,
+    /// <see cref="ExperienceCaptureOptions.RecipeResultExcerpt"/> for the tool, and
+    /// <see cref="ExperienceInjectionOptions.RecipeExcerpts"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The block then shows, on the attempt its <c>Worked:</c> line names,
+    /// <c>pin_dependency(package="lib") [returned: "pinned lib to 2.4.1"]</c>. Nothing is on by default, and a tool with
+    /// no recipe is rendered as before. The <see cref="Capture"/> and <see cref="Injection"/> hooks run afterwards and
+    /// may change any of it; a secret-named argument (<see cref="AgentExperienceDefaults.SecretFieldNames"/>) is still
+    /// redacted.
+    /// </para>
+    /// <para>
+    /// <b>Consent only to what a later model may read.</b> Name arguments whose values are choices from a small, known
+    /// set, and return an excerpt of a known shape (a version, a key, a file name): never free text, personal data or
+    /// anything a secret could be written into. See <see cref="ExperienceCaptureOptions.RecipeResultExcerpt"/>.
+    /// </para>
+    /// </remarks>
+    /// <param name="toolName">The tool's registered name, matched ordinally.</param>
+    /// <param name="arguments">The argument keys (or dotted paths) whose values a later agent may see; none when <see langword="null"/>.</param>
+    /// <param name="resultExcerpt">
+    /// Given a call of this tool that returned, the excerpt of its result a later agent may see, or <see langword="null"/>
+    /// for none; no excerpt when the callback is <see langword="null"/>.
+    /// </param>
+    /// <exception cref="ArgumentException"><paramref name="toolName"/> is blank or already has a recipe, or an argument key is blank or listed twice.</exception>
+    public void Recipe(string toolName, IReadOnlyList<string>? arguments = null, Func<ExperienceToolResultContext, string?>? resultExcerpt = null)
+    {
+        if (string.IsNullOrWhiteSpace(toolName))
+        {
+            throw new ArgumentException("A recipe names a tool; the tool name may not be blank.", nameof(toolName));
+        }
+
+        if (_recipes.Any(recipe => string.Equals(recipe.ToolName, toolName, StringComparison.Ordinal)))
+        {
+            throw new ArgumentException($"Tool '{toolName}' already has a recipe.", nameof(toolName));
+        }
+
+        var keys = arguments?.ToArray() ?? [];
+        if (keys.Any(string.IsNullOrWhiteSpace) || keys.Distinct(StringComparer.Ordinal).Count() != keys.Length)
+        {
+            throw new ArgumentException($"The recipe for tool '{toolName}' lists a blank argument key, or one key twice.", nameof(arguments));
+        }
+
+        _recipes.Add(new RecipeEntry(toolName, Array.AsReadOnly(keys), resultExcerpt));
+    }
+
+    /// <summary>
+    /// <see cref="Sanitization"/> with every recipe's argument names added to its <c>ToolArguments</c> policy's allowed
+    /// field names (a dotted path contributes each step that is not an array index), or <see cref="Sanitization"/>
+    /// itself when no recipe names an argument. A <c>ToolArguments</c> policy the host left out is the default one.
+    /// </summary>
+    internal SanitizationOptions EffectiveSanitization()
+    {
+        var names = _recipes
+            .SelectMany(recipe => recipe.Arguments)
+            .SelectMany(key => key.Split('.'))
+            .Where(step => step.Length > 0 && !step.All(char.IsAsciiDigit))
+            .ToHashSet(StringComparer.Ordinal);
+        if (names.Count == 0)
+        {
+            return Sanitization;
+        }
+
+        var policies = new Dictionary<string, SanitizationPolicy>(Sanitization.Policies, StringComparer.Ordinal);
+        var policy = policies.TryGetValue(SanitizationKinds.ToolArguments, out var existing) ? existing : AgentExperienceDefaults.ToolArgumentsPolicy;
+        names.UnionWith(policy.AllowedFieldNames);
+        policies[SanitizationKinds.ToolArguments] = policy with { AllowedFieldNames = names };
+        return new SanitizationOptions(policies);
+    }
+
     /// <summary>Throws when the options cannot work.</summary>
     internal void Validate()
     {

@@ -1397,7 +1397,7 @@ public class SignedProvenanceTests
     {
         Assert.Equal(3, Signing.SignClaimsVersion);
         Assert.Contains("SignClaimsVersion = 3", Signing.ToString(), StringComparison.Ordinal);
-        foreach (var invalid in new[] { 0, 4, -1 })
+        foreach (var invalid in new[] { 0, 5, -1 })
         {
             Assert.Throws<ArgumentOutOfRangeException>(() => new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = KeyOne }, "key-1") { SignClaimsVersion = invalid });
         }

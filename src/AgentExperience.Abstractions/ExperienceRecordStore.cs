@@ -834,7 +834,16 @@ public sealed record ExperienceRecordGetResult(
     bool SharedByGrant = false,
     Guid? PermittingGrantId = null,
     ExperienceGrantDisclosure? GrantDisclosure = null,
-    IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null);
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null)
+{
+    /// <summary>
+    /// The permitting grant's <see cref="ExperienceGrant.RecipeExcerpts"/> -- the tool names whose recipe excerpts its
+    /// owner consented to show -- read from the same grant row as <see cref="GrantDisclosure"/>, when that level shows
+    /// the approach. <see langword="null"/> otherwise, and <see langword="null"/> from an implementation that cannot
+    /// say -- which a consumer must treat as naming no tool.
+    /// </summary>
+    public IReadOnlyList<string>? GrantRecipeExcerpts { get; init; }
+}
 
 /// <summary>
 /// The result of <see cref="IExperienceRecordStore.GetManyAsync"/>.

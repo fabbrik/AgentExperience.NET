@@ -443,7 +443,10 @@ public sealed partial class PostgresExperienceRecordStore : IExperienceRecordSto
             sharedByGrant,
             ReadPermittingGrant(reader),
             ReadPermittingDisclosure(reader),
-            ReadPermittingApproachArguments(reader));
+            ReadPermittingApproachArguments(reader))
+        {
+            GrantRecipeExcerpts = ReadPermittingRecipeExcerpts(reader),
+        };
     }
 
     /// <summary>

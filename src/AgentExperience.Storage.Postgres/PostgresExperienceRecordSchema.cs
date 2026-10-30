@@ -448,6 +448,18 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string ExperienceFailureSignaturesScriptName = "0030_experience_failure_signatures.sql";
 
+    /// <summary>
+    /// The script that lets a grant consent to showing a borrowed record's recipe excerpts: it adds
+    /// <c>experience_grants.recipe_excerpts</c> (a JSON array of tool names, <see cref="AgentExperience.Abstractions.ExperienceGrant.RecipeExcerpts"/>),
+    /// two <c>NOT VALID</c> checks (only under a level that shows the approach; a non-empty array of strings), and the
+    /// column to the grant monotonicity trigger's immutable pins.
+    /// </summary>
+    /// <remarks>
+    /// No existing table is rewritten and no privilege changes. The build reads the column through <c>to_jsonb</c>, so
+    /// reads keep working on a schema not yet migrated to it; issuing a grant that names recipe excerpts needs it.
+    /// </remarks>
+    public const string GrantRecipeExcerptsScriptName = "0031_grant_recipe_excerpts.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -455,7 +467,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0030</c> are present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0031</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -486,6 +498,7 @@ public static class PostgresExperienceRecordSchema
         ExperienceRecordsSourceRunScriptName,
         ExperienceProviderHoldoutAssignmentsScriptName,
         ExperienceFailureSignaturesScriptName,
+        GrantRecipeExcerptsScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

@@ -39,7 +39,22 @@ public sealed record ToolCallRecord(
     DateTimeOffset StartedAt,
     TimeSpan Duration,
     string? Result,
-    string? Error);
+    string? Error)
+{
+    /// <summary>
+    /// Optional: the short excerpt of this call's result its host vouched for as the <em>recipe</em> -- what the
+    /// working call produced that a later agent may be shown (a pinned version, a key that was set) -- or
+    /// <see langword="null"/> (the default) when there is none. Only a call that returned (no <see cref="Error"/>)
+    /// carries one. It is what the capture-time sanitizer returned for the host's excerpt, bounded, never the raw
+    /// result, and it is shown to a later model only for the working attempt, for a tool the reader's injection
+    /// options allow.
+    /// </summary>
+    /// <remarks>
+    /// Stored in a record's payload only when set, so a record without one is byte for byte what it was before
+    /// this property existed. Claims version 4 of a provenance signature covers it; an earlier version does not.
+    /// </remarks>
+    public string? RecipeExcerpt { get; init; }
+}
 
 /// <summary>
 /// One observable attempt at accomplishing an <see cref="ExperienceRun"/>'s task: zero or more

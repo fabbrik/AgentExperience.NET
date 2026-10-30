@@ -62,7 +62,8 @@ internal static class ExperiencePayload
                 Utc(t.StartedAt),
                 t.Duration,
                 t.Result,
-                t.Error)).ToList(),
+                t.Error,
+                t.RecipeExcerpt)).ToList(),
             a.Result,
             a.Error)).ToList(),
         new OutcomeV1(
@@ -150,7 +151,10 @@ internal static class ExperiencePayload
                     Utc(t.StartedAt),
                     t.Duration,
                     t.Result,
-                    t.Error)).ToList(),
+                    t.Error)
+                {
+                    RecipeExcerpt = t.RecipeExcerpt,
+                }).ToList(),
                 a.Result,
                 a.Error)).ToList(),
             new Outcome(
@@ -298,7 +302,8 @@ internal static class ExperiencePayload
         DateTimeOffset StartedAt,
         TimeSpan Duration,
         string? Result,
-        string? Error);
+        string? Error,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RecipeExcerpt = null);
 
     internal sealed record OutcomeV1(
         TaskVerificationStatus Status,

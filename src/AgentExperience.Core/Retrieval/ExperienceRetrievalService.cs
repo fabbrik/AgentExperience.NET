@@ -328,6 +328,22 @@ public sealed class ExperienceRetrievalService
     public bool IsContentConfirmed(ExperienceRecord record) => RecordAuthorship.IsContentConfirmed(record, _signer);
 
     /// <summary>
+    /// Whether <paramref name="record"/>'s recipe excerpts (<see cref="ToolCallRecord.RecipeExcerpt"/>) are confirmed:
+    /// always without provenance signing; with it, only when the record carries a claims version 4 signature
+    /// (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV4"/>), under a key in the ring, that verifies. No
+    /// earlier claims version covers an excerpt, so injection renders a record whose excerpts are not confirmed without
+    /// them, and the rest of the record as it otherwise would.
+    /// </summary>
+    /// <param name="record">The record as it will be rendered.</param>
+    /// <returns>Whether its recipe excerpts may be shown.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="record"/> is <see langword="null"/>.</exception>
+    public bool AreRecipeExcerptsConfirmed(ExperienceRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        return _signer is null || _signer.ConfirmsRecipeExcerpts(record);
+    }
+
+    /// <summary>
     /// Why this service would never return <paramref name="record"/> today, whatever the task, or
     /// <see langword="null"/> when it could: a status that is not eligible for reuse, a confidence below the policy's
     /// floor (which the candidate source applies; a NaN confidence is below it), a model-authored or unconfirmed lesson

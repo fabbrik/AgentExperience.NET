@@ -557,6 +557,30 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
                 return new AppendAttemptResult(AppendAttemptOutcome.SanitizationRejected, [], toolError.RejectionReason);
             }
 
+            // The recipe excerpt (story 28.4): only for a call that returned, sanitized as a result is, then cut.
+            string? recipeExcerpt = null;
+            if (rawToolCall.RecipeExcerpt is not null && toolError.Value is null && rawToolCall.Error is null)
+            {
+                var excerpt = await SanitizeTextAsync(
+                    rawToolCall.RecipeExcerpt,
+                    $"ToolCalls[{sequenceNumber}].RecipeExcerpt",
+                    ToolResultKind,
+                    int.MaxValue,
+                    truncatedFields,
+                    cancellationToken).ConfigureAwait(false);
+                if (excerpt.Rejected)
+                {
+                    // An optional addition never costs the attempt: a refused excerpt is dropped, fail closed, alone.
+                    truncatedFields.Add(new TruncatedField(
+                        $"ToolCalls[{sequenceNumber}].RecipeExcerpt",
+                        "The sanitizer rejected the recipe excerpt, so it was not kept; the tool call is recorded without one."));
+                }
+                else
+                {
+                    recipeExcerpt = CutExcerpt(excerpt.Value, _limits.MaxRecipeExcerptLength, $"ToolCalls[{sequenceNumber}].RecipeExcerpt", truncatedFields);
+                }
+            }
+
             toolCalls.Add(new ToolCallRecord(
                 ToolCallId: rawToolCall.ToolCallId,
                 SequenceNumber: sequenceNumber,
@@ -565,7 +589,10 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
                 StartedAt: rawToolCall.StartedAt,
                 Duration: rawToolCall.Duration,
                 Result: toolResult.Value,
-                Error: toolError.Value));
+                Error: toolError.Value)
+            {
+                RecipeExcerpt = recipeExcerpt,
+            });
         }
 
         if (truncatedToolCallCount > 0)
@@ -946,6 +973,34 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     }
 
     /// <summary>
+    /// A sanitized recipe excerpt cut to <paramref name="maxLength"/> characters, never between a surrogate pair (a cut
+    /// that would split one keeps the high surrogate out too), with the cut reported. An empty excerpt is none.
+    /// </summary>
+    internal static string? CutExcerpt(string? excerpt, int maxLength, string diagnosticFieldPath, List<TruncatedField> truncatedFields)
+    {
+        if (string.IsNullOrEmpty(excerpt))
+        {
+            return null;
+        }
+
+        if (excerpt.Length <= maxLength)
+        {
+            return excerpt;
+        }
+
+        var length = maxLength;
+        if (char.IsHighSurrogate(excerpt[length - 1]) && char.IsLowSurrogate(excerpt[length]))
+        {
+            length--;
+        }
+
+        truncatedFields.Add(new TruncatedField(
+            diagnosticFieldPath,
+            $"Sanitized recipe excerpt exceeded the configured limit of {maxLength} characters and was cut to it."));
+        return length == 0 ? null : excerpt[..length];
+    }
+
+    /// <summary>
     /// Deep value equality between two <see cref="AppendAttemptRequest"/>s submitted under the same
     /// <c>AttemptId</c>, to distinguish an identical resubmission (no-op) from a conflicting one.
     /// </summary>
@@ -991,6 +1046,7 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
         && a.Duration == b.Duration
         && a.Result == b.Result
         && a.Error == b.Error
+        && a.RecipeExcerpt == b.RecipeExcerpt
         && AreValuesEquivalent(a.Arguments, b.Arguments);
 
     /// <summary>

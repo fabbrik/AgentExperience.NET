@@ -465,8 +465,42 @@ internal sealed class CaptureScope
             return null;
         }
 
-        AddToolCall(pending, text, error, duration);
+        // The recipe (story 28.4): only for a call recorded as returned, on the raw result, never replacing it.
+        var excerpt = error is null ? RecipeExcerpt(pending, result) : null;
+
+        AddToolCall(pending, text, error, duration, excerpt);
         return error;
+    }
+
+    /// <summary>
+    /// The excerpt the host's <see cref="ExperienceCaptureOptions.RecipeResultExcerpt"/> vouches for, or
+    /// <see langword="null"/> when there is no callback, it returns none, or it throws (reported once, type only).
+    /// </summary>
+    private string? RecipeExcerpt(PendingToolCall pending, object? result)
+    {
+        if (_options.RecipeResultExcerpt is not { } excerpt)
+        {
+            return null;
+        }
+
+        try
+        {
+            return excerpt(new ExperienceToolResultContext
+            {
+                ToolCallId = pending.ToolCallId,
+                ToolName = pending.ToolName,
+                Arguments = ReadOnlyView(pending.Arguments),
+                Result = result,
+            });
+        }
+        catch (Exception ex)
+        {
+            ReportFailure(
+                ExperienceCaptureFailureStage.RecipeExcerpt,
+                $"RecipeResultExcerpt threw {ex.GetType().FullName}; the tool call is recorded without an excerpt.",
+                ex);
+            return null;
+        }
     }
 
     /// <summary>
@@ -958,7 +992,7 @@ internal sealed class CaptureScope
         }
     }
 
-    private void AddToolCall(PendingToolCall pending, string? result, string? error, TimeSpan? duration = null)
+    private void AddToolCall(PendingToolCall pending, string? result, string? error, TimeSpan? duration = null, string? recipeExcerpt = null)
     {
         try
         {
@@ -969,7 +1003,10 @@ internal sealed class CaptureScope
                 StartedAt: pending.StartedAt,
                 Duration: duration ?? _options.TimeProvider.GetElapsedTime(pending.StartTimestamp),
                 Result: result,
-                Error: error);
+                Error: error)
+            {
+                RecipeExcerpt = recipeExcerpt,
+            };
 
             lock (_toolCallsGate)
             {

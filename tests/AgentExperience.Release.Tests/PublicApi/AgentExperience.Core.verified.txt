@@ -28,12 +28,14 @@
     }
     public sealed class CaptureLimits : System.IEquatable<AgentExperience.Core.Capture.CaptureLimits>
     {
+        public const int DefaultMaxRecipeExcerptLength = 200;
         public CaptureLimits(int MaxAttemptsPerRun, int MaxToolCallsPerAttempt, int MaxResultLength, int MaxErrorLength) { }
         public System.TimeSpan CompletedRunRetention { get; init; }
         public int MaxAttemptsPerRun { get; init; }
         public int MaxErrorLength { get; init; }
         public System.TimeSpan? MaxOpenRunAge { get; init; }
         public int MaxOpenRuns { get; init; }
+        public int MaxRecipeExcerptLength { get; init; }
         public int MaxResultLength { get; init; }
         public int MaxRetainedCompletedRuns { get; init; }
         public int MaxToolCallsPerAttempt { get; init; }
@@ -75,6 +77,7 @@
         public System.Collections.Generic.IReadOnlyDictionary<string, object?> Arguments { get; init; }
         public System.TimeSpan Duration { get; init; }
         public string? Error { get; init; }
+        public string? RecipeExcerpt { get; init; }
         public string? Result { get; init; }
         public System.DateTimeOffset StartedAt { get; init; }
         public System.Guid ToolCallId { get; init; }
@@ -875,6 +878,7 @@ namespace AgentExperience.Core.Retrieval
         public AgentExperience.Core.Retrieval.RetrievalPolicy Policy { get; }
         public AgentExperience.Core.Retrieval.RankingWeights Weights { get; }
         public static System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> EligibleStatuses { get; }
+        public bool AreRecipeExcerptsConfirmed(AgentExperience.Abstractions.ExperienceRecord record) { }
         public bool IsContentConfirmed(AgentExperience.Abstractions.ExperienceRecord record) { }
         public bool IsModelAuthored(AgentExperience.Abstractions.ExperienceRecord record) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Retrieval.ExperienceRetrievalResult> RetrieveAsync(AgentExperience.Core.Retrieval.RetrieveExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
@@ -894,6 +898,7 @@ namespace AgentExperience.Core.Retrieval
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankingComponent> Components { get; init; }
         public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? GrantApproachArguments { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
+        public System.Collections.Generic.IReadOnlyList<string>? GrantRecipeExcerpts { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure? MatchedGrantDisclosure { get; init; }
         public System.Guid? PermittingGrantId { get; init; }
         public AgentExperience.Abstractions.ExperienceRecord Record { get; init; }
