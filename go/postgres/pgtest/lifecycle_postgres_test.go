@@ -8,7 +8,12 @@ package pgtest_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -260,4 +265,107 @@ func TestLifecycleWritersRacingAtOneRevisionOnAPoolLetExactlyOneWin(t *testing.T
 	if err != nil || page.Outcome != ae.StoreFound || len(page.Events) != 1 || page.Revision != record.Revision+1 {
 		t.Fatalf("%+v %v", page, err)
 	}
+}
+
+// The cross-language race's Go writer (internal/lifecyclerace), run as the .NET suite runs it: two rounds committed
+// against one revision (the second is StaleRevision), then the history, on stdout as JSON and nothing else.
+func TestTheLifecycleRaceWriterSpeaksItsProtocol(t *testing.T) {
+	admin := requireServer(t)
+	ctx := context.Background()
+	database := createDatabase(t, admin, "lifecycle_writer")
+	store := newStore(t, admin, database)
+	seed := ct.MustReadJSON(fixture("lifecycle-sql", "compare-and-set", "seed.json")).(*ae.Object)
+	records, _ := seed.Get("records")
+	record, err := ae.FromStored(records.([]any)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertRecord(ctx, ae.BoundsOf(record.Scope), &record); err != nil {
+		t.Fatal(err)
+	}
+	authorization := ct.AuthorizationJSON(ae.AuthorizationContext{PrincipalID: "go-writer", Bounds: ae.BoundsOf(record.Scope)})
+	scope := ae.NewObject(ae.Member{Key: "tenantId", Value: record.Scope.TenantID},
+		ae.Member{Key: "applicationId", Value: record.Scope.ApplicationID},
+		ae.Member{Key: "projectId", Value: record.Scope.ProjectID}, ae.Member{Key: "teamId", Value: optionalJSON(record.Scope.TeamID)},
+		ae.Member{Key: "agentId", Value: optionalJSON(record.Scope.AgentID)}, ae.Member{Key: "userId", Value: optionalJSON(record.Scope.UserID)})
+	request := func(event string) *ae.Object {
+		return ae.NewObject(ae.Member{Key: "eventId", Value: event},
+			ae.Member{Key: "experienceId", Value: record.ExperienceID.String()}, ae.Member{Key: "scope", Value: scope},
+			ae.Member{Key: "priorStatus", Value: string(record.Status)}, ae.Member{Key: "currentStatus", Value: "Revoked"},
+			ae.Member{Key: "reason", Value: "withdrawn"}, ae.Member{Key: "producer", Value: "go-writer"},
+			ae.Member{Key: "occurredAt", Value: "2026-03-02T09:00:00+00:00"},
+			ae.Member{Key: "expectedRevision", Value: json.Number(strconv.FormatInt(record.Revision, 10))},
+			ae.Member{Key: "replacementExperienceId", Value: nil})
+	}
+	round := func(event string) *ae.Object {
+		return ae.NewObject(ae.Member{Key: "lockKey", Value: json.Number("4242")},
+			ae.Member{Key: "authorization", Value: authorization}, ae.Member{Key: "request", Value: request(event)})
+	}
+	dsn := admin.Application(database)
+	runWriter := func(input *ae.Object) *ae.Object {
+		t.Helper()
+		data, err := ae.MarshalJSONValue(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "input.json")
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command("go", "run", "./internal/lifecyclerace", path)
+		command.Dir = ".."
+		var stderr strings.Builder
+		command.Stderr = &stderr
+		output, err := command.Output()
+		if err != nil {
+			t.Fatalf("%v: %s", err, stderr.String())
+		}
+		value, err := ae.DecodeJSON(output)
+		if err != nil {
+			t.Fatalf("stdout is not one JSON value: %v (%q)", err, output)
+		}
+		return value.(*ae.Object)
+	}
+	committed := runWriter(ae.NewObject(ae.Member{Key: "dsn", Value: dsn}, ae.Member{Key: "mode", Value: "commit"},
+		ae.Member{Key: "rounds", Value: []any{round("00001162-0000-4000-8000-00000000fe01"),
+			round("00001162-0000-4000-8000-00000000fe02")}}))
+	expected := ct.MustReadJSON(writeJSON(t, `{"results": [
+		{"outcome": "Committed", "revision": 2, "currentStatus": null, "reason": null, "errors": []},
+		{"outcome": "StaleRevision", "revision": 2, "currentStatus": null, "reason": null, "errors": []}]}`))
+	if difference := ct.Difference(expected, committed, "$", ct.Options{}); difference != "" {
+		t.Fatal(difference)
+	}
+	query := ae.NewObject(ae.Member{Key: "scope", Value: scope},
+		ae.Member{Key: "experienceId", Value: record.ExperienceID.String()},
+		ae.Member{Key: "limit", Value: json.Number("100")}, ae.Member{Key: "startAfterRevision", Value: nil})
+	history := ae.NewObject(ae.Member{Key: "authorization", Value: authorization}, ae.Member{Key: "query", Value: query})
+	histories := runWriter(ae.NewObject(ae.Member{Key: "dsn", Value: dsn}, ae.Member{Key: "mode", Value: "history"},
+		ae.Member{Key: "histories", Value: []any{history}}))
+	list, _ := histories.Get("histories")
+	page := list.([]any)[0].(*ae.Object)
+	events, _ := page.Get("events")
+	outcome, _ := page.Get("outcome")
+	if outcome != "Found" || len(events.([]any)) != 1 {
+		t.Fatalf("%v", page)
+	}
+	actor, _ := events.([]any)[0].(*ae.Object).Get("actor")
+	if actor != "go-writer" {
+		t.Fatalf("actor %v", actor)
+	}
+}
+
+func optionalJSON(value *string) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func writeJSON(t *testing.T, text string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "expected.json")
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
