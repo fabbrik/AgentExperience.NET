@@ -129,7 +129,7 @@ if [ "$status" -eq 0 ]; then
       && dotnet test tests/AgentExperience.MicrosoftAgentFramework.Tests --no-restore --configuration Release \
         ${adapter_filter:+--filter "$adapter_filter"} \
       && dotnet test tests/AgentExperience.CompatibilityProof --no-restore --configuration Release \
-        --filter "FullyQualifiedName~MafHooksProof|FullyQualifiedName~ContextProviderFitProof" | tee "$work/proof.log" \
+        --filter "FullyQualifiedName~MafHooksProof|FullyQualifiedName~ContextProviderFitProof|FullyQualifiedName~FunctionMiddlewareInstructionsProof" | tee "$work/proof.log" \
       && { grep -qE 'Total: +[1-9]' "$work/proof.log" \
         || { echo "The CompatibilityProof filter matched zero tests." >&2; false; }; }
   ) || status=$?
