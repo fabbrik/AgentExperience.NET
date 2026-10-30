@@ -317,8 +317,12 @@ it does: the `retrieval-policy` fixtures are generated from this service, and a 
   Each agent's context provider has its own abandoned-search count and cap (`MaxAbandonedSearches`). A scope outside
   the identity's bounds is `RetrievalDenied` before anything is searched or embedded.
 - **What the ports do not do:** required environment attributes (so never `EnvironmentMismatch`), provenance signing
-  (never `UnconfirmedContent`), and a custom environment scorer. Their lessons views do not apply `MaxAge` or a custom
-  confidence floor.
+  (never `UnconfirmedContent`), and a custom environment scorer. Their lessons views apply the policy's floor and
+  `MaxAge` (`Expired`), as .NET's does.
+- **Both channels share one timeout**, as here: a vector channel still running at `Timeout` times the call out. The
+  ports' own `vector_timeout` / `VectorTimeout` is a text-only fallback only when it is shorter. Their vector floor
+  option (`min_vector_relevance`, `MinVectorRelevance`), when set, replaces the policy's, as `MinimumSemanticSimilarity`
+  does here.
 - **Go reads a zero as the default** (`Timeout`, `RecencyHalfLife`, `CandidateLimit`, `MaxAbandonedSearches`,
   `MinimumMatchedTerms`; a zero `MaxAge` is no expiry; an empty `DomainKey` is `domain`), because it cannot tell an
   unset field from an explicit zero. Python refuses a zero, as .NET does.
