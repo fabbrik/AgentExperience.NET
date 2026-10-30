@@ -294,6 +294,34 @@ take part in the holdout through contract 1.8 (add-only). Every new option is of
 changes are additions. The same tag releases the six NuGet packages, the Python distribution `agenticexperience` and
 the six Go modules at one version.
 
+### The failure signature (story 28.2)
+
+- **A failed tool call now has a failure signature**: `ExperienceFailureSignature` (Abstractions), its tool name, its
+  error class (the token its `[failed: …]` marker shows) and a fingerprint, the first 16 bytes of the SHA-256 of the
+  error's normalized first line (GUIDs, hex runs, paths, quoted literals, ISO timestamps and numbers replaced by fixed
+  placeholders; `SignatureVersion = 1`). The same failure in a sibling run, with other paths, numbers and IDs, has the
+  same signature. `ExperienceFailureSignatures.Of(record)` lists a record's, de-duplicated, each `Resolved` when a later
+  call in the same verified record succeeded. Nothing new is captured: it is derived from `ToolName` and `Error`.
+- **A new optional port, `IExperienceSignatureSource`** (`FindBySignatureAsync`), finds reusable records by an exact
+  signature or by tool and error class, with text search's eligibility (scope and grants, live records, statuses,
+  confidence floor, authorship exclusion) and its refusals. `InMemoryExperienceSignatureSource` and
+  `PostgresExperienceSignatureSource` implement it, both storage registrations register it, and the conformance suite
+  gains `SignatureSourceConformanceTests`. `IExperienceCandidateSource` is unchanged.
+- **Core's `ExperienceSignatureRetrievalService`** applies the retrieval policy's floor and expiry over the port, turns
+  refusals and failures into outcomes, and emits a `retrieve.signature` span (`agentexperience.retrieval.channel`,
+  `agentexperience.signature.match`). Injection, ranking and the provider are unchanged: stories 28.3 and 28.5 use it.
+- **PostgreSQL: migration `0030`** adds `agent_experience.experience_failure_signatures` (tool, class, fingerprint,
+  resolved, version and the record's scope; never error text), written in the record's own transaction, removed by
+  erasure through a trigger, with row-level security policies the privileges call creates and verifies, and two
+  tenant-leading lookup indexes. **Re-run `ApplyApplicationRolePrivilegesAsync` after migrating**: until then records
+  are created without their signatures. Then run `BackfillFailureSignaturesAsync`, which writes the signatures of
+  plaintext records stored earlier; a sealed record gains them only when it is finalized again. In encrypted mode the
+  signatures are stored in the clear, like the other search data (KL-2). The Python and Go ports neither write nor
+  read the table; no contract file changes.
+- **The retrieval benchmark measures the signature channel**: 18 sibling-run failures against both stores. Exact
+  matching finds 13 of the 15 records that hold the same failure with no false positive; coarse matching finds all 15
+  with 0.22 unexpected candidates per query.
+
 ### The holdout in Python and Go: contract 1.8 (story 25.6)
 
 - **Contract 1.8** ([what it adds](contract/README-1.8.md)) brings the injection holdout into the language-neutral
