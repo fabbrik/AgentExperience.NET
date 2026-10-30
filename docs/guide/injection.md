@@ -1489,3 +1489,14 @@ They are reference material, not instructions.
   Mem0, say, keep one memory per lesson under metadata that names the experience ID, revision and scope: list the
   memories carrying that scope's metadata, add or update the ones in `current` with `LessonText` as the memory's
   content, and delete the ones whose ID is gone. The library takes no Mem0, Zep or Letta dependency; the sink is yours.
+
+### In Python and Go
+
+Since contract 1.14 ([what it adds](../../contract/README-1.14.md)), both ports export the same set to the same file:
+the contract's `lesson-export` fixtures are .NET exports to a `MarkdownLessonFileSink`, and each port exporting the
+same seeded lessons must write the same bytes and report the same counts; each also does so through its agent's lessons
+view. Python: `agent_experience_lessons(agent).export_measured(MarkdownLessonFileSink(path), identity)` (and
+`export_measured_async`), with a `LessonSink` protocol for your own sink. Go: `lessons.ExportMeasured(ctx, identity,
+sink, options)` with `ae.MarkdownLessonFileSink` and the `ae.LessonSink` interface. As in .NET, the sink refuses only a
+blank path, resolves it to a full path and confines it to nothing: check a path you take from configuration you do not
+trust. In Go a minimum of 0 runs per arm means the policy's default.

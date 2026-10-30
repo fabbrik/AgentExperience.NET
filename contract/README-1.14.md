@@ -239,6 +239,12 @@ does.
 when asked. The reflector emits no telemetry of its own and no prompt or answer text reaches telemetry; a screening
 refusal is the `finalize` span's `agentexperience.reflection.screening_refusal`, as in .NET.
 
+**Where a port cannot match .NET** it says so in its README; none changes a fixture. A cause type is the port's own
+type name. .NET refuses a chat client whose pipeline invokes functions; a port refuses one only where its framework
+lets it see that (Python cannot; Go when the client says so), and a response carrying a tool call still fails as
+`ToolCallAttempted`. A language without a Unicode normalizer in its core (Go) registers one from its MAF module. Unicode
+tables differ by language and version, so the content guard's verdict on rare characters may differ.
+
 ## The fixtures
 
 ```
