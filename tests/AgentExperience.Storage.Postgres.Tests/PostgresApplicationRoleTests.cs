@@ -50,6 +50,7 @@ public sealed class PostgresApplicationRoleTests
         "experience_injections",
         "experience_holdout_assignments",
         "experience_provider_holdout_assignments",
+        "experience_failure_signatures",
     ];
 
     private static readonly string[] PurgeSignatures =

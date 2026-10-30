@@ -56,6 +56,30 @@ internal static class TestRecords
         CreatedAt: createdAt ?? ColumnTime,
         UpdatedAt: createdAt ?? ColumnTime);
 
+    /// <summary>
+    /// Story 28.2: <paramref name="record"/> with one attempt whose call to <paramref name="tool"/> failed with
+    /// <paramref name="error"/> and, when <paramref name="resolved"/>, a second attempt whose call succeeded, in a
+    /// verified run, so it holds exactly one failure signature.
+    /// </summary>
+    public static ExperienceRecord WithFailedCall(
+        ExperienceRecord record,
+        string tool = "run_tests",
+        string error = "FileNotFoundException: Could not find file '/home/runner/work/app/fixtures/orders-1182.json'.",
+        bool resolved = true)
+    {
+        ToolCallRecord Call(string? failure) =>
+            new(Guid.NewGuid(), 0, tool, new Dictionary<string, object?>(), PayloadTime, TimeSpan.FromSeconds(1), failure is null ? "ok" : null, failure);
+
+        Attempt Attempt(int sequence, ToolCallRecord call) =>
+            new(Guid.NewGuid(), sequence, PayloadTime, TimeSpan.FromSeconds(1), [call], null, null);
+
+        return record with
+        {
+            Attempts = resolved ? [Attempt(0, Call(error)), Attempt(1, Call(null))] : [Attempt(0, Call(error))],
+            Outcome = record.Outcome with { Status = TaskVerificationStatus.Verified },
+        };
+    }
+
     /// <summary>A lifecycle event for <paramref name="recordId"/>, with a fresh event ID unless one is given.</summary>
     public static LifecycleEvent Event(
         Guid recordId,
