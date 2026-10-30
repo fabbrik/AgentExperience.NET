@@ -146,6 +146,24 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   added, never tools passed to one `run` call (agent-framework does not hand them to a context provider); Go sees both.
   The ports have no final re-read, so the decision sees the ranked record. Session tracking and withdrawal (27.6),
   unconfirmed content (27.7), grant fields (27.8) and required environment attributes stay .NET-only.
+- **Behaviour change in both ports: the injected callback hears every attempt**, as .NET's `OnContextInjected` does.
+  Python `on_injected` and Go `OnInjected` are now also called with `Skipped` (no identity, or the resolver returned
+  nothing), `Failed` and `RetrievalFailed`, and Go's also with `RetrievalTimedOut` and `RetrievalDenied` (Python's
+  already was), each with nothing delivered; the `inject` span carries `agentexperience.omitted_count` 0 on those
+  paths. The failure callback is still called. A host that counts every callback as a delivery should check the
+  outcome. The ports' result still has no `CorrelationId` or `Failure` field.
+- **Behaviour change in both ports: a byte budget of 754 bytes or less is refused** when the agent is built
+  (Python `ValueError`, Go an error from `UseAgentExperience`; Go's 0 still means the default), as .NET refuses a
+  budget that cannot fit the verbose block's fixed frame. New constants: Python `block.BLOCK_OVERHEAD_BYTES`, Go
+  `ae.BlockOverheadBytes`.
+- **Python:** an async `decide_injection` is refused with `TypeError` (the decision is synchronous, as in .NET); a
+  `CancelledError` the resolver raises while the invocation itself is not being cancelled is `Failed` instead of
+  propagating (Python 3.11+); `RequestContext.messages` holds the replayed history and the new input.
+- **Go:** `maf.InjectionRequest.Limit` is an `*int` (nil for none, and 0 is refused as `RetrievalFailed`, as .NET
+  refuses it); `Deny("")` reports an empty detail, as .NET does, while a zero `InjectionDecision` reports the default;
+  `ae.ApplyHostDecisions` and `ae.HostDecision` are public.
+- **Both ports: a capability gate built directly with run tools fails closed** when it is checked without the
+  invocation's tools: every approach that calls a tool is `ToolUnavailable`.
 
 ## 0.1.0-preview.17
 
