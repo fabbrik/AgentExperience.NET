@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import uuid
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -24,7 +25,7 @@ from agentexperience import (
     from_stored,
     rank,
 )
-from agentexperience.embedding import rank_hybrid
+from agentexperience.embedding import VectorQuery, rank_hybrid, vector_query_for_policy
 from agentexperience.retrieval import timedelta_of_ticks
 
 FAMILY = FIXTURES / "retrieval-policy"
@@ -92,13 +93,23 @@ def ranked_json(result: RankedResult) -> dict[str, Any]:
     }
 
 
+def _rows(path: Path) -> list[SearchRow]:
+    return [SearchRow(from_stored(entry["record"]), float(entry["relevance"])) for entry in read_json(path)]
+
+
 def _case(name: str) -> tuple[list[SearchRow], dict[str, Any], dict[str, Any]]:
     directory = FAMILY / name
-    rows = [
-        SearchRow(from_stored(entry["record"]), float(entry["relevance"]))
-        for entry in read_json(directory / "candidates.json")
-    ]
-    return rows, read_json(directory / "policy.json"), read_json(directory / "expected.json")
+    return (
+        _rows(directory / "candidates.json"),
+        read_json(directory / "policy.json"),
+        read_json(directory / "expected.json"),
+    )
+
+
+def _vector_rows(name: str) -> list[SearchRow] | None:
+    """A hybrid case's ``vector-candidates.json``, or ``None`` for a text-only case."""
+    path = FAMILY / name / "vector-candidates.json"
+    return _rows(path) if path.exists() else None
 
 
 @pytest.mark.parametrize("name", cases("retrieval-policy"))
@@ -122,33 +133,40 @@ def test_retrieval_policy(name: str) -> None:
 
     # The store answers with at most the limit it was asked for, as the statement's LIMIT cuts.
     answered = rows[: parameters.limit]
-    result = rank(
-        answered,
-        scope,
-        Instant.parse(request["now"]),
-        request["preferredEnvironment"],
-        exclude_model_authored=request["excludeModelAuthored"],
-        policy=policy,
-        confidence_decay=decay,
-    )
+    now = Instant.parse(request["now"])
+    options: dict[str, Any] = {
+        "exclude_model_authored": request["excludeModelAuthored"],
+        "policy": policy,
+        "confidence_decay": decay,
+    }
+    vector = _vector_rows(name)
+    if vector is None:
+        assert "vectorQuery" not in expected
+        result = rank(answered, scope, now, request["preferredEnvironment"], **options)
+        # The hybrid path, with no vector candidates, ranks the same.
+        assert ranked_json(rank_hybrid(answered, [], scope, now, request["preferredEnvironment"], **options)) == (
+            ranked_json(result)
+        )
+    else:
+        # Hybrid: what the index is asked for, and an index that answers at most that limit.
+        vector_query = vector_query_for_policy(
+            scope, "fixture-model", (1.0,), policy, exclude_model_authored=request["excludeModelAuthored"]
+        )
+        asked = {
+            "minConfidence": vector_query.min_confidence,
+            "limit": vector_query.limit,
+            "excludeModelAuthored": vector_query.exclude_model_authored,
+        }
+        assert json_difference(expected["vectorQuery"], asked, "$.vectorQuery") is None, asked
+        assert vector, "a hybrid case has vector candidates"
+        result = rank_hybrid(
+            answered, vector[: vector_query.limit], scope, now, request["preferredEnvironment"], **options
+        )
     assert expected["outcome"] == "Completed"
     actual = ranked_json(result)
     for key in ("truncated", "ranked", "excluded"):
         difference = json_difference(expected[key], actual[key], f"$.{key}", TOLERANCE)
         assert difference is None, difference
-
-    # The hybrid path, with no vector candidates, ranks the same.
-    hybrid = rank_hybrid(
-        answered,
-        [],
-        scope,
-        Instant.parse(request["now"]),
-        request["preferredEnvironment"],
-        exclude_model_authored=request["excludeModelAuthored"],
-        policy=policy,
-        confidence_decay=decay,
-    )
-    assert ranked_json(hybrid) == actual
 
 
 def test_the_default_policy_ranks_exactly_as_no_policy() -> None:
@@ -225,3 +243,48 @@ def test_an_exclusion_is_listed_once_in_the_rows_order() -> None:
         entry["experienceId"] for entry in expected["excluded"]
     ]
     assert all(isinstance(entry.experience_id, uuid.UUID) for entry in result.excluded)
+
+
+def test_the_hybrid_cases_merge_real_vector_rows() -> None:
+    hybrid = [name for name in cases("retrieval-policy") if _vector_rows(name) is not None]
+    assert sorted(hybrid) == [
+        "hybrid-floor-before-truncation",
+        "hybrid-per-channel-candidate-limit",
+        "hybrid-vector-floor-from-the-policy",
+    ]
+    for name in hybrid:
+        text, _, expected = _case(name)
+        vector = _vector_rows(name)
+        assert vector is not None
+        text_ids = {str(row.record.experience_id) for row in text}
+        # Some record ranks from the vector channel alone: the merge is exercised, not only the text.
+        assert any(entry["experienceId"] not in text_ids for entry in expected["ranked"]), name
+
+
+def test_the_floor_is_applied_before_the_cut_and_the_ranked_result_is_cut_to_the_limit() -> None:
+    _, _, expected = _case("hybrid-floor-before-truncation")
+    assert len(expected["ranked"]) == 2 and expected["truncated"] is False
+
+
+@pytest.mark.parametrize("limit", [1, 200])
+def test_a_search_limit_from_1_to_200_is_accepted(limit: int) -> None:
+    scope = scope_of(_case("default-policy")[1]["scope"])
+    assert SearchParameters(scope, "rotate keys", limit=limit).limit == limit
+    assert VectorQuery(scope, "m", (1.0,), limit=limit).limit == limit
+
+
+@pytest.mark.parametrize("limit", [0, -1, 201])
+def test_a_search_or_vector_limit_outside_1_to_200_is_refused(limit: int) -> None:
+    scope = scope_of(_case("default-policy")[1]["scope"])
+    with pytest.raises(ValueError):
+        SearchParameters(scope, "rotate keys", limit=limit)
+    with pytest.raises(ValueError):
+        VectorQuery(scope, "m", (1.0,), limit=limit)
+
+
+def test_the_minimum_matched_terms_is_1_to_the_largest_integer() -> None:
+    scope = scope_of(_case("default-policy")[1]["scope"])
+    assert SearchParameters(scope, "rotate keys", minimum_matched_terms=2_147_483_647).minimum_matched_terms
+    for terms in (0, 2_147_483_648):
+        with pytest.raises(ValueError):
+            SearchParameters(scope, "rotate keys", minimum_matched_terms=terms)

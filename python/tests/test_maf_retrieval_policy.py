@@ -225,7 +225,7 @@ def test_confidence_decays_by_domain_in_the_block_it_ranks() -> None:
     assert host.results[0].excluded == ()
 
 
-def test_the_settings_refuse_an_invalid_or_conflicting_policy() -> None:
+def test_the_settings_refuse_an_invalid_policy_and_the_integration_floor_wins() -> None:
     with pytest.raises(RetrievalPolicyError) as raised:
         RetrievalPolicy(timeout=timedelta(0))
     assert raised.value.option == "Timeout"
@@ -234,15 +234,40 @@ def test_the_settings_refuse_an_invalid_or_conflicting_policy() -> None:
         ExperienceSettings(InMemoryExperienceStore(), identity, retrieval_policy="fast")  # type: ignore[arg-type]
     with pytest.raises(TypeError):
         ExperienceSettings(InMemoryExperienceStore(), identity, confidence_decay={})  # type: ignore[arg-type]
-    with pytest.raises(ValueError):
-        ExperienceSettings(
-            InMemoryExperienceStore(),
-            identity,
-            min_vector_relevance=0.5,
-            retrieval_policy=RetrievalPolicy(minimum_vector_relevance=0.6),
-        )
+    # The integration's own floor replaces the policy's, as .NET's MinimumSemanticSimilarity does.
+    both = ExperienceSettings(
+        InMemoryExperienceStore(),
+        identity,
+        min_vector_relevance=0.5,
+        retrieval_policy=RetrievalPolicy(minimum_vector_relevance=0.6),
+    )
+    assert both.vector_floor == 0.5
     settings = ExperienceSettings(
         InMemoryExperienceStore(), identity, retrieval_policy=RetrievalPolicy(minimum_vector_relevance=0.6)
     )
     assert settings.vector_floor == 0.6
     assert ExperienceSettings(InMemoryExperienceStore(), identity, min_vector_relevance=0.4).vector_floor == 0.4
+
+
+def test_the_lessons_view_applies_the_setups_retrieval_policy() -> None:
+    from agentexperience.maf import agent_experience_lessons
+
+    store = InMemoryExperienceStore()
+    lesson = _learn(store).record
+    policy = RetrievalPolicy(minimum_confidence=0.5, max_age=timedelta(days=90))
+    agent = Host().wire(ScriptedClient(calls=1), store=store, clock=lambda: _at(91), retrieval_policy=policy)
+    [listed] = agent_experience_lessons(agent).list().lessons
+    assert listed.experience_id == lesson.experience_id
+    assert listed.ineligibility == "Expired"
+    assert listed.ineligible_reason == "its last activity is older than the retrieval policy's maximum age"
+
+    strict = Host().wire(
+        ScriptedClient(calls=1),
+        store=store,
+        clock=lambda: _at(1),
+        retrieval_policy=RetrievalPolicy(minimum_confidence=1.0),
+    )
+    [floored] = agent_experience_lessons(strict).list().lessons
+    assert lesson.reuse_confidence < 1.0
+    assert floored.ineligibility == "BelowConfidenceFloor"
+    assert floored.ineligible_reason is not None and floored.ineligible_reason.endswith("retrieval floor 1.00")

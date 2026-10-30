@@ -28,6 +28,8 @@ from .search import (
     CANDIDATE_LIMIT,
     DEFAULT_MIN_CONFIDENCE,
     ELIGIBLE_STATUSES,
+    MAX_STATEMENT_LIMIT,
+    MIN_STATEMENT_LIMIT,
     STATEMENT_LIMIT,
     RankedResult,
     SearchRow,
@@ -280,8 +282,29 @@ class VectorQuery:
     def __post_init__(self) -> None:
         validate_model_id(self.model_id)
         validate_vector(self.vector)
-        if self.limit < 1:
-            raise ValueError("The limit must be strictly positive.")
+        if not MIN_STATEMENT_LIMIT <= self.limit <= MAX_STATEMENT_LIMIT:
+            raise ValueError(f"The limit must be from {MIN_STATEMENT_LIMIT} to {MAX_STATEMENT_LIMIT}.")
+
+
+def vector_query_for_policy(
+    scope: Scope,
+    model_id: str,
+    vector: Sequence[float],
+    policy: RetrievalPolicy | None = None,
+    *,
+    exclude_model_authored: bool = False,
+) -> VectorQuery:
+    """The vector search a retrieval under ``policy`` (contract 1.12; ``None``: the default policy) runs: its confidence
+    floor and ``candidate_limit + 1``. The vector floor is applied by retrieval, not sent to the index."""
+    policy = policy or DEFAULT_POLICY
+    return VectorQuery(
+        scope,
+        model_id,
+        tuple(vector),
+        min_confidence=policy.minimum_confidence,
+        limit=policy.statement_limit,
+        exclude_model_authored=exclude_model_authored,
+    )
 
 
 EmbeddingWriteOutcome = Literal["Written", "Stale", "Missing"]
@@ -417,10 +440,9 @@ def rank_hybrid(
     limit = (policy or DEFAULT_POLICY).candidate_limit
     if minimum_vector_relevance is None and policy is not None:
         minimum_vector_relevance = policy.minimum_vector_relevance
+    # The floor first, over every vector row, so a row it drops is not counted against the limit.
     floored = [
-        row
-        for row in vector_rows[: limit + 1]
-        if minimum_vector_relevance is None or row.relevance >= minimum_vector_relevance
+        row for row in vector_rows if minimum_vector_relevance is None or row.relevance >= minimum_vector_relevance
     ]
     # Checks are over each channel's first candidates as returned (the floor only drops vector candidates).
     text = check_channel(text_rows, scope, limit)
@@ -436,4 +458,5 @@ def rank_hybrid(
         confidence_decay=confidence_decay,
     )
     truncated = len(text_rows) > limit or len(floored) > limit
-    return RankedResult(ranked, truncated, excluded)
+    # The cut (contract 1.12): with both channels the merged list can hold more than the candidate limit.
+    return RankedResult(ranked[:limit], truncated, excluded)

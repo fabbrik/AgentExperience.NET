@@ -25,6 +25,11 @@ ELIGIBLE_STATUSES: tuple[ExperienceStatus, ...] = ("Validated", "Reinforced")
 DEFAULT_MIN_CONFIDENCE = 0.5
 CANDIDATE_LIMIT = 50
 STATEMENT_LIMIT = CANDIDATE_LIMIT + 1
+MIN_STATEMENT_LIMIT = 1
+MAX_STATEMENT_LIMIT = 200
+"""The store's limits on one search's ``limit``: .NET's ``ExperienceCandidateQuery.MinLimit`` and ``MaxLimit``."""
+MAX_MINIMUM_MATCHED_TERMS = 2_147_483_647
+"""The largest minimum of matched terms: the SQL takes an ``integer``."""
 DEFAULT_MINIMUM_MATCHED_TERMS = 3
 RECENCY_HALF_LIFE_SECONDS = 30 * 86_400.0
 
@@ -107,8 +112,10 @@ class SearchParameters:
             )
         if self.with_grants:
             raise ValueError("Grants are outside contract 1.x: with_grants must be false.")
-        if self.limit < 1 or self.minimum_matched_terms < 1:
-            raise ValueError("limit and minimum_matched_terms must be strictly positive.")
+        if not MIN_STATEMENT_LIMIT <= self.limit <= MAX_STATEMENT_LIMIT:
+            raise ValueError(f"limit must be from {MIN_STATEMENT_LIMIT} to {MAX_STATEMENT_LIMIT}.")
+        if not 1 <= self.minimum_matched_terms <= MAX_MINIMUM_MATCHED_TERMS:
+            raise ValueError(f"minimum_matched_terms must be from 1 to {MAX_MINIMUM_MATCHED_TERMS}.")
 
     def parameters(self) -> dict[str, Any]:
         scope = self.scope

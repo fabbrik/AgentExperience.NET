@@ -23,10 +23,17 @@ import os
 import re
 from collections.abc import Generator
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from _contract import CONTRACT, MIGRATIONS
+
+from agentexperience import RetrievalPolicy
+
+PG_RETRIEVAL_POLICY = RetrievalPolicy(timeout=timedelta(seconds=30))
+"""The retrieval policy every PostgreSQL agent test runs injection under: a timeout generous enough that a cold
+Testcontainers server cannot time a retrieval out (the default is 500 ms, contract 1.12)."""
 
 OWNER = "contract_owner"
 APPLICATION = "contract_app"

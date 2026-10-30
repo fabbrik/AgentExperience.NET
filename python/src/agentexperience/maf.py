@@ -95,7 +95,6 @@ from .embedding import (
     EmbeddingWrite,
     EmbeddingWriteResult,
     VectorFallback,
-    VectorQuery,
     VectorSearchResult,
     content_hash,
     embed_text,
@@ -104,6 +103,7 @@ from .embedding import (
     run_on_vector_thread,
     validate_model_id,
     validate_vector,
+    vector_query_for_policy,
 )
 from .encoding import Duration, Instant
 from .error_class import is_single_token
@@ -375,7 +375,9 @@ class ExperienceSettings:
     abandoned and reported ``OutcomeUnknown``. The invocation never waits for it."""
     vector_timeout: float = DEFAULT_VECTOR_TIMEOUT
     """Seconds the vector channel may take in all (embedding the task text and searching); past it the injection
-    answers from text alone and reports ``ProviderUnavailable`` or ``VectorSearchFailed``."""
+    answers from text alone and reports ``ProviderUnavailable`` or ``VectorSearchFailed``. Only when strictly shorter
+    than the retrieval policy's ``timeout``: otherwise the policy's timeout decides, and a vector channel still running
+    then times the retrieval out (``RetrievalTimedOut``), as .NET's one bound on both channels does."""
     _index_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False, compare=False)
     # Contract 1.11: the measured memory providers use_measured_memory wrapped on the agent, whose records
     # ExperienceContextProvider.wait_for_injection_records awaits too.
@@ -422,11 +424,6 @@ class ExperienceSettings:
             raise TypeError("retrieval_policy must be a RetrievalPolicy.")
         if self.confidence_decay is not None and not isinstance(self.confidence_decay, ConfidenceDecayPolicy):
             raise TypeError("confidence_decay must be a ConfidenceDecayPolicy or None.")
-        floor = self.retrieval_policy.minimum_vector_relevance
-        if floor is not None and self.min_vector_relevance is not None and floor != self.min_vector_relevance:
-            raise ValueError(
-                "min_vector_relevance and retrieval_policy.minimum_vector_relevance are both set and differ; set one."
-            )
         if self.embedder is not None and not (
             isinstance(getattr(self.embedder, "model_id", None), str)
             and hasattr(self.embedder, "dimension")
@@ -456,9 +453,11 @@ class ExperienceSettings:
 
     @property
     def vector_floor(self) -> float | None:
-        """The vector channel's floor: the retrieval policy's, else ``min_vector_relevance``."""
-        floor = self.retrieval_policy.minimum_vector_relevance
-        return floor if floor is not None else self.min_vector_relevance
+        """The vector channel's floor: ``min_vector_relevance`` when set, which replaces the retrieval policy's
+        ``minimum_vector_relevance`` (as .NET's ``MinimumSemanticSimilarity`` does), else the policy's."""
+        if self.min_vector_relevance is not None:
+            return self.min_vector_relevance
+        return self.retrieval_policy.minimum_vector_relevance
 
     def task_id_for(self, agent: Any) -> str:
         return self.task_id or reduce_name(getattr(agent, "name", None)) or DEFAULT_TASK_ID
@@ -1213,21 +1212,27 @@ class ExperienceContextProvider(ContextProvider):
                 "NotConfigured", "The store does not serve vector search, so only text retrieval ran."
             )
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + settings.vector_timeout
+        # Contract 1.12: vector_timeout is the channel's own fallback only when strictly shorter than the retrieval
+        # policy's timeout; otherwise the policy's timeout alone decides (and a channel still running times the
+        # retrieval out), so two equal bounds never race.
+        own = settings.vector_timeout < settings.retrieval_policy.timeout.total_seconds()
+        deadline = loop.time() + settings.vector_timeout if own else None
+
+        def remaining() -> float | None:
+            return None if deadline is None else max(deadline - loop.time(), 0.0)
+
         try:
             model_id, dimension = embedder.model_id, embedder.dimension
-            raw = await asyncio.wait_for(embed_text(embedder, task_text), max(deadline - loop.time(), 0.0))
+            raw = await asyncio.wait_for(embed_text(embedder, task_text), remaining())
             if not isinstance(model_id, str) or not model_id.strip():
                 return [], VectorFallback("ProviderUnavailable", "The embedder reported no model ID.")
             validate_model_id(model_id)
             vector = validate_vector(raw, dimension)
-            policy = settings.retrieval_policy
-            query = VectorQuery(
+            query = vector_query_for_policy(
                 identity.scope,
                 model_id,
                 vector,
-                min_confidence=policy.minimum_confidence,
-                limit=policy.statement_limit,
+                settings.retrieval_policy,
                 exclude_model_authored=settings.exclude_model_authored,
             )
         except (asyncio.TimeoutError, TimeoutError) as ex:
@@ -1239,7 +1244,7 @@ class ExperienceContextProvider(ContextProvider):
         try:
             result = await asyncio.wait_for(
                 run_on_vector_thread(store.search_vectors, identity.authorization, query),
-                max(deadline - loop.time(), 0.0),
+                remaining(),
             )
         except (asyncio.TimeoutError, TimeoutError) as ex:
             return [], VectorFallback("VectorSearchFailed", "The vector search did not answer in time.", ex)
@@ -1683,7 +1688,8 @@ def agent_experience_lessons(source: Any) -> ExperienceLessons:
     """
     The read-only lessons view (contract 1.7) for an agent set up with :func:`use_agent_experience`, or for its
     :class:`ExperienceSettings`: it reads the same store, renders blocks with the same block options, excludes
-    model-authored lessons when the setup does, and uses the setup's clock. When the setup has one fixed identity (the
+    model-authored lessons when the setup does, applies the setup's retrieval policy (its confidence floor and
+    ``max_age``, contract 1.12) and uses the setup's clock. When the setup has one fixed identity (the
     development identity, say), ``list()`` lists its scope; otherwise pass the identity from your own authentication:
     ``list(identity)``. ``TypeError`` for an agent that was not set up, or a store that cannot list lessons.
     """
@@ -1701,6 +1707,7 @@ def agent_experience_lessons(source: Any) -> ExperienceLessons:
         clock=settings.clock,
         identity=settings.identity if isinstance(settings.identity, ExperienceIdentity) else None,
         benefit=settings.benefit,
+        retrieval_policy=settings.retrieval_policy,
     )
 
 
@@ -2101,8 +2108,9 @@ def use_agent_experience(
     ``embedder`` (contract 1.6) turns text into a vector: with one, injection runs the text and the vector channel
     together (in-memory and PostgreSQL+pgvector stores serve it) and merges them, and every stored record's summary is
     embedded in the background. Without one, or when the vector channel fails, the injection answers from text and
-    reports why (``on_vector_fallback``, ``InjectionResult.vector_fallback``). ``vector_timeout`` bounds the embedding
-    and the search of one injection; ``min_vector_relevance`` drops weaker vector candidates.
+    reports why (``on_vector_fallback``, ``InjectionResult.vector_fallback``). ``vector_timeout``, when shorter than the
+    retrieval policy's timeout, bounds the embedding and the search of one injection; ``min_vector_relevance`` drops
+    weaker vector candidates (replacing the policy's ``minimum_vector_relevance``).
 
     ``holdout`` (contract 1.8), ``HoldoutOptions(rate=0.1)`` say, withholds the block from a deterministic share of
     captured runs that have one, and records both arms (in the background, reported through ``on_holdout_recorded``)

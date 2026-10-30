@@ -9,11 +9,11 @@ scope only (a sharing grant is outside contract 1.x), and never writes. A scope 
 the outcome ``Denied``, not an exception. A record that cannot be rendered is listed as ``Unrenderable`` and the rest
 are still listed. Listing lessons discloses them: serve the view only behind the host's own authorization.
 
-Two of .NET's ineligibility codes do not exist here: ``Expired`` (the lessons view does not apply a retrieval
-policy's maximum age) and ``ContentUnconfirmed`` (no provenance signing). The port decides ``Status``,
-``BelowConfidenceFloor`` (the floor is the default retrieval minimum confidence, 0.5), ``ModelAuthored`` (when the
-settings exclude model-authored lessons), ``OverByteBudget`` (the block options' ``max_bytes``) and
-``Unrenderable``. It renders no HTML.
+One of .NET's ineligibility codes does not exist here: ``ContentUnconfirmed`` (no provenance signing). The port
+decides, in .NET's order, ``Status``, ``BelowConfidenceFloor`` (the retrieval policy's ``minimum_confidence``, 0.5 by
+default), ``ModelAuthored`` (when the settings exclude model-authored lessons), ``Expired`` (contract 1.12: the last
+activity is older than the retrieval policy's ``max_age`` at the view's clock), ``OverByteBudget`` (the block options'
+``max_bytes``) and ``Unrenderable``. It renders no HTML.
 """
 
 from __future__ import annotations
@@ -41,7 +41,8 @@ from .inmemory import (
 )
 from .records import EXPERIENCE_STATUSES, CheckResult, ExperienceRecord, ExperienceStatus, Scope
 from .reflector import is_model_authored
-from .search import DEFAULT_MIN_CONFIDENCE, ELIGIBLE_STATUSES, AuthorizationBounds
+from .retrieval import DEFAULT_POLICY, RetrievalPolicy, ticks_of
+from .search import ELIGIBLE_STATUSES, AuthorizationBounds
 
 DEFAULT_LESSONS_LIMIT = 50
 """How many lessons a query lists by default (.NET's ``ExperienceRecordQuery.DefaultLimit``)."""
@@ -49,8 +50,8 @@ DEFAULT_LESSONS_LIMIT = 50
 LessonsOutcome = Literal["Found", "Denied"]
 """``Found``, or why the page is empty: the scope lies outside the authorization bounds."""
 
-Ineligibility = Literal["Status", "BelowConfidenceFloor", "ModelAuthored", "OverByteBudget", "Unrenderable"]
-"""Why retrieval would not use a lesson. .NET's ``Expired`` and ``ContentUnconfirmed`` do not exist in this port."""
+Ineligibility = Literal["Status", "BelowConfidenceFloor", "ModelAuthored", "Expired", "OverByteBudget", "Unrenderable"]
+"""Why retrieval would not use a lesson. .NET's ``ContentUnconfirmed`` does not exist in this port."""
 
 _UNAVAILABLE = "(unavailable)"
 _UNBOUNDED_BYTES = 2**62
@@ -218,6 +219,7 @@ class ExperienceLessons:
         identity: ExperienceIdentity | None = None,
         render: Callable[[ExperienceRecord, BlockOptions], Block] | None = None,
         benefit: BenefitPolicy | None = None,
+        retrieval_policy: RetrievalPolicy | None = None,
     ) -> None:
         if not isinstance(store, LessonsReader):
             raise TypeError("The store must have a list_lessons_page method (contract 1.7).")
@@ -230,6 +232,9 @@ class ExperienceLessons:
         self._identity = identity
         self._render = render or render_alone
         self._benefit = benefit or BenefitPolicy()
+        if retrieval_policy is not None and not isinstance(retrieval_policy, RetrievalPolicy):
+            raise TypeError("retrieval_policy must be a RetrievalPolicy.")
+        self._policy = retrieval_policy or DEFAULT_POLICY
 
     def list(self, identity: ExperienceIdentity | None = None, query: LessonsQuery | None = None) -> LessonsPage:
         """Lists the lessons in the identity's scope under its authorization bounds (see :meth:`list_scope`)."""
@@ -270,7 +275,7 @@ class ExperienceLessons:
             if row.record.scope != scope:
                 out_of_scope += 1
                 continue
-            lesson = self._describe(row.record)
+            lesson = self._describe(row.record, generated_at)
             if read.injections_tracked and row.injection is not None:
                 lesson = _with_injection(lesson, row.injection)
             if not lesson.is_eligible and not query.include_ineligible:
@@ -295,11 +300,11 @@ class ExperienceLessons:
             query.include_measured_benefit,
         )
 
-    def _describe(self, record: ExperienceRecord) -> Lesson:
+    def _describe(self, record: ExperienceRecord, now: Instant) -> Lesson:
         """One record as a lesson. A record that cannot be rendered is a lesson marked so, never an exception."""
         try:
             block = self._render(record, self._options)
-            ineligibility, reason = self._eligibility(record, block.byte_count)
+            ineligibility, reason = self._eligibility(record, block.byte_count, now)
             return Lesson(
                 record.experience_id,
                 record.task_id or "",
@@ -328,17 +333,23 @@ class ExperienceLessons:
                 "Unrenderable",
             )
 
-    def _eligibility(self, record: ExperienceRecord, byte_count: int) -> tuple[Ineligibility | None, str | None]:
+    def _eligibility(
+        self, record: ExperienceRecord, byte_count: int, now: Instant
+    ) -> tuple[Ineligibility | None, str | None]:
+        """.NET's standing ineligibility, in its order (status, floor, authorship, age), then the byte budget."""
+        policy = self._policy
         if record.status not in ELIGIBLE_STATUSES:
             return "Status", f"status {record.status} is never retrieved"
-        if not record.reuse_confidence >= DEFAULT_MIN_CONFIDENCE:
+        if not record.reuse_confidence >= policy.minimum_confidence:
             return (
                 "BelowConfidenceFloor",
                 f"confidence {format_number(record.reuse_confidence)} is below the retrieval floor "
-                f"{format_number(DEFAULT_MIN_CONFIDENCE)}",
+                f"{format_number(policy.minimum_confidence)}",
             )
         if self._exclude_model_authored and is_model_authored(record.reflection):
             return "ModelAuthored", "model-authored lessons are excluded"
+        if policy.max_age is not None and (now - record.updated_at).ticks > ticks_of(policy.max_age):
+            return "Expired", "its last activity is older than the retrieval policy's maximum age"
         if byte_count > self._options.max_bytes:
             return (
                 "OverByteBudget",

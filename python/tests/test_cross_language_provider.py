@@ -32,7 +32,7 @@ pytest.importorskip("agent_framework")
 from _benefit import TOLERANCE
 from _contract import REPOSITORY, json_difference, read_json
 from _maf import ScriptedClient
-from _postgres import Server
+from _postgres import PG_RETRIEVAL_POLICY, Server
 from _sync import run
 from agent_framework import Agent, ContextProvider, Message, tool
 from test_cross_language_holdout import EVENT_COLUMNS, _insert_raw
@@ -152,6 +152,7 @@ def run_provider_agent(store: ExperienceStore) -> tuple[list[Any], list[Provider
     agent = use_agent_experience(
         Agent(client=client, name="Provider Agent", tools=[tool(run_tests)]),
         store=store,
+        retrieval_policy=PG_RETRIEVAL_POLICY,
         identity=IDENTITY,
         verify=tool_succeeded("run_tests", artifact_revision="build-7"),
         classify_tool_result=exit_code("run_tests"),

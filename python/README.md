@@ -118,8 +118,11 @@ agent = use_agent_experience(agent, store=store, identity=identity, verify=verif
 - **In-memory and PostgreSQL stores.** `InMemoryExperienceStore` compares 32-bit floats by cosine distance.
   `PostgresExperienceStore` needs PostgreSQL with pgvector, the .NET vectors package's migrations (`0004`, `0020`) and
   the grants of `sql/application-role-privileges-1.6.sql` after the 1.0 and 1.4 files (or the .NET privileges call).
-- **Fail-open.** The vector channel never fails or delays past `vector_timeout` (seconds, default 0.5, covering the
-  embedding and the search) the text answer. When it does not contribute the injection answers from text and reports
+- **Fail-open, within the retrieval timeout.** The vector channel never fails the text answer. The retrieval policy's
+  `timeout` (500 ms by default) bounds both channels together, as .NET's does: a vector channel still running at it
+  times the injection out (`RetrievalTimedOut`). `vector_timeout` (seconds, default 0.5, covering the embedding and the
+  search) is the channel's own fallback only when it is strictly shorter than that timeout; past it the injection
+  answers from text. When it does not contribute the injection answers from text and reports
   the reason through `on_vector_fallback(VectorFallback)` and `InjectionResult.vector_fallback`: `NotConfigured` (no
   embedder, or a store without `write_embedding` and `search_vectors`), `ProviderUnavailable` (the embedder raised, ran
   out of time, or returned a blank model ID or an empty, wrong-length or non-finite vector; no statement runs),
@@ -172,8 +175,8 @@ agent = use_agent_experience(
 - **Validation.** An invalid value raises `RetrievalPolicyError` (a `ValueError`) when the policy is built; its
   `option` is the option .NET's `ArgumentException` names (`Timeout`, `HalfLives`, ...). NaN is refused.
 - **The search** is asked for `minimum_confidence`, `candidate_limit + 1` rows (`SearchParameters.for_policy`) and
-  `minimum_matched_terms`; the vector channel for the same floor and limit. `min_vector_relevance` still works: the
-  policy's `minimum_vector_relevance` wins when set, and setting both to different values raises `ValueError`.
+  `minimum_matched_terms`; the vector channel for the same floor and limit. `min_vector_relevance`, when set,
+  replaces the policy's `minimum_vector_relevance`, as .NET's `MinimumSemanticSimilarity` does in its one-call setup.
 - **Ranking** (`rank(..., policy=, confidence_decay=)`, and `rank_hybrid`) considers the first `candidate_limit`
   candidates of each channel and reports what it excluded, in order, on `RankedResult.excluded` and
   `InjectionResult.excluded` (.NET's `Excluded`): `IneligibleStatus`, `ModelAuthored`, or `Expired` (last activity,
@@ -194,8 +197,9 @@ agent = use_agent_experience(
 | `InjectionOutcome` `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed` | the `inject` operation's outcome; `InjectionResult.outcome` for the first two |
 | `RetrievalExclusionReason` `IneligibleStatus`, `ModelAuthored`, `Expired` | `ExcludedRecord.reason` (`ExclusionReason`); never `EnvironmentMismatch` or `UnconfirmedContent` (no required attributes, no provenance signing) |
 
-The lessons view does not apply `max_age` or `minimum_confidence`: it never reports a lesson as `Expired`, and its
-confidence floor is the default 0.5.
+The lessons view applies the same policy (`agent_experience_lessons` takes the setup's): a lesson below
+`minimum_confidence` is `BelowConfidenceFloor`, naming that floor, and one whose last activity is more than `max_age`
+before the view's clock is `Expired`.
 
 ### See what it learned: the lessons view
 
@@ -215,9 +219,11 @@ for lesson in page.lessons:                             # newest first
   detail), `block_text` (the Historical Reference block for that record alone, numbered 1, with no ranking, byte for
   byte what .NET renders), whether retrieval would use it (`is_eligible`, with `ineligibility` and `ineligible_reason`
   when not), and `last_injected_at` and `injection_count`.
-- **Eligibility codes** this port decides: `Status`, `BelowConfidenceFloor` (retrieval's 0.5), `ModelAuthored` (when the
-  setup's `exclude_model_authored` is on), `OverByteBudget` (the block options' `max_bytes`) and `Unrenderable`. .NET's
-  `Expired` and `ContentUnconfirmed` do not exist here: the lessons view does not apply the retrieval policy's `max_age` (nor its `minimum_confidence`: the floor is the default 0.5), and this port has no provenance signing.
+- **Eligibility codes** this port decides, in .NET's order: `Status`, `BelowConfidenceFloor` (the retrieval policy's
+  `minimum_confidence`, 0.5 by default), `ModelAuthored` (when the setup's `exclude_model_authored` is on), `Expired`
+  (last activity more than the retrieval policy's `max_age` before the view's clock, contract 1.12), `OverByteBudget`
+  (the block options' `max_bytes`) and `Unrenderable`. .NET's `ContentUnconfirmed` does not exist here: this port has
+  no provenance signing.
 - **The page** has `outcome`, `generated_at`, `has_more`, `out_of_scope_dropped` and `injections_tracked`. When it is
   false (a store that records no injections, or a PostgreSQL role without the 1.4 grants or table), a `None`
   `last_injected_at` means "not known", not "never". A scope outside the authorization bounds is an empty page with the
