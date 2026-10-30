@@ -397,6 +397,17 @@ for nothing.
   are encoded: each attempt's byte saying whether it failed becomes its `Error` as a string (that byte is the string's
   presence byte), and each tool call's `Error` follows its arguments as a string. Every other byte is unchanged.
 
+  **Claims version 4: the recipe.** A record that carries a recipe excerpt (`ToolCallRecord.RecipeExcerpt`, see
+  [Injection](injection.md#showing-what-worked-the-recipe)) is signed claims version 4, `HMAC-SHA256.aexp-prov.v4`
+  (`ExperienceProvenanceSignature.HmacSha256ClaimsV4`): the version 3 encoding tagged `aexp-prov:v4`, whose content
+  encoding adds each tool call's excerpt as a string after its `Error`. Every other record is still signed version 3,
+  byte for byte, so the default `SignClaimsVersion = 3` changes nothing until a host turns the recipe on;
+  `SignClaimsVersion = 4` signs every record version 4. A version 4 signature confirms content like version 3, and it is
+  the only one that confirms an excerpt: with signing configured, injection shows an excerpt only under a version 4
+  signature that verifies (`ExperienceRetrievalService.AreRecipeExcerptsConfirmed`), and renders the rest of a record
+  without one as before. A node on an earlier build refuses a version 4 signature as one it cannot check, so turn the
+  recipe on once every node that verifies runs this build.
+
   **Version 2 records.** Signatures made by `0.1.0-preview.7` through `0.1.0-preview.9`, or during a
   `SignClaimsVersion = 2` rollout, carry `HMAC-SHA256.aexp-prov.v2` (`ExperienceProvenanceSignature.HmacSha256ClaimsV2`):
   claims version 2, the same encoding tagged `aexp-prov:v2`, whose content digest encodes only *whether* each attempt
@@ -410,7 +421,7 @@ for nothing.
   (`ExperienceProvenanceSignature.HmacSha256`): claims version 1, the same encoding tagged `aexp-prov:v1` with no
   content digest. They still verify for those claims.
 - **Content decides authorship.** With signing configured, a record's content is *confirmed* only when it carries a
-  version 3 or version 2 signature, under a key in the ring, that verifies, or when it is unsigned and its ID is in
+  version 4, version 3 or version 2 signature, under a key in the ring, that verifies, or when it is unsigned and its ID is in
   `TrustUnsignedRecordIds`. Otherwise (a version 1 signature, none, an unknown key, or one that does not verify) its
   content is unconfirmed, and it counts as model-authored whatever its reflection declares: `ExperienceRetrievalService`
   leaves it out under `ExcludeModelAuthored` (`RetrievalExclusionReason.UnconfirmedContent` when that is the only

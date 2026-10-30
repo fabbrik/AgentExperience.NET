@@ -570,6 +570,62 @@ still needs the host's own `IExperienceReflector` to say so in the reflection's 
 carry; what that reflector writes there is the host's to keep free of secrets, because the lesson is emitted as
 written.
 
+### Showing what worked: the recipe
+
+A `Tried:` line says which calls the working attempt made, and with an allowlist which argument values. It never says
+what the working call *produced*: `run_tests [returned] → completed` cannot tell the next agent which version was
+pinned or which key was set. The recipe adds one vouched excerpt of the working call's result, and one place to
+consent to it:
+
+```csharp
+services.AddAgentExperience(options =>
+{
+    // ...
+    options.Recipe("pin_dependency",
+        arguments: ["package"],                                   // capture allowlist + ApproachArguments
+        resultExcerpt: call => call.Result?.ToString() is { } text // what this tool's working call produced
+            && text.StartsWith("pinned ", StringComparison.Ordinal) ? text : null);
+});
+```
+
+```
+Tried:
+  - attempt 0: pin_dependency(package="lib") [returned], run_tests [failed: exit 2] → failed (exit 2)
+  - attempt 1: pin_dependency(package="lib") [returned: "pinned lib to 2.4.1"], run_tests [returned] → completed
+Worked: attempt 1 (the final attempt)
+```
+
+`AgentExperienceOptions.Recipe(toolName, arguments, resultExcerpt)` sets, for that tool, what would otherwise be four
+settings: the argument names in the capture sanitizer's `ToolArguments` allowlist (a dotted path by each of its
+non-index steps), `ExperienceInjectionOptions.ApproachArguments`, the capture callback
+`ExperienceCaptureOptions.RecipeResultExcerpt` and the injection allowlist `ExperienceInjectionOptions.RecipeExcerpts`.
+The explicit wiring sets those directly. Nothing is on by default, and with none of it set the block is byte for byte
+what it was. The guarantees, each a test:
+
+- **Only a vouched excerpt, only of a call that returned.** Capture calls the host's callback only for a call it
+  records as returned (not thrown, not classified failed by `ClassifyToolResult`); what the callback returns is
+  sanitized by the `ToolResult` policy, as a result is, and cut to `CaptureLimits.MaxRecipeExcerptLength` (200)
+  characters after sanitization, never between a surrogate pair. A callback that throws records nothing and is reported
+  once per run at stage `RecipeExcerpt`, by exception type only. See [Capture](capture.md#the-recipe-a-vouched-result-excerpt).
+- **Only on the working attempt, only for an allowlisted tool.** The excerpt replaces that call's `[returned]` marker on
+  the attempt the `Worked:` line names. A failed call, an earlier attempt and a tool `RecipeExcerpts` does not name never
+  show one. The recall hint's `worked:` line renders the same way.
+- **Bounded and quoted like an argument string**: whitespace collapsed, markers neutralized, double quotes and
+  look-alikes turned into `'`, `->` broken up, cut to `HistoricalReferenceWriter.MaxRecipeExcerptLength` (200)
+  characters with the cut marked outside the quotes. The record still counts against `MaxBytes` and is dropped whole.
+- **Signed, or not shown.** With [provenance signing](confidence.md#signing-provenance) configured, an excerpt is shown
+  only when a claims version 4 signature confirms it (`ExperienceRetrievalService.AreRecipeExcerptsConfirmed`); a record
+  whose excerpt no version 4 signature covers renders exactly as it would without the recipe.
+- **A borrowed record only with the owner's consent.** A record read through a grant shows an excerpt only when the
+  grant shows the approach (`LessonAndApproach` or `LessonApproachAndArguments`) and names the tool in
+  `ExperienceGrantRequest.RecipeExcerpts` **and** the reader's `RecipeExcerpts` names it too; under `LessonOnly`, never.
+  `DecideInjection` sees the owner's list as `ExperienceInjectionDecisionContext.GrantRecipeExcerpts`. The PostgreSQL
+  store keeps it in `experience_grants.recipe_excerpts` (migration `0031`), immutable like the level.
+
+Vouching for an excerpt lets a later model read it. Return text of a small, known shape (a version, a key, a file
+name), never free text, personal data or anything a secret could be written into: the sanitizer classifies by field
+name, not content, and the authorization boundary outside the block still decides what a later agent may do.
+
 ## Gating on the receiving agent's capabilities
 
 A record's `Worked:` line points at the attempt, and so the tools, a verified run succeeded with. Retrieved into an agent that lacks those tools,

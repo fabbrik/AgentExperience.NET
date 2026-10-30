@@ -64,6 +64,7 @@ plaintext mode both still hold the text after the erasure.
 | `confidence_evidence.detail` | the record's key | — |
 | `experience_grants.reason`, `experience_grants.revocation_reason`, `experience_grant_events.reason` | the key of the record the grant is over | — |
 | `experience_grants.approach_arguments` (`0017`) | not sealed: it holds the owner's tool names and argument keys, never a value, and is host configuration rather than captured content | the whole value |
+| `experience_grants.recipe_excerpts` (`0031`) | not sealed: it holds the owner's tool names, never an excerpt, and is host configuration rather than captured content | the whole value |
 | a reuse-feedback rationale | the key of **each** exposed record live in the submission's own scope, once per exposure, in `reuse_feedback_exposures.rationale_sealed` | `reuse_feedback.rationale = '(sealed)'` |
 
 The feedback rule reproduces plaintext mode's erasure exactly: a submission survives while it names any record that

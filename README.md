@@ -195,6 +195,11 @@ re-read, grants, capability gate, session budget), never changes a tool's result
 lookup, and is measured by the same holdout. `dotnet run --project samples/AgentExperience.Sample.QuickStart -- --recall`
 shows one; see [Recall at the moment of failure](docs/guide/injection.md#recall-at-the-moment-of-failure).
 
+**The recipe.** `options.Recipe("pin_dependency", arguments: ["package"], resultExcerpt: call => ...)` lets a lesson's
+working attempt also say what its call produced, as `[returned: "pinned lib to 2.4.1"]`: an excerpt you vouch for at
+capture, sanitized, bounded and signed, off by default (`--recipe` on the quick start shows one; see
+[Showing what worked](docs/guide/injection.md#showing-what-worked-the-recipe)).
+
 ## Seeing what it learned
 
 After the quick start, `provider.GetAgentExperienceLessons().ListForDevelopmentIdentityAsync()` lists the lessons it
