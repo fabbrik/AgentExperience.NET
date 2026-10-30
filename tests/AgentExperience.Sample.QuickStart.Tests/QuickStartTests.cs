@@ -158,6 +158,24 @@ public class QuickStartTests
         Assert.Contains("Run 2 (hint after a failure): tried retry-immediately ✗ → skip-ledger-check ✓  (1 failed attempt)", output.ToString(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Under_recipe_run_two_is_shown_the_working_calls_vouched_result_and_still_succeeds_first()
+    {
+        using var output = new StringWriter(CultureInfo.InvariantCulture) { NewLine = "\n" };
+        using var model = new ScriptedModel();
+        var runs = await global::QuickStart.RunRecipeAsync(model, global::QuickStart.StandInLabel, output);
+
+        var block = Assert.IsType<string>(runs[1].Block);
+        Assert.Contains("run_refund_check(strategy=\"wait-for-lock\") [returned: \"exit=0 the refund is released\"] → completed", block, StringComparison.Ordinal);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(block, System.Text.RegularExpressions.Regex.Escape("[returned: ")));
+        Assert.Equal("wait-for-lock", ScriptedModel.Remembered(block));
+        Assert.Equal(["wait-for-lock"], runs[1].Attempts.Select(a => a.Strategy));
+
+        // The default run's block is the recipe run's without the excerpt: the recipe adds exactly that.
+        var (plain, _) = await RunAsync();
+        Assert.Equal(plain[1].Block, block.Replace(" [returned: \"exit=0 the refund is released\"]", " [returned]", StringComparison.Ordinal));
+    }
+
     private static async Task<(IReadOnlyList<QuickStartRun> Runs, string Output)> RunAsync()
     {
         using var output = new StringWriter(CultureInfo.InvariantCulture) { NewLine = "\n" };

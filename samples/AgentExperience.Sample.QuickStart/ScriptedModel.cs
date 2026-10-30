@@ -62,7 +62,7 @@ public sealed partial class ScriptedModel : IChatClient
     }
 
     /// <summary>
-    /// The strategy of the first call marked <c>[returned]</c> that carries one, on the <c>Tried:</c> line of the attempt
+    /// The strategy of the first call marked <c>[returned]</c> (or <c>[returned: "…"]</c>, with a recipe) that carries one, on the <c>Tried:</c> line of the attempt
     /// the block's <c>Worked:</c> line names: the call that did not fail, wherever it sits on the line and wherever
     /// <c>strategy</c> sits among its arguments. <see langword="null"/> when there is no such line or no returned call on
     /// it carries a strategy.
@@ -132,7 +132,7 @@ public sealed partial class ScriptedModel : IChatClient
     /// One call's argument list followed by its own <c>[returned]</c> marker. A quoted value is matched whole (the
     /// writer never lets one hold a double quote), so a parenthesis or a marker inside a value cannot end the list.
     /// </summary>
-    [GeneratedRegex("\\(((?:\"[^\"]*\"|\\([^()\"]*\\)|[^\"()])*)\\) \\[returned\\]", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("\\(((?:\"[^\"]*\"|\\([^()\"]*\\)|[^\"()])*)\\) \\[returned(?:: \"[^\"]*\"(?:\\[\\.\\.\\.\\])?)?\\]", RegexOptions.CultureInvariant)]
     private static partial Regex ReturnedCall();
 
     /// <summary>One <c>key=value</c> of a call's argument list, each starting where the previous one ended.</summary>
