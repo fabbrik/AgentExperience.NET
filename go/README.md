@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.12, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.12 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10 and 1.11 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.13, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.13 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11 and 1.12 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -475,6 +475,81 @@ err := maf.UseAgentExperience(&config, maf.Options{
   1`, its minimum of matched terms), and `ae.RankWith` and `ae.RankHybridWith` rank under `ae.RankOptions{Policy,
   Decay, ExcludeModelAuthored}`; `Rank` and `RankHybrid` are the zero policy.
 
+### The injection options
+
+From contract 1.13 ([what it adds](../contract/README-1.13.md)) a Go agent takes the rest of .NET's
+`ExperienceInjectionOptions` that needs no session tracking, with their defaults and validation: the receiving agent's
+capability gate, the model-authored policy, and the host's two callbacks. A Go agent configured like a .NET one injects
+the same block with the same omissions:
+
+```go
+low := ae.RiskLow
+err := maf.UseAgentExperience(&config, maf.Options{
+	// ...
+	ReceivingAgent: &ae.ReceivingAgent{
+		AvailableTools:  []string{"read_ledger", "wait_for_lock", "retry_refund"},
+		MaxRiskClass:    &low,
+		ToolRiskClasses: map[string]ae.ToolRiskClass{"read_ledger": ae.RiskLow, "retry_refund": ae.RiskMedium},
+	},
+	ModelAuthoredLessons: ae.ModelAuthoredExclude,
+	ResolveRequest: func(ctx context.Context, rc maf.RequestContext) (*maf.InjectionRequest, error) {
+		if !rc.HasDerivedTaskText {
+			return nil, nil // skip this invocation
+		}
+		return &maf.InjectionRequest{TaskText: rc.DerivedTaskText, CorrelationID: traceID(ctx)}, nil
+	},
+	DecideInjection: func(d maf.DecisionContext) maf.InjectionDecision {
+		if d.ModelAuthored {
+			return maf.Deny("risk policy")
+		}
+		return maf.Permit()
+	},
+})
+```
+
+| .NET | Go | Default | Notes |
+| --- | --- | --- | --- |
+| `ExperienceInjectionOptions.ReceivingAgent` | `maf.Options.ReceivingAgent` (`*ae.ReceivingAgent`) | none | validated and copied by `UseAgentExperience` |
+| `ReceivingAgentCapabilities.AvailableTools` | `AvailableTools` (`[]string`) | none | nil skips the tool check; a non-nil empty slice admits only approaches that call no tool |
+| `MaxRiskClass` | `MaxRiskClass` (`*ae.ToolRiskClass`) | none | `ae.RiskCritical` disables the risk check |
+| `ToolRiskClasses` | `ToolRiskClasses` (`map[string]ae.ToolRiskClass`) | empty | a tool not listed is `Critical` |
+| `UseRunTools` | `UseRunTools` | false | the tools the SDK hands the context providers: the configuration's `Tools` and the run's `agent.WithTool` options |
+| `GatedRetrievalWindowMultiplier` | `GatedRetrievalWindowMultiplier` | 4 | |
+| `ToolRiskClass` (`Low` ... `Critical`) | `ae.ToolRiskClass` (`ae.RiskLow` ... `ae.RiskCritical`) | | `ae.ParseToolRiskClass` and `String` use .NET's names |
+| `ModelAuthoredLessons` (`ModelAuthoredLessonPolicy`) | `ModelAuthoredLessons` (`ae.ModelAuthoredLessonPolicy`) | `Include` | `ExcludeModelAuthored: true` is the same as `Exclude` (either one excludes) |
+| `ResolveRequest`, `ResolveRequestAsync` | `ResolveRequest func(ctx, maf.RequestContext) (*maf.InjectionRequest, error)` | none | nil retrieves the derived task text |
+| `ExperienceInjectionContext` (`Messages`, `Session`, `Agent`, `DerivedTaskText`) | `maf.RequestContext` (`Messages`, `Session`, `Agent`, `DerivedTaskText` with `HasDerivedTaskText`, `Identity`) | | |
+| `RetrieveExperienceRequest` | `maf.InjectionRequest` (`TaskText`, `PreferredEnvironment`, `Limit`, `ExcludeModelAuthored`, `CorrelationID`) | | the authorization and scope are the identity's |
+| `DecideInjection` | `DecideInjection func(maf.DecisionContext) maf.InjectionDecision` | none (permit) | |
+| `ExperienceInjectionDecisionContext` (`Candidate`, `Current`, `ModelAuthored`) | `maf.DecisionContext` (`Candidate`, `Current`, `ModelAuthored`) | | `Current` is the ranked record: the port re-reads nothing |
+| `InjectionDecision.Permit`, `Deny(reason)` | `maf.Permit()`, `maf.Deny(reason)` | | |
+| `InjectionOmissionReason.ToolUnavailable`, `RiskClassExceeded`, `HostDenied` | `ae.OmittedToolUnavailable`, `ae.OmittedRiskClassExceeded`, `ae.OmittedHostDenied` | | in `InjectionResult.Omitted` |
+| `ApproachArguments`, `FailureDetail`, `Rendering`, `Limits.MaxRecords`, `Limits.MaxBytes` | `ae.BlockOptions` | | as before (contract 1.0) |
+| `MessageRole` | `MessageRole` (`message.RoleUser`, `message.RoleSystem`) | user | as before |
+
+- **The gate** checks the tools of the record's approach (the verified final attempt its `Worked:` line names), the
+  tool check first (`ToolUnavailable`), then the risk check (`RiskClassExceeded`), with no detail, so no tool name
+  leaves the provider. It runs before the record limit, after the model-authored exclusion: a gated record takes no
+  slot. While it can reject and a request names its own `Limit`, retrieval is cut to the wider window
+  `min(CandidateLimit, max(Limit, MaxRecords × GatedRetrievalWindowMultiplier))`; selection still uses `Limit`.
+- **The resolver.** A nil request with a nil error skips the invocation (inject outcome `Skipped`); an error or a panic
+  is `Failed` (and `OnInjectionFailure`); `context.Canceled` or `context.DeadlineExceeded` while the caller's context
+  is done propagates from `Invoking`, as .NET's `OperationCanceledException` does; a request retrieval refuses (a
+  blank task text, one over 4,096 UTF-16 code units, a `Limit` outside 1..`CandidateLimit`) is `RetrievalFailed`.
+  A request's `CorrelationID` is the inject span's `agentexperience.correlation_id`. No timeout is put around it.
+- **The decision** is asked about each selected record, in order, before the block is rendered. It can only deny, and
+  it fails closed: the zero `InjectionDecision` denies (as .NET's `null` does), and so does a panic. A denial is
+  `HostDenied` with the reason as its detail (`ae.HostDeniedDetail` when empty; on a panic
+  `The host injection decision threw <type>, so the record was denied.`). A denied record has taken its slot, and its
+  omission comes after the selection's and before the byte budget's.
+- **Go's zero values.** A zero `GatedRetrievalWindowMultiplier` means 4 (.NET refuses 0); a negative one, a blank tool
+  name in either collection and an undefined risk class are refused by `UseAgentExperience`. An empty
+  `ModelAuthoredLessons` is `Include`. Go cannot tell `Deny("")` from a decision with no reason: both report
+  `ae.HostDeniedDetail` (.NET reports the empty reason).
+- **Without the agent:** `ae.NewCapabilityGate`, `CapabilityGate.ForInvocation`, `ae.GatedWindow` and
+  `ae.SelectOptions.Gate` give the selection the agent runs; contract 1.13's `inject-options` fixtures pin it, with the
+  block, the omissions and the outcome.
+
 ### Telemetry: the same spans and metrics as .NET
 
 The optional module `.../go/telemetry` (the OpenTelemetry API only; no SDK, no exporter) reports the operations the port
@@ -622,18 +697,24 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.12: capture, finalize, store, text and semantic retrieval under .NET's retrieval
-policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block,
+The port covers contract 1.0 to 1.13: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and the injection
+options (the receiving agent, the model-authored policy, the request resolver and the injection decision),
 injection recording, the lessons view, the injection holdout, the benefit estimate, the benefit policy, measuring another memory provider and telemetry. These .NET features have no counterpart here, so a mixed
 .NET and Go deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
-- **Sharing:** grants, and so the grant-disclosure choices.
-- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `ContentUnconfirmed` lesson state).
+- **Session tracking and withdrawal notices** (.NET's `SessionLimits`, `SessionStateKey`; story 27.6), and the final
+  eligibility re-read before injection, with its `Limits.EligibilityCheckTimeout` and `Limits.MaxAbandonedReads`
+  (story 27.6): the port injects the records as retrieval ranked them, and `DecisionContext.Current` is the ranked
+  record.
+- **Sharing:** grants, and so the grant-disclosure choices, and the decision context's `SharedByGrant`,
+  `PermittingGrantId`, `GrantDisclosure` and `GrantApproachArguments` (story 27.8).
+- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `ContentUnconfirmed` lesson state, and no `UnconfirmedContent` omission; story 27.7).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
 - **Lessons view HTML and endpoint mapping.**
 - **Required environment attributes** (.NET's `RequiredEnvironmentAttributes`, and so the `EnvironmentMismatch`
-  exclusion): the port only grades preferred attributes.
+  exclusion): the port only grades preferred attributes, and `maf.InjectionRequest` has no such field.
 - **Exporting lessons.**
 
 What the port does write or read follows the same contract the .NET library is tested against.
@@ -650,7 +731,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.12 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.13 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The
@@ -700,6 +781,12 @@ cancellation, parallel calls), runs the quick start and compares its output
   ([`dotnet-retrieval-policy.json`](../tests/AgentExperience.Contract.Tests/cross-language/dotnet-retrieval-policy.json));
   the seed goes into a database through the Go store, which searches it with the policy's parameters, and
   `ae.RankWith` must give the same ordered IDs, exclusions and scores, within 1e-12.
+- *The injection options, three languages* (contract 1.13, PostgreSQL leg, in `maf/`). The .NET contract tests check
+  in a seed, two agent configurations (a receiving agent and a model-authored policy) and what a .NET agent injected
+  with each ([`dotnet-inject-options.json`](../tests/AgentExperience.Contract.Tests/cross-language/dotnet-inject-options.json));
+  the seed goes into a database through the Go store, and a Go agent with each configuration, run on the same message
+  at the same instant, must inject the same block, byte for byte, with the same outcome, role, IDs, byte count,
+  omissions and exclusions.
 - *Another memory provider, three languages* (contract 1.11). A Go agent wraps a stub provider under `stub-memory` at
   rate 0.5 and runs eight finalized runs; in memory its runs, key and arms must be the rows file's, and in the
   PostgreSQL leg the rows it wrote must be exactly
