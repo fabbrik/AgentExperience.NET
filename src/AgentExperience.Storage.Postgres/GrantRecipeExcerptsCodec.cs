@@ -6,7 +6,7 @@ namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
 /// The stored form of a grant's <see cref="ExperienceGrant.RecipeExcerpts"/>: one JSON array of tool names, in
-/// <c>experience_grants.recipe_excerpts</c> (<c>0031</c>). Read through <c>to_jsonb(g) -&gt; 'recipe_excerpts'</c>, so a
+/// <c>experience_grants.recipe_excerpts</c> (<c>0031</c>). Read through <c>to_jsonb(g) -&gt;&gt; 'recipe_excerpts'</c>, so a
 /// schema without the column reads as none.
 /// </summary>
 /// <remarks>
@@ -19,7 +19,7 @@ internal static class GrantRecipeExcerptsCodec
     /// Selects the permitting or listed grant's recipe-excerpt consent from the grant row aliased <c>g</c>, NULL on a
     /// schema that has no such column.
     /// </summary>
-    internal const string Column = "to_jsonb(g) -> 'recipe_excerpts'";
+    internal const string Column = "to_jsonb(g) ->> 'recipe_excerpts'";
 
     /// <summary>A private copy of a caller's list, taken in one pass; a null stays null.</summary>
     internal static IReadOnlyList<string>? Snapshot(IReadOnlyList<string>? tools) => tools?.ToArray();
