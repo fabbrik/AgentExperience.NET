@@ -89,6 +89,7 @@ NEVER_NESTED: frozenset[str] = frozenset(
 
 ATTRIBUTES: tuple[str, ...] = (
     "agentexperience.attempt_id",
+    "agentexperience.correlation_id",
     "agentexperience.experience_id",
     "agentexperience.omitted_count",
     "agentexperience.reflection_id",

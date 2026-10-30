@@ -1712,9 +1712,10 @@ def _tool_list(value: Any) -> list[Any]:
 
 def _run_tools(agent: Any, context: Any) -> list[Any]:
     """The tools this invocation offers the model, as a context provider sees them (contract 1.13's ``use_run_tools``):
-    the agent's own (``default_options["tools"]``), the run's (``options["tools"]``) and those an earlier context
-    provider added (``context.tools``). A tool a later provider or middleware adds, and an MCP server's tools, are not
-    seen. Each is a name, or an object with a ``name`` (a plain function: its ``__name__``)."""
+    the agent's own (``default_options["tools"]``) and those an earlier context provider added (``context.tools``), and
+    ``options["tools"]`` should a framework version hand providers one. agent-framework does not hand a provider the
+    ``tools=`` list of one ``run`` call, nor an MCP server's functions, nor tools a later provider or middleware adds,
+    so they are not seen. Each is a name, or an object with a ``name`` (a plain function: its ``__name__``)."""
     tools: list[Any] = []
     try:
         tools += _tool_list((getattr(agent, "default_options", None) or {}).get("tools"))
@@ -2302,6 +2303,10 @@ def use_agent_experience(
     benefit: BenefitPolicy | None = None,
     retrieval_policy: RetrievalPolicy | None = None,
     confidence_decay: ConfidenceDecayPolicy | None = None,
+    model_authored_lessons: ModelAuthoredLessonPolicy = "Include",
+    receiving_agent: ReceivingAgent | None = None,
+    resolve_request: RequestResolver | None = None,
+    decide_injection: DecideInjection | None = None,
 ) -> AgentT:
     """
     Wires capture and injection into a MAF agent (an ``Agent``, or any agent with ``context_providers`` and
@@ -2345,6 +2350,14 @@ def use_agent_experience(
     the recency half-life, the candidate limit, the minimum of matched terms and the vector floor.
     ``confidence_decay``, a :class:`~agentexperience.retrieval.ConfidenceDecayPolicy`, fades each record's confidence
     by its domain at ranking time. Neither ever changes a stored record.
+
+    The injection options of contract 1.13, .NET's ``ExperienceInjectionOptions``: ``model_authored_lessons``
+    (``"Include"``, the default, injects model-authored lessons fenced and labelled; ``"Exclude"`` leaves them out, as
+    ``exclude_model_authored=True`` does); ``receiving_agent``, a :class:`~agentexperience.ReceivingAgent`, keeps out a
+    record whose verified approach calls a tool the agent lacks or one riskier than it may use (``ToolUnavailable``,
+    ``RiskClassExceeded``); ``resolve_request``, sync or async, turns each invocation into an :class:`InjectionRequest`
+    (``None`` skips it); and ``decide_injection`` is the host's per-record decision (fail-closed, ``HostDenied``). The
+    block's layout, failure detail, argument allowlist and limits are ``block_options``.
     """
     providers = getattr(agent, "context_providers", None)
     if not isinstance(providers, list):
@@ -2385,6 +2398,10 @@ def use_agent_experience(
         benefit=BenefitPolicy() if benefit is None else benefit,
         retrieval_policy=RetrievalPolicy() if retrieval_policy is None else retrieval_policy,
         confidence_decay=confidence_decay,
+        model_authored_lessons=model_authored_lessons,
+        receiving_agent=receiving_agent,
+        resolve_request=resolve_request,
+        decide_injection=decide_injection,
     )
 
     # Capture first, so it wraps everything else on the agent: injection runs inside it and reuses its identity.
@@ -2399,6 +2416,7 @@ __all__ = [
     "DEFAULT_INJECTION_RECORD_TIMEOUT",
     "DEFAULT_VECTOR_TIMEOUT",
     "HISTORICAL_REFERENCE_KEY",
+    "HOST_DENIED_DETAIL",
     "MAX_ABANDONED_INJECTION_RECORDS",
     "PROVENANCE_SOURCE",
     "SOURCE_ID",
@@ -2407,6 +2425,8 @@ __all__ = [
     "Approval",
     "BenefitPolicy",
     "CaptureFailure",
+    "DecideInjection",
+    "DecisionContext",
     "DevelopmentOnlyError",
     "Embedder",
     "ExperienceCaptureMiddleware",
@@ -2421,14 +2441,19 @@ __all__ = [
     "HoldoutRecordResult",
     "IdentityContext",
     "InMemoryExperienceStore",
+    "InjectionDecision",
     "InjectionFailure",
     "InjectionRecordOutcome",
     "InjectionRecordResult",
+    "InjectionRequest",
     "InjectionResult",
     "OmittedRecord",
     "ProviderAuthorize",
     "ProviderHoldoutAssignment",
     "ProviderHoldoutRecordResult",
+    "ReceivingAgent",
+    "RequestContext",
+    "RequestResolver",
     "ToolResultContext",
     "VectorFallback",
     "Verification",
