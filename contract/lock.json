@@ -127,7 +127,7 @@
     "fixtures/benefit-select/scope-hurts/expected.json": "0ac0ace74d9532aa2ddb06aea1f2d20891c071ae2e08eae5f7ea15c635c5a6c9",
     "fixtures/benefit-select/scope-hurts/options.json": "b630b3e9c11447018d5f46a55857197b33dfff60705bb5da1866e2edc9dbe9ca",
     "fixtures/benefit-select/scope-hurts/records.json": "fbc711ac8c755ecfd503fd3232e254b2e3d988ab56cb8d5cd684dc4190ae6795",
-    "fixtures/content-guard/cases.json": "938baa810ef44327516fb8d8bd6dc9179dc44ae395a0188b25d0affcec5bcb71",
+    "fixtures/content-guard/cases.json": "4741c49b6eb8118e14ddc48629cb51be7bbc798d0c69f5290e08b96b25e5af0b",
     "fixtures/embedding-summary/cases.json": "b135ef060361185d7009f4613302c6acf66b28f4d7de8704c28d501b35ed72c2",
     "fixtures/embedding-write/missing-unknown-other-scope-or-erased/expected.json": "8e083d7368e95d75edc62e07c308df3373eae86c4b6130ceb104a7d496591159",
     "fixtures/embedding-write/missing-unknown-other-scope-or-erased/seed.json": "3ead3c186a886b69c4b68e7ae6f9679231f1591d85962ae2156e1e97ae15d3ad",

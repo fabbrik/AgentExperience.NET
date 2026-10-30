@@ -292,21 +292,9 @@ def _links_json(links: Any) -> dict[str, Any]:
     }
 
 
-_FIXTURE_DEFECTS = {
-    # The corpus file holds U+FFFD where .NET's input was a lone surrogate (its JSON writer replaced it), so the
-    # fixture's input no longer gives .NET's own answer: .NET keeps U+FFFD, as this port does.
-    "lone-surrogates": "the fixture's input holds U+FFFD, not the lone surrogates .NET's answer was computed from",
-}
-
-
 @pytest.mark.parametrize(
     "case",
-    [
-        pytest.param(case, marks=pytest.mark.xfail(reason=_FIXTURE_DEFECTS[case["name"]], strict=True))
-        if case["name"] in _FIXTURE_DEFECTS
-        else case
-        for case in CORPUS
-    ],
+    CORPUS,
     ids=[case["name"] for case in CORPUS],
 )
 def test_content_guard_corpus(case: dict[str, Any]) -> None:

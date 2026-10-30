@@ -7,7 +7,7 @@ public sealed partial class ContractFixtureTests
     public void The_content_guard_fixture_is_what_the_dotnet_guard_answers()
     {
         var drift = new List<string>();
-        ContractFiles.Verify($"fixtures/{ContentGuardContract.Family}/{ContentGuardContract.FileName}", ContractJson.Write(ContentGuardContract.Run()), drift);
+        ContractFiles.Verify($"fixtures/{ContentGuardContract.Family}/{ContentGuardContract.FileName}", ContentGuardContract.Text(), drift);
         ContractFiles.VerifyNoStray(ContentGuardContract.Family, [], [], drift, ContentGuardContract.FileName);
         Relock(drift);
         ContractFiles.AssertNoDrift(drift);

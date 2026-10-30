@@ -117,7 +117,7 @@ internal static class ContentGuardContract
                 var links = Patterns.LinksIn(folded);
                 fields.Add(new JsonObject
                 {
-                    ["value"] = field,
+                    ["value"] = Marked(field),
                     ["folded"] = folded,
                     ["links"] = new JsonObject
                     {
@@ -141,7 +141,7 @@ internal static class ContentGuardContract
             var entry = new JsonObject
             {
                 ["name"] = definition.Name,
-                ["runContent"] = definition.RunContent is null ? null : new JsonArray([.. definition.RunContent.Select(text => (JsonNode)text)]),
+                ["runContent"] = definition.RunContent is null ? null : new JsonArray([.. definition.RunContent.Select(text => (JsonNode)Marked(text))]),
                 ["fields"] = fields,
                 ["combinedRule"] = combined,
             };
@@ -166,6 +166,39 @@ internal static class ContentGuardContract
                 "holds input that language cannot hold, for the 'reason' given; that language skips it, naming it.",
             ["cases"] = cases,
         };
+    }
+
+    /// <summary>
+    /// The file's text. A JSON writer cannot write a lone surrogate (it writes U+FFFD), so an input holding one is written
+    /// with a marker in its place, and the marker is then replaced by the surrogate's escape, which a reader decodes to it.
+    /// </summary>
+    public static string Text() =>
+        System.Text.RegularExpressions.Regex.Replace(ContractJson.Write(Run()), Marker + "([0-9A-F]{4})", match => "\\u" + match.Groups[1].Value);
+
+    private const string Marker = "@@LONE-SURROGATE-";
+
+    private static string Marked(string text)
+    {
+        var marked = new System.Text.StringBuilder(text.Length);
+        for (var index = 0; index < text.Length; index++)
+        {
+            var c = text[index];
+            var paired = char.IsHighSurrogate(c) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1]);
+            if (paired)
+            {
+                marked.Append(c).Append(text[++index]);
+            }
+            else if (char.IsSurrogate(c))
+            {
+                marked.Append(Marker).Append(((int)c).ToString("X4", System.Globalization.CultureInfo.InvariantCulture));
+            }
+            else
+            {
+                marked.Append(c);
+            }
+        }
+
+        return marked.ToString();
     }
 
     private static JsonArray Sorted(IReadOnlySet<string> values) =>

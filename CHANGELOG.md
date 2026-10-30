@@ -202,6 +202,22 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   one (`golang.org/x/text`) when imported; a host that screens model-written text without `maf` calls
   `ae.SetUnicodeNormalizer`, or every model-written field is refused. Go reads zero option values as the defaults, and
   `AgentChatClient` takes a host function that maps the model, temperature and output cap onto the provider's options.
+- **The exported file is created as .NET creates it**, read and write for everyone less the umask (`0644` under the
+  usual umask), never owner-only; a previous file with a byte order mark, or white space around a heading's GUID, is
+  read as .NET reads it.
+- **The lessons page's handlers answer as .NET's endpoint does**: `GET` only (any other method, `HEAD` included, is
+  `405` with `Allow: GET`), `403` with no identity and `500` on a failure, all with no body, and exactly .NET's four
+  headers on success (Go no longer sends `X-Content-Type-Options` or `Content-Length`). Python's
+  `lessons_html_response` takes `method=` and an identity or a resolver function.
+- **A binding check or screening that raises or panics** quarantines the record with the refusal `Unreadable` and the
+  exception's type only (Python `screening_exception_type`, Go `ScreeningRefusalError.ExceptionType` and
+  `ae.RefusalUnreadable`), as .NET's backstop does. In Go nil evidence IDs fail the binding check.
+- **The content guard's work is bounded**: linear matchers, and, as .NET's one-second match timeout, a run-content
+  text that cannot be read in time admits no link and a field that cannot be checked in time is refused (Go: one
+  second per text; Python: texts over 1,048,576 UTF-16 code units). It leaves U+0130 as it is, as .NET's invariant
+  lower-casing does. Go `ae.ModelTextLinksIn` now also returns whether the text was read in time (breaking). Go
+  screening removes each byte of invalid UTF-8, and the Go block writer writes a space for it, as .NET treats a lone
+  surrogate. The reflector's strict reading accepts numbers of any length in members it does not map.
 - **Where the ports differ from .NET:** a failure's cause type is the port's own type name; Python cannot refuse a
   function-invoking chat client, and Go only one that says so (give the reflector a client with no tools); a client
   that blocks Python's event loop cannot be timed out; Unicode tables differ by language, which can change the content
