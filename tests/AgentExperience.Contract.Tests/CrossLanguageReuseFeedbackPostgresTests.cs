@@ -16,7 +16,7 @@ namespace AgentExperience.Contract.Tests;
 /// <para>
 /// It needs all three toolchains (the .NET SDK, uv with the Python package's <c>postgres</c> extra synced, and Go), so it
 /// runs only when <c>AGENTEXPERIENCE_CROSS_LANGUAGE_REUSE_FEEDBACK=1</c> (CI's <c>cross-language-lifecycle</c> job sets it)
-/// and passes without doing anything otherwise. The Python writer is <c>python/tests/cross-language/reuse_feedback.py</c>
+/// and skips with <c>0</c> (see <see cref="CrossLanguageOptIn"/>: unset, it fails in CI). The Python writer is <c>python/tests/cross-language/reuse_feedback.py</c>
 /// and the Go writer <c>go/postgres/internal/reusefeedback</c>; each runs its own feedback service over its own
 /// PostgreSQL ledger and lifecycle store, with host-trusted evidence <c>Counted</c> so the lifecycle effects are visible.
 /// </para>
@@ -52,7 +52,7 @@ public sealed class CrossLanguageReuseFeedbackPostgresTests(ContractPostgresData
     [Fact]
     public async Task Feedback_from_dotnet_python_and_go_lands_as_the_same_rows_and_reads_the_same_everywhere()
     {
-        if (Environment.GetEnvironmentVariable(Variable) != "1")
+        if (!CrossLanguageOptIn.Enabled(Variable))
         {
             return;
         }
