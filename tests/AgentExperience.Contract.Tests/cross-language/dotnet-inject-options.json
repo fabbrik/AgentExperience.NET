@@ -174,7 +174,7 @@
             "duration": "00:00:04",
             "toolCalls": [
               {
-                "toolCallId": "000000e2-0000-4000-8000-000000001090",
+                "toolCallId": "000000e2-0000-4000-8000-0000000010a0",
                 "sequenceNumber": 0,
                 "toolName": "wait_for_lock",
                 "arguments": {},
@@ -184,7 +184,7 @@
                 "error": null
               },
               {
-                "toolCallId": "000000e2-0000-4000-8000-000000001091",
+                "toolCallId": "000000e2-0000-4000-8000-0000000010a1",
                 "sequenceNumber": 1,
                 "toolName": "retry_refund",
                 "arguments": {
@@ -606,7 +606,7 @@
             "duration": "00:00:03",
             "toolCalls": [
               {
-                "toolCallId": "000000e2-0000-4000-8000-000000001190",
+                "toolCallId": "000000e2-0000-4000-8000-0000000011a0",
                 "sequenceNumber": 0,
                 "toolName": "read_ledger",
                 "arguments": {},
@@ -904,7 +904,9 @@
           "useRunTools": false,
           "gatedRetrievalWindowMultiplier": 4
         },
-        "runTools": null
+        "runTools": null,
+        "hostDecisions": null,
+        "preferMeasuredHelpful": false
       },
       "expected": {
         "outcome": "Injected",
@@ -965,7 +967,9 @@
           "useRunTools": false,
           "gatedRetrievalWindowMultiplier": 4
         },
-        "runTools": null
+        "runTools": null,
+        "hostDecisions": null,
+        "preferMeasuredHelpful": false
       },
       "expected": {
         "outcome": "Injected",
