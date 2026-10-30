@@ -840,7 +840,7 @@ captured run was assigned to (see [Measuring another memory provider](injection.
   `(experience_id, signature_version, signature_key)` with a foreign key to `experience_records` (`ON DELETE CASCADE`).
   Each row carries the `tool_name`, the `error_class` (the class's first token, as a call's `[failed: …]` marker shows
   it), the `fingerprint` (32 lowercase hexadecimal characters: the first 16 bytes of the SHA-256 of the error's
-  normalized first line), `signature_key` (the three joined by U+001F; a check constraint holds them equal),
+  normalized excerpt: the first line, or the last one after a bare header), `signature_key` (the three joined by U+001F; a check constraint holds them equal),
   `resolved` (a later call in the same verified record succeeded after the failure's last occurrence),
   `signature_version` (`1`), and the record's six scope columns. **It holds no error text.** Check constraints bound
   the tool name to 1-256 characters and the class to 1-64, and the fingerprint's shape.

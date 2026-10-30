@@ -298,8 +298,9 @@ the six Go modules at one version.
 
 - **A failed tool call now has a failure signature**: `ExperienceFailureSignature` (Abstractions), its tool name, its
   error class (the token its `[failed: …]` marker shows) and a fingerprint, the first 16 bytes of the SHA-256 of the
-  error's normalized first line (GUIDs, hex runs, paths, quoted literals, ISO timestamps and numbers replaced by fixed
-  placeholders; `SignatureVersion = 1`). The same failure in a sibling run, with other paths, numbers and IDs, has the
+  error's normalized first line, or its last line after a bare header such as a Python traceback's (GUIDs, hex runs,
+  paths, quoted literals, ISO timestamps and numbers replaced by fixed placeholders, with ASCII-only rules so ports
+  match; `SignatureVersion = 1`). The same failure in a sibling run, with other paths, numbers and IDs, has the
   same signature. `ExperienceFailureSignatures.Of(record)` lists a record's, de-duplicated, each `Resolved` when a later
   call in the same verified record succeeded. Nothing new is captured: it is derived from `ToolName` and `Error`.
 - **A new optional port, `IExperienceSignatureSource`** (`FindBySignatureAsync`), finds reusable records by an exact

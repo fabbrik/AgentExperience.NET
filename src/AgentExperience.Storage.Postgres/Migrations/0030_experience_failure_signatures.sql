@@ -11,7 +11,7 @@
 -- agent_experience.experience_failure_signatures: one row per record, signature version and signature key.
 --   * signature_key is tool_name, error_class and fingerprint joined by U+001F, as ExperienceFailureSignature.Key
 --     writes it (a CHECK holds the two equal). fingerprint is 32 lowercase hexadecimal characters: the first 16 bytes
---     of the SHA-256 of the normalized first line of the error. error_class is the class's first token. resolved says
+--     of the SHA-256 of the error's normalized excerpt (its first line, or its last after a bare header). error_class is the class's first token. resolved says
 --     whether a later call in the same verified record succeeded after the failure's last occurrence.
 --   * signature_version is the derivation's version; a search matches only the version it is asked for, so a future
 --     rule is written beside this one, never over it.

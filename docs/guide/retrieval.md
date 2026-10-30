@@ -311,12 +311,17 @@ the first token of the call's error class, exactly what its `[failed: …]` mark
 error has no signature, and neither does one whose tool name is blank, longer than 256 characters or holds a control
 character.
 
-**Normalization** (`ExperienceFailureSignature.NormalizeExcerpt`, `SignatureVersion = 1`), in this order: the error is
-trimmed and its first line taken, trimmed, and cut to 500 characters; it is lowercased with the invariant culture;
+**Normalization** (`ExperienceFailureSignature.NormalizeExcerpt`, `SignatureVersion = 1`), with ASCII
+semantics throughout (only `A-Z` is lowercased, a word character is `[a-z0-9_]`, and any other character, non-ASCII
+included, is left as it is), so another runtime derives the same fingerprint. In this order: the error's first
+non-blank line is taken -- or its last non-blank line when the first is a bare header that names no failure, such as
+Python's `Traceback (most recent call last):`, .NET's `Unhandled exception.` or a lone `Error:` -- and lowercased;
 then GUIDs become `<guid>`; runs of 8 or more hexadecimal characters holding both a digit and a letter (or after `0x`)
 become `<hex>`; file paths, absolute or relative, POSIX or Windows, become `<path>` followed by the file name's
-extension (`<path>.py`); quoted literals (`'…'`, `"…"`) become `<str>`; ISO 8601 dates and timestamps become `<time>`;
-numbers become `<n>`; and whitespace collapses to single spaces. So the same failure in two runs, with different
+extension (`<path>.py`); quoted literals (`'…'`, `"…"`) become `<str>`, where a quote opens after no word character
+and closes before none, so the apostrophe in `can't` is not a quote; ISO 8601 dates and timestamps become `<time>`;
+numbers become `<n>`; whitespace collapses to single spaces; and only then is the result cut to 500 characters. The
+unit tests hold golden vectors (input, excerpt, fingerprint) a port can check itself against. So the same failure in two runs, with different
 temporary directories, ports, line numbers, IDs and names in quotes, has the same fingerprint, while different failures
 keep different ones. What is not normalized stays in the fingerprint: a package name, a container name, an unquoted
 identifier. The error class keeps apart what the excerpt alone would merge (`exit 1` and `exit 2`).

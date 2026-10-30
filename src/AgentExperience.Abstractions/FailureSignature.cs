@@ -33,7 +33,7 @@ namespace AgentExperience.Abstractions;
 /// rule is a new version, never a silent change in what matches.
 /// </para>
 /// <para>
-/// A signature holds no error text: only the class and a one-way fingerprint of a normalized first line. Whoever knows
+/// A signature holds no error text: only the class and a one-way fingerprint of a normalized line. Whoever knows
 /// a candidate message can still test whether a record holds it, as with any unsalted hash.
 /// </para>
 /// </remarks>
