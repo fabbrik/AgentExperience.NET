@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.17, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.17 (and so every 1.0 to 1.16 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.18, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.18 (and so every 1.0 to 1.17 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -844,7 +844,8 @@ which shares lessons with .NET agents on the same database.
 - **The error class.** `error_class` reduces a captured error to its short class.
 - **PostgreSQL** (the `postgres` extra, psycopg 3). `PostgresExperienceStore` writes a finalized record and its
   initial event as the application role, reads records back, runs the contract's text search, records injections
-  (`record_injection`, contract 1.4), and commits lifecycle events (`sql/lifecycle.sql`, contract 1.16);
+  (`record_injection`, contract 1.4), and commits lifecycle events (`sql/lifecycle.sql`, contract 1.16, with `sql/lifecycle-1.18.sql`'s supersession lock,
+  which locks only rows of the request's scope);
   `PostgresExperienceReuseFeedbackStore` is the reuse-feedback ledger (`sql/reuse-feedback.sql`, contract 1.17). It ships the contract's SQL files and runs them as written. `rank` applies the
   contract's safety checks, truncation, eligibility and ranking to the rows the search returns, under the retrieval
   policy (contract 1.12) when one is given. The store needs a schema the .NET
@@ -973,7 +974,7 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.17: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.18: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and every
 injection option that needs no session (the receiving agent's gate, the model-authored policy, the request resolver
 and the host's decision),

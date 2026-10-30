@@ -53,7 +53,7 @@ internal static class LifecycleSqlContract
         ("select-evidence", Store<string>("SelectEvidenceSql")),
         ("insert-event", Store<string>("InsertEventSql")),
         ("select-event", Store<string>("SelectEventSql")),
-        ("lock-supersession-rows", Store<string>("LockSupersessionRowsSql")),
+        ("lock-supersession-rows", LockSupersessionRows116),
         ("check-supersession", Store<string>("SupersessionCheckSql").Trim()),
         ("update-projection", Store<string>("UpdateProjectionSql")),
         ("update-projection-with-confidence", Store<string>("UpdateProjectionWithConfidenceSql")),
@@ -62,6 +62,35 @@ internal static class LifecycleSqlContract
         ("lock-revision-and-status", Store<string>("LockRevisionAndStatusSql")),
         ("read-history", Store<string>("HistorySql")),
     ];
+
+    /// <summary>
+    /// Contract 1.16's supersession lock, frozen as published: it names no scope, so it can lock another tenant's row. The
+    /// .NET store has since run <see cref="ScopedFile"/>'s <c>lock-supersession-rows-scoped</c> (contract 1.18), and a
+    /// port runs that one instead; this text stays only because a published file never changes.
+    /// </summary>
+    private const string LockSupersessionRows116 =
+        $"SELECT experience_id FROM {ExperienceRecordSql.Table} WHERE experience_id = ANY(@lock_ids) ORDER BY experience_id FOR UPDATE";
+
+    // ---- sql/lifecycle-1.18.sql -----------------------------------------------------------------------------------
+
+    /// <summary>Contract 1.18's file: the scoped supersession lock that replaces 1.16's <c>lock-supersession-rows</c>.</summary>
+    public const string ScopedFile = "sql/lifecycle-1.18.sql";
+
+    private const string ScopedHeader = """
+        -- contract 1.18: the supersession lock scoped to the request, exactly as the .NET PostgreSQL store
+        -- (PostgresExperienceRecordStore) runs it, generated from its source and checked against it on every build. In
+        -- lifecycle.sql's COMMIT step 3, run "lock-supersession-rows-scoped" in place of 1.16's "lock-supersession-rows",
+        -- with the same @lock_ids (the record and the replacement, a uuid[]) and the request scope (@tenant_id ...
+        -- @user_id, NULL for an unset optional field). It locks only the rows of the request scope: a replacement in
+        -- another scope is not locked, and "check-supersession" then reads it as not found, exactly as before
+        -- (ReplacementNotAllowed). Every other statement of lifecycle.sql is unchanged.
+        """;
+
+    /// <summary>The whole of <c>sql/lifecycle-1.18.sql</c>.</summary>
+    public static string RenderScoped() =>
+        ScopedHeader.Replace("\r\n", "\n", StringComparison.Ordinal) + "\n" +
+        "-- statement: lock-supersession-rows-scoped\n" +
+        Store<string>("LockSupersessionRowsSql").Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd() + "\n";
 
     /// <summary>
     /// The one statement that is not the .NET store's: a port holds no key store, so it cannot write a sealed record's

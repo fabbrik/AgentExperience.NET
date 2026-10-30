@@ -327,6 +327,28 @@ take part in the holdout through contract 1.8 (add-only). Every new option is of
 changes are additions. The same tag releases the six NuGet packages, the Python distribution `agenticexperience` and
 the six Go modules at one version.
 
+### A scoped supersession lock and ranking to the bit: contract 1.18 (story 28.1)
+
+- **A supersession locks only rows in the caller's scope.** The PostgreSQL store locked the record and its proposed
+  replacement by ID alone, so with row-level security off a caller naming another tenant's record ID as the
+  replacement held a row lock on that tenant's record for its transaction: no read or write, but a way to make another
+  tenant's writes wait and to time them. The lock now carries the same exact-scope predicate as every other lifecycle
+  statement. The outcome is unchanged (a replacement in another scope is `ReplacementNotAllowed`, as one that does not
+  exist), and a test proves a supersession naming a row another transaction holds no longer waits for it.
+- **Contract 1.18** ([what it adds](contract/README-1.18.md)), add-only: `sql/lifecycle-1.18.sql`, the scoped lock
+  (`lock-supersession-rows-scoped`), which ports run in place of 1.16's `lock-supersession-rows`; and
+  `retrieval-policy/ranking-near-tie`, two pairs of records whose scores differ by one ulp, ranked against their
+  experience-ID tie-break, so a port whose arithmetic differs from .NET's in the last bit orders them differently
+  and fails. Every 1.0-1.17 file is unchanged.
+- **The Python and Go ports run the scoped lock**, with PostgreSQL tests. **Go's decay now agrees with .NET's on the
+  fixture**: its `math.Pow` was 2 ulps off on the new fixture's input (about 30% of inputs are off by an ulp or more),
+  which tied two records .NET orders, so the Go port computes `2^x` with its own correctly rounded double-double
+  `exp2`, which agrees with .NET's C-library `pow` except on rare inputs where that `pow` misrounds (about 1 in 1,500
+  measured on glibc); and it rounds each ranking component's product before adding it, so the compiler cannot fuse the
+  two (an FMA, which Go does on arm64). Python, which calls the platform's `pow` as .NET does, already matched. Only
+  the fixture's inputs are pinned: near-tied records whose recency or decay factor falls on a misrounded input may
+  still be ordered differently across runtimes.
+
 ### The failure signature (story 28.2)
 
 - **A failed tool call now has a failure signature**: `ExperienceFailureSignature` (Abstractions), its tool name, its

@@ -203,6 +203,7 @@ QUERY_HOLDOUT_OUTCOMES_SQL = "query-holdout-outcomes.sql"
 RECORD_PROVIDER_HOLDOUT_SQL = "record-provider-holdout-assignment.sql"
 QUERY_PROVIDER_HOLDOUT_OUTCOMES_SQL = "query-provider-holdout-outcomes.sql"
 LIFECYCLE_SQL = "lifecycle.sql"
+LIFECYCLE_SCOPED_LOCK_SQL = "lifecycle-1.18.sql"
 REUSE_FEEDBACK_SQL = "reuse-feedback.sql"
 
 _UNIQUE_VIOLATION = "23505"
@@ -294,9 +295,9 @@ class PostgresExperienceStore:
         self._lessons_statements = {
             key: to_driver_placeholders(text) for key, text in contract_statements(LIST_LESSONS_SQL).items()
         }
-        self._lifecycle = {
-            key: to_driver_placeholders(text) for key, text in contract_statements(LIFECYCLE_SQL).items()
-        }
+        # Contract 1.18: lifecycle-1.18.sql's scoped supersession lock runs in place of lifecycle.sql's unscoped one.
+        lifecycle = contract_statements(LIFECYCLE_SQL) | contract_statements(LIFECYCLE_SCOPED_LOCK_SQL)
+        self._lifecycle = {key: to_driver_placeholders(text) for key, text in lifecycle.items()}
         self._clock = clock
 
     @contextmanager
@@ -1124,7 +1125,12 @@ class _Commit:
 
             replacement = event.replacement_experience_id
             if replacement is not None:
-                self._execute("lock-supersession-rows", {"lock_ids": [event.experience_record_id, replacement]})
+                # Contract 1.18: only the rows of the request scope are locked, so a replacement naming another
+                # tenant's record takes no lock on it (check-supersession then reads it as not found).
+                self._execute(
+                    "lock-supersession-rows-scoped",
+                    {"lock_ids": [event.experience_record_id, replacement], **self._scope_parameters},
+                )
                 check = self._fetch(
                     "check-supersession",
                     {

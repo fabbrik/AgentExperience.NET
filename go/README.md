@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.17, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.17 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15 and 1.16 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.18, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.18 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16 and 1.17 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -727,6 +727,12 @@ err := maf.UseAgentExperience(&config, maf.Options{
   refuses (a timeout over a day, a candidate limit over 199, a confidence outside 0 to 1 or NaN, a blank domain key or
   domain, a zero or negative half-life in `HalfLives` or `DefaultHalfLife`), is refused, naming the .NET option. The
   zero `RetrievalPolicy` is .NET's `RetrievalPolicy.Default`, and ranks exactly as before 1.12.
+- **Scores to the bit.** Recency and decay are `2^(-age / halfLife)` computed by the port's own correctly rounded
+  double-double `exp2` (Go's `math.Pow` is off by an ulp or more on about 30% of inputs), which agrees with .NET's
+  C-library `Math.Pow` except on rare inputs where that `pow` misrounds (about 1 in 1,500 measured on glibc). Each
+  component's value times its weight is rounded before it is added, never fused into the sum. Contract 1.18's
+  `retrieval-policy/ranking-near-tie` pins two near ties; two records whose scores differ in the last bit through a
+  misrounded `pow` input may still rank differently from .NET.
 - **Decay never excludes.** It only reorders: the confidence floor is the search's, on stored confidence. In the
   verbose block the `Confidence:` line shows the stored value and the applicability line the decayed one, as .NET's.
 - **Timing out.** Past `Timeout` the invocation gets no block, its inject outcome is `RetrievalTimedOut` (retrieve:
@@ -902,7 +908,8 @@ Python agents on the same database.
   role, reads records back, runs the contract's text search, records injections (`RecordInjection`, contract
   1.4) and holdout assignments (`RecordHoldoutAssignment`, contract 1.8), writes and searches embeddings (`WriteEmbedding` and `SearchVectors`, contract 1.6) and reads the lessons view's
   page (`ListLessonRecords`, contract 1.7) and the holdout's outcome rows (`QueryHoldoutOutcomes`, contract 1.9),
-  commits lifecycle events and reads their history (contract 1.16), and records reuse feedback (contract 1.17), every transaction first declaring its bounds. The contract's statement files are embedded and run as
+  commits lifecycle events and reads their history (contract 1.16; a supersession locks only rows of the request's
+  scope, `sql/lifecycle-1.18.sql`), and records reuse feedback (contract 1.17), every transaction first declaring its bounds. The contract's statement files are embedded and run as
   written (a test keeps the copies in `postgres/sql/` identical to `contract/sql/`); only their `@name` placeholders are
   numbered for the driver. The store needs a schema the .NET migrator applied, with row-level security on; it never
   creates or alters a schema object. The application role's privileges are the .NET privileges call's, or the
@@ -991,7 +998,7 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.17: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.18: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and the injection
 options (the receiving agent, the model-authored policy, the request resolver and the injection decision),
 injection recording, the lessons view and its HTML page, exporting measured lessons, the model-backed reflector and its
@@ -1031,7 +1038,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.17 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.18 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The

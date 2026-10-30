@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	ae "github.com/fabbrik/AgentExperience.NET/go"
 	ct "github.com/fabbrik/AgentExperience.NET/go/internal/contracttest"
@@ -270,5 +272,147 @@ func TestACommitCancelledWhileItWaitsWritesNothing(t *testing.T) {
 		countRows(t, owner, "agent_experience.lifecycle_events", record.ExperienceID) != 0 ||
 		countRows(t, owner, "agent_experience.confidence_evidence", record.ExperienceID) != 0 {
 		t.Fatalf("revision %d supporting %d", revision, supporting)
+	}
+}
+
+// Contract 1.18's scoped supersession lock. Tenant B's store runs as the table owner, whom row-level security does not
+// filter, so only the statement's own scope predicate keeps it off tenant A's row. Another transaction holds A's row
+// FOR UPDATE throughout, and B's connections give up on any lock they would wait for (lock_timeout): a lock on A's row
+// would fail with 55P03 instead of answering. No clock is read and nothing sleeps.
+func TestASupersessionNamingAnotherTenantsRecordTakesNoLockOnIt(t *testing.T) {
+	admin := requireServer(t)
+	ctx := context.Background()
+	database := createDatabase(t, admin, "lifecycle_scoped_lock")
+	victim := seededRecord(t, newStore(t, admin, database))
+
+	storeB := impatientStore(t, admin.Owner(database), "10000")
+	recordB := victim
+	recordB.ExperienceID = ae.UUID{0: 0x72, 6: 0x40, 8: 0x80, 15: 1}
+	recordB.SourceRunID = ae.UUID{0: 0x72, 6: 0x40, 8: 0x80, 15: 2}
+	recordB.Scope.TenantID = "other-tenant"
+	if err := storeB.InsertRecord(ctx, ae.BoundsOf(recordB.Scope), &recordB); err != nil {
+		t.Fatal(err)
+	}
+
+	owner := ownerConn(t, admin, database)
+	holder, err := owner.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(context.Background()) }()
+	var locked [16]byte
+	if err := holder.QueryRow(ctx, "SELECT experience_id FROM agent_experience.experience_records "+
+		"WHERE experience_id = $1 FOR UPDATE", [16]byte(victim.ExperienceID)).Scan(&locked); err != nil ||
+		ae.UUID(locked) != victim.ExperienceID {
+		t.Fatalf("%v %v", locked, err)
+	}
+
+	prior := recordB.Status
+	replacement := victim.ExperienceID
+	result, err := storeB.CommitLifecycleEvent(ctx, ae.AuthorizationContext{PrincipalID: "tenant-b",
+		Bounds: ae.BoundsOf(recordB.Scope)}, recordB.Scope, ae.LifecycleEvent{
+		EventID: ae.UUID{0: 0x72, 6: 0x40, 8: 0x80, 15: 3}, ExperienceRecordID: recordB.ExperienceID,
+		PriorStatus: &prior, CurrentStatus: ae.StatusSuperseded, Reason: "superseded by another tenant's record",
+		Producer: "scoped-lock/1.0", OccurredAt: recordB.CreatedAt, ExpectedRevision: recordB.Revision,
+		ReplacementExperienceID: &replacement})
+	// The outcome is unchanged: another tenant's record reads as not found, and nothing is written.
+	if err != nil || result.Outcome != ae.StoreReplacementNotAllowed || result.CurrentStatus != nil {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if countRows(t, owner, "agent_experience.lifecycle_events", recordB.ExperienceID) != 0 {
+		t.Fatal("an event was written")
+	}
+}
+
+// impatientStore is a store on connString whose connections give up on any lock they wait for longer than timeout
+// milliseconds (lock_timeout, SQLSTATE 55P03).
+func impatientStore(t *testing.T, connString string, timeout string) *postgres.Store {
+	t.Helper()
+	config, err := pgxpool.ParseConfig(connString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ConnConfig.RuntimeParams["lock_timeout"] = timeout
+	pool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	store, err := postgres.NewStore(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+// The other side of contract 1.18's scoped lock: it still locks the caller's own replacement, whether the scope's
+// optional fields are set or NULL (IS NOT DISTINCT FROM). The holder takes FOR NO KEY UPDATE, which conflicts with the
+// supersession lock's FOR UPDATE but not with a foreign key's key-share lock, so only that lock can wait on it;
+// lock_timeout ends the wait with 55P03. Nothing sleeps and no duration is asserted.
+func TestHoldingTheInScopeReplacementsRowMakesTheSupersessionWait(t *testing.T) {
+	admin := requireServer(t)
+	for _, optionalFieldsSet := range []bool{false, true} {
+		name := "null-optional-scope"
+		if optionalFieldsSet {
+			name = "full-scope"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			database := createDatabase(t, admin, "lifecycle_scoped_lock_waits")
+			store := newStore(t, admin, database)
+			seeded := seededRecord(t, store)
+			scope := seeded.Scope
+			scope.TenantID = "scoped-lock-tenant"
+			scope.TeamID, scope.AgentID, scope.UserID = nil, nil, nil
+			if optionalFieldsSet {
+				team, agent, user := "team-1", "agent-1", "user-1"
+				scope.TeamID, scope.AgentID, scope.UserID = &team, &agent, &user
+			}
+			records := make([]ae.ExperienceRecord, 2)
+			for i := range records {
+				records[i] = seeded
+				records[i].ExperienceID = ae.UUID{0: 0x73, 6: 0x40, 8: 0x80, 15: byte(1 + i)}
+				records[i].SourceRunID = ae.UUID{0: 0x73, 6: 0x40, 8: 0x80, 15: byte(0x11 + i)}
+				records[i].Scope = scope
+				if err := store.InsertRecord(ctx, ae.BoundsOf(scope), &records[i]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			record, replacement := records[0], records[1]
+
+			owner := ownerConn(t, admin, database)
+			holder, err := owner.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = holder.Rollback(context.Background()) }()
+			if _, err := holder.Exec(ctx, "SELECT experience_id FROM agent_experience.experience_records "+
+				"WHERE experience_id = $1 FOR NO KEY UPDATE", [16]byte(replacement.ExperienceID)); err != nil {
+				t.Fatal(err)
+			}
+
+			impatient := impatientStore(t, admin.ConnString(database, applicationRole, rolePassword), "500")
+			prior := record.Status
+			replacementID := replacement.ExperienceID
+			result, err := impatient.CommitLifecycleEvent(ctx, ae.AuthorizationContext{PrincipalID: "scoped",
+				Bounds: ae.BoundsOf(scope)}, scope, ae.LifecycleEvent{
+				EventID: ae.UUID{0: 0x73, 6: 0x40, 8: 0x80, 15: 0x20}, ExperienceRecordID: record.ExperienceID,
+				PriorStatus: &prior, CurrentStatus: ae.StatusSuperseded, Reason: "superseded",
+				Producer: "scoped-lock/1.0", OccurredAt: record.CreatedAt, ExpectedRevision: record.Revision,
+				ReplacementExperienceID: &replacementID})
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+				t.Fatalf("the supersession did not wait on the held replacement: %+v %v", result, err)
+			}
+			if err := holder.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if countRows(t, owner, "agent_experience.lifecycle_events", record.ExperienceID) != 0 {
+				t.Fatal("an event was written")
+			}
+		})
 	}
 }

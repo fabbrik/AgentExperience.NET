@@ -160,8 +160,10 @@ type RankingComponent struct {
 	UndecayedValue *float64
 }
 
-// Contribution is the component's value times its weight.
-func (c RankingComponent) Contribution() float64 { return c.Value * c.Weight }
+// Contribution is the component's value times its weight, rounded to a float64. The explicit conversion keeps the
+// compiler from fusing the product into a sum it is added to (an FMA, which Go allows on arm64 and others): ranking
+// adds each contribution as .NET does, product rounded first (contract 1.18's ranking-near-tie).
+func (c RankingComponent) Contribution() float64 { return float64(c.Value * c.Weight) }
 
 // RankedRecord is a record as retrieval ranked it: its score and the components it was computed from.
 type RankedRecord struct {

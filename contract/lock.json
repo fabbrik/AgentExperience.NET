@@ -1,5 +1,5 @@
 {
-  "contractVersion": "1.17",
+  "contractVersion": "1.18",
   "files": {
     "README-1.1.md": "eb7c3a0ec370ec5370aae110a57701d1818d70348f9eef1d88e73442b05398aa",
     "README-1.10.md": "6192567b6e5a519a35efe1e3308b1f2a08415e14a12926bff80ef75e46dabced",
@@ -10,6 +10,7 @@
     "README-1.15.md": "2d304f3ef277dd43d9c3a6dd34e499c0c91cce06ddfc275c92d81a9089f2da56",
     "README-1.16.md": "1c1853010e66c72b6fcaeacdb42d86b188d0eb673b34a371508e5c6ff03224d9",
     "README-1.17.md": "9182fd79a719c3d24490cd41b462d5fcdd65ca83538e0d2b2b26c21f34535863",
+    "README-1.18.md": "a42e6c9a9b0e2c715ccceec0d4b86773be68aae5c1dbaa420dc1529ce9ad1902",
     "README-1.2.md": "71948ff812426e85ebe3cc849025db6b8e6a959eb34fd8e10bd4757ea4065d94",
     "README-1.3.md": "b63d0342726eca79d2c321b1dda1115c3f8d7de5bf94228f459dbc8c3372b8e3",
     "README-1.4.md": "6e0281d621ea903718126c6d6f6b00c565a459063e7f70d902fb054375200a75",
@@ -1302,6 +1303,9 @@
     "fixtures/retrieval-policy/model-authored-excluded/expected.json": "c2fecfc926e5dc4331c63923618ea057f5b7dde98133762a5704c39be1e233f9",
     "fixtures/retrieval-policy/model-authored-excluded/policy.json": "24c8f3779950d08d4ec269ddce28ce27aa9a541f0930529048e0f3a26ed1a043",
     "fixtures/retrieval-policy/policy-validation.json": "6e406d2e7f9bfbbf9071d1b51e9725a5509f495bf62f55e3d7bca03938768db8",
+    "fixtures/retrieval-policy/ranking-near-tie/candidates.json": "4c6caf8a95126644dac4b460ba239521bac48f99c40abfa2c2229d1dffe39f03",
+    "fixtures/retrieval-policy/ranking-near-tie/expected.json": "73521589c35e8c20568b418dfe6e3f5a30c233496f075e5b17fdeaf48d009b22",
+    "fixtures/retrieval-policy/ranking-near-tie/policy.json": "7e34752ff44de6792c449f7ca9e070d527a00713c8bb5c61d47a2b8bc57ba0a7",
     "fixtures/retrieval-policy/recency-half-life/candidates.json": "ba38c7922b2c370a7ecdfe84a246ef3069e0eb98deb8f3de3b10f60256bd11fc",
     "fixtures/retrieval-policy/recency-half-life/expected.json": "9ed3416496b9db37ded0baecaca9b6962420f0ec8a93b14d6da8cfd17ad746e1",
     "fixtures/retrieval-policy/recency-half-life/policy.json": "7c6b189597f182e67ea4704bafa7edb9d478dfbc1b2cd393b53c7378da3455c5",
@@ -1434,6 +1438,7 @@
     "sql/application-role-privileges-1.8.sql": "5ffd2a33b2e87d580e523d79ba36bb007446930e8fbd6124b6fca08dde092508",
     "sql/application-role-privileges.sql": "d6ba9aa62c4eae99f07be06afb1909002ba961796c53bfc94906352745eae789",
     "sql/declare-bounds.sql": "dfcbfa701cdbf18e2da9ab04bf8cd91cb143116bafd8d4f9c3f534ef90e1a2b7",
+    "sql/lifecycle-1.18.sql": "d89d962bb7c44f84fb3861ce5c6799053faef9f2b5819abe89d472d190d10296",
     "sql/lifecycle.sql": "a480263981ad46a3c98154420e728f1e994b345ea947df816dad8f841e9fdafe",
     "sql/list-experience-lessons.sql": "8bd01c5c24262c257a71c08374730a803a831cca6090acd0cebb06554633fdc7",
     "sql/query-holdout-outcomes.sql": "7c881fbe1a1f302de79e6786ef18289396ddeeaa372c615af401030f41cca270",

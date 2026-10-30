@@ -78,6 +78,7 @@ public sealed partial class ContractFixtureTests
     {
         var drift = new List<string>();
         ContractFiles.Verify(LifecycleSqlContract.File, LifecycleSqlContract.Render(), drift);
+        ContractFiles.Verify(LifecycleSqlContract.ScopedFile, LifecycleSqlContract.RenderScoped(), drift);
         Relock(drift);
         ContractFiles.AssertNoDrift(drift);
     }

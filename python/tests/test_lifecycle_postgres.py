@@ -241,6 +241,91 @@ def test_writers_racing_at_one_revision_on_separate_connections_commit_exactly_o
     ]
 
 
+def test_a_supersession_naming_another_tenants_record_takes_no_lock_on_it(pg_server: Server) -> None:
+    """
+    Contract 1.18's scoped supersession lock. The store runs as the table owner, whom row-level security does not
+    filter, so only the statement's own scope predicate keeps it off tenant A's row. Tenant A's row is held FOR UPDATE
+    by another transaction throughout; tenant B's store gives up on any lock it would wait for (lock_timeout), so a lock
+    on A's row would fail with 55P03 instead of answering. No clock is read and nothing sleeps.
+    """
+    _, victim, _, owner = _seeded(pg_server, "lifecycle_scoped_lock")
+    scope_b = replace(victim.scope, tenant_id="other-tenant")
+    record_b = replace(victim, experience_id=uuid.UUID(int=0x7200), source_run_id=uuid.UUID(int=0x7201), scope=scope_b)
+    PostgresExperienceStore(owner).insert_record(AuthorizationBounds.of(scope_b), record_b)
+    authorization_b = AuthorizationContext("tenant-b", AuthorizationBounds.of(scope_b))
+    store_b = PostgresExperienceStore(owner + " options='-c lock_timeout=10000'")
+    event = LifecycleEvent(
+        event_id=uuid.UUID(int=0x7202),
+        experience_record_id=record_b.experience_id,
+        prior_status=record_b.status,
+        current_status="Superseded",
+        reason="superseded by another tenant's record",
+        producer="scoped-lock/1.0",
+        occurred_at=Instant.parse("2026-03-02T09:00:00+00:00"),
+        expected_revision=record_b.revision,
+        replacement_experience_id=victim.experience_id,
+    )
+    with psycopg.connect(owner) as holder, holder.transaction():
+        locked = holder.execute(
+            "SELECT experience_id FROM agent_experience.experience_records WHERE experience_id = %s FOR UPDATE",
+            (victim.experience_id,),
+        ).fetchone()
+        assert locked == (victim.experience_id,)
+        result = store_b.commit_lifecycle_event(authorization_b, scope_b, event)
+    # The outcome is unchanged: another tenant's record reads as not found, and nothing is written.
+    assert (result.outcome, result.current_status) == ("ReplacementNotAllowed", None)
+    assert _rows(owner, "lifecycle_events", ["event_id"], "event_id") == []
+
+
+@pytest.mark.parametrize("optional_fields_set", [False, True], ids=["null-optional-scope", "full-scope"])
+def test_holding_the_in_scope_replacements_row_makes_the_supersession_wait(
+    pg_server: Server, optional_fields_set: bool
+) -> None:
+    """
+    The other side of contract 1.18's scoped lock: it still locks the caller's own replacement, whether the scope's
+    optional fields are set or NULL (IS NOT DISTINCT FROM). The holder takes FOR NO KEY UPDATE, which conflicts with the
+    supersession lock's FOR UPDATE but not with a foreign key's key-share lock, so only that lock can wait on it;
+    lock_timeout ends the wait with 55P03. Nothing sleeps and no duration is asserted.
+    """
+    conninfo, seeded, _, owner = _seeded(pg_server, "lifecycle_scoped_lock_waits")
+    scope = replace(
+        seeded.scope,
+        tenant_id="scoped-lock-tenant",
+        team_id="team-1" if optional_fields_set else None,
+        agent_id="agent-1" if optional_fields_set else None,
+        user_id="user-1" if optional_fields_set else None,
+    )
+    record, replacement = (
+        replace(seeded, experience_id=uuid.UUID(int=0x7300 + n), source_run_id=uuid.UUID(int=0x7310 + n), scope=scope)
+        for n in (1, 2)
+    )
+    store = PostgresExperienceStore(conninfo)
+    for each in (record, replacement):
+        store.insert_record(AuthorizationBounds.of(scope), each)
+    event = LifecycleEvent(
+        event_id=uuid.UUID(int=0x7320),
+        experience_record_id=record.experience_id,
+        prior_status=record.status,
+        current_status="Superseded",
+        reason="superseded",
+        producer="scoped-lock/1.0",
+        occurred_at=Instant.parse("2026-03-02T09:00:00+00:00"),
+        expected_revision=record.revision,
+        replacement_experience_id=replacement.experience_id,
+    )
+    impatient = PostgresExperienceStore(conninfo + " options='-c lock_timeout=500'")
+    with psycopg.connect(owner) as holder, holder.transaction():
+        holder.execute(
+            "SELECT experience_id FROM agent_experience.experience_records WHERE experience_id = %s FOR NO KEY UPDATE",
+            (replacement.experience_id,),
+        )
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            impatient.commit_lifecycle_event(
+                AuthorizationContext("scoped", AuthorizationBounds.of(scope)), scope, event
+            )
+    assert _rows(owner, "lifecycle_events", ["event_id"], "event_id") == []
+
+
 def test_a_sealed_record_is_not_found_for_commit_history_and_read(pg_server: Server) -> None:
     conninfo, record, authorization, owner = _seeded(pg_server, "lifecycle_sealed")
     # A sealed row as the .NET sealing writes one (payload_version 2, opaque payload), inserted as the owner.

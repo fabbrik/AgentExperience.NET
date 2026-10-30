@@ -1,5 +1,5 @@
 """
-AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.17.
+AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.18.
 
 Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical Reference
 block, derives the task text, classifies errors, and (with the ``postgres`` extra) writes records to and searches them
@@ -227,9 +227,9 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.17"
-"""The contract version this package passes: every fixture of contract 1.17, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
-1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15 and 1.16 fixture."""
+CONTRACT_VERSION = "1.18"
+"""The contract version this package passes: every fixture of contract 1.18, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16 and 1.17 fixture."""
 
 SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.0",
@@ -250,6 +250,7 @@ SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.15",
     "1.16",
     "1.17",
+    "1.18",
 )
 """Every contract version whose fixtures this package passes."""
 

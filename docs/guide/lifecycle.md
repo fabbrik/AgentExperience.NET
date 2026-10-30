@@ -119,7 +119,10 @@ exactly as for the store's other operations, and the scope predicate is applied 
   unstorable however the write arrives. Which replacements are *acceptable* stays Core's decision; the store answers
   the parts only a scoped query can (see below) and persists what Core decided.
 - **The supersession gate is inside the commit.** An event carrying `ReplacementExperienceId` is checked *within the
-  commit transaction*, after both record rows are locked `FOR UPDATE` in a deterministic order: the replacement must
+  commit transaction*, after both record rows are locked `FOR UPDATE` in a deterministic order (only rows in the
+  caller's exact scope: a replacement ID naming another tenant's or another scope's record takes no lock on it, so a
+  supersession can neither hold nor wait on a row outside its scope, with or without row-level security; contract
+  1.18's `sql/lifecycle-1.18.sql`, which the Python and Go ports run too): the replacement must
   exist in exactly this scope, be eligible for reuse, and not already sit on a chain of `replacement_experience_id`
   links leading back to the record. Otherwise the commit is `ReplacementNotAllowed`, carrying the replacement's
   stored status, and nothing is written. Checking it anywhere else would not hold: two supersessions naming each

@@ -63,7 +63,7 @@ const (
 //go:embed sql/write-experience-embedding.sql sql/search-experience-vector.sql sql/list-experience-lessons.sql
 //go:embed sql/record-holdout-assignment.sql sql/query-holdout-outcomes.sql
 //go:embed sql/record-provider-holdout-assignment.sql sql/query-provider-holdout-outcomes.sql
-//go:embed sql/lifecycle.sql sql/reuse-feedback.sql
+//go:embed sql/lifecycle.sql sql/reuse-feedback.sql sql/lifecycle-1.18.sql
 var contractFiles embed.FS
 
 // ContractSQL is one of the contract's SQL files, as this package embeds it (DeclareBoundsSQL, SearchSQL,
