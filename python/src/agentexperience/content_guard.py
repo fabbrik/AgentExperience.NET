@@ -19,9 +19,10 @@ guide's "Limits of model-authored lessons").
 
 from __future__ import annotations
 
+import functools
 import re
 import unicodedata
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 from ._text import is_whitespace, visible
@@ -85,26 +86,40 @@ def lower_invariant(units: str) -> str:
     return "".join(out)
 
 
-def _class(predicate: Callable[[int], bool]) -> str:
-    """The body of a regular-expression class of every BMP code point (no surrogate) ``predicate`` admits."""
-    ranges: list[str] = []
-    start = -1
+@functools.cache
+def _classes() -> tuple[str, str, str, str, str]:
+    """The bodies of the regular-expression classes .NET's patterns use, over the BMP code points (no surrogate):
+    letters, numbers, marks, decimal digits and white space. Built once, on first use."""
+    kinds = {
+        "L": ("Lu", "Ll", "Lt", "Lm", "Lo"),
+        "N": ("Nd", "Nl", "No"),
+        "M": ("Mn", "Mc", "Me"),
+        "D": ("Nd",),
+    }
+    ranges: dict[str, list[str]] = {key: [] for key in (*kinds, "S")}
+    starts: dict[str, int] = {key: -1 for key in ranges}
     for code in range(0x10001):
-        inside = code <= 0xFFFF and not 0xD800 <= code <= 0xDFFF and predicate(code)
-        if inside and start < 0:
-            start = code
-        elif not inside and start >= 0:
-            end = code - 1
-            ranges.append(f"\\u{start:04x}" if start == end else f"\\u{start:04x}-\\u{end:04x}")
-            start = -1
-    return "".join(ranges)
-
-
-_L = _class(lambda code: unicodedata.category(chr(code)) in ("Lu", "Ll", "Lt", "Lm", "Lo"))
-_N = _class(lambda code: unicodedata.category(chr(code)) in ("Nd", "Nl", "No"))
-_M = _class(lambda code: unicodedata.category(chr(code)) in ("Mn", "Mc", "Me"))
-_D = _class(lambda code: unicodedata.category(chr(code)) == "Nd")
-_S = _class(lambda code: is_whitespace(chr(code)))
+        inside_any = code <= 0xFFFF and not 0xD800 <= code <= 0xDFFF
+        category = unicodedata.category(chr(code)) if inside_any else ""
+        for key in ranges:
+            if key == "S":
+                inside = inside_any and is_whitespace(chr(code))
+            else:
+                inside = inside_any and category in kinds[key]
+            start = starts[key]
+            if inside and start < 0:
+                starts[key] = code
+            elif not inside and start >= 0:
+                end = code - 1
+                ranges[key].append(f"\\u{start:04x}" if start == end else f"\\u{start:04x}-\\u{end:04x}")
+                starts[key] = -1
+    return (
+        "".join(ranges["L"]),
+        "".join(ranges["N"]),
+        "".join(ranges["M"]),
+        "".join(ranges["D"]),
+        "".join(ranges["S"]),
+    )
 
 
 # ---- The patterns (ModelTextPatterns.Shared.cs) ------------------------------------------------------------------
@@ -127,22 +142,6 @@ _COUNTRY_TLDS = (
 TLDS: frozenset[str] = frozenset(_GENERIC_TLDS + [tld for tld in _COUNTRY_TLDS if tld != "mm"])
 """The top-level domains a hostname may end in, besides an ``xn--`` label and a non-ASCII one."""
 
-_URL = re.compile(rf"(?<![{_L}{_N}])[a-z][a-z0-9+.\-]*://[^{_S}<>\"'`]+|(?<![{_L}{_N}{_M}_\-.])www\.[^{_S}<>\"'`]+")
-# .NET's labels are atomic groups; a label is always followed by a dot or by a character outside its class, so a
-# greedy label matches exactly what the atomic one does.
-_DOTTED_TOKEN = re.compile(rf"(?<![{_L}{_N}{_M}\-])[{_L}{_N}{_M}\-]+(?:\.[{_L}{_N}{_M}\-]+)+(?![{_L}{_N}{_M}])")
-_IP = re.compile(
-    rf"(?<![{_L}{_N}.])(?:[{_D}]{{1,3}}\.){{3}}[{_D}]{{1,3}}(?![{_L}{_N}]|\.[{_D}])"
-    rf"|(?<![{_L}{_N}])0x[0-9a-f]{{8}}(?![{_L}{_N}])"
-    rf"|(?<![{_L}{_N}])0x[0-9a-f]{{1,2}}(?:\.0x[0-9a-f]{{1,2}}){{3}}(?![{_L}{_N}])"
-)
-_ALWAYS_REFUSED = re.compile(
-    rf"(?<![{_L}{_N}])(?:javascript|vbscript):[^{_S}]|(?<![{_L}{_N}])data:(?:,|[a-z]+/)|(?<![{_L}{_N}])file:/"
-    rf"|\\\\[{_L}{_N}][{_L}{_N}.\-]*\\[{_L}{_N}$]"
-)
-_BRACKETED_DOT = re.compile(rf"[{_S}]*[\[({{][{_S}]*(?:\.|dot)[{_S}]*[\])}}][{_S}]*")
-_SPELLED_DOT = re.compile(rf"(?<=[{_L}{_N}])[{_S}]+dot[{_S}]+(?=[{_L}{_N}])")
-
 
 def _ascii_ignore_case(word: str) -> str:
     """``word`` as .NET's ``IgnoreCase | CultureInvariant`` matches it on folded text: each ASCII letter, both cases."""
@@ -150,40 +149,81 @@ def _ascii_ignore_case(word: str) -> str:
 
 
 _SECRET_NAMES = "|".join(map(_ascii_ignore_case, ("AccountKey", "SharedAccessSignature", "password", "pwd")))
-_CREDENTIAL = re.compile(
-    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"
-    r"|(?:AKIA|ASIA)[A-Z0-9]{16}"
-    r"|sk-[A-Za-z0-9_\-]{20,}"
-    r"|gh[opusr]_[A-Za-z0-9]{36}"
-    r"|github_pat_[A-Za-z0-9_]{22,}"
-    r"|glpat-[A-Za-z0-9_\-]{20,}"
-    r"|AIza[0-9A-Za-z_\-]{35}"
-    r"|xox[abposr]-"
-    r"|eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"
-    rf"|(?<![a-zA-Z])(?:{_SECRET_NAMES})"
-    rf"[{_S}]*=[^{_S};\"',]"
-)
 
 _ROLES = (
     "assistant|admin|administrator|operator|root|superuser|system|developer|agent|ai|bot|model|hacker|jailbroken|"
     "unrestricted|unfiltered|dan"
 )
-_PHRASE = re.compile(
-    r"(?<![a-z])(?:"
-    r"(?:ignore|disregard|forget|override|bypass) (?:(?:all|any|the|your|my|these|those|every) )?"
-    r"(?:(?:the )?(?:previous|prior|earlier|above|preceding|former|original|system|existing) )?"
-    r"(?:instructions?|directions|directives|prompts?)"
-    r"|(?:ignore|disregard|forget) (?:all (?:the )?(?:previous|prior|earlier|above|preceding)|(?:the|everything) above"
-    r"|everything (?:before|previous|prior))"
-    rf"|you are now (?:a|an|the) (?:[a-z]+ )?(?:{_ROLES})"
-    r"|you are now in (?:[a-z]+ ){0,2}mode"
-    r"|you are now (?:unrestricted|jailbroken|unfiltered|root|admin)"
-    r"|(?:reveal|print|ignore|output|show|repeat|leak|display|dump|disclose) (?:the|your|my) "
-    r"(?:(?:full|entire|original|hidden|initial|secret) )?system prompts?"
-    r"|(?:do not|don t|dont|never) (?:tell|inform|notify|alert) the user"
-    r")(?![a-z])"
-)
-_NEW_INSTRUCTIONS = re.compile(rf"(?<![{_L}{_N}])new instructions[{_S}]*:")
+
+
+@dataclass(frozen=True)
+class _Regexes:
+    url: re.Pattern[str]
+    dotted_token: re.Pattern[str]
+    ip: re.Pattern[str]
+    always_refused: re.Pattern[str]
+    bracketed_dot: re.Pattern[str]
+    spelled_dot: re.Pattern[str]
+    credential: re.Pattern[str]
+    phrase: re.Pattern[str]
+    new_instructions: re.Pattern[str]
+
+
+@functools.cache
+def _rx() -> _Regexes:
+    """.NET's patterns, compiled once, on first use."""
+    _L, _N, _M, _D, _S = _classes()
+    url = re.compile(rf"(?<![{_L}{_N}])[a-z][a-z0-9+.\-]*://[^{_S}<>\"'`]+|(?<![{_L}{_N}{_M}_\-.])www\.[^{_S}<>\"'`]+")
+    # .NET's labels are atomic groups; a label is always followed by a dot or by a character outside its class, so a
+    # greedy label matches exactly what the atomic one does.
+    dotted_token = re.compile(rf"(?<![{_L}{_N}{_M}\-])[{_L}{_N}{_M}\-]+(?:\.[{_L}{_N}{_M}\-]+)+(?![{_L}{_N}{_M}])")
+    ip = re.compile(
+        rf"(?<![{_L}{_N}.])(?:[{_D}]{{1,3}}\.){{3}}[{_D}]{{1,3}}(?![{_L}{_N}]|\.[{_D}])"
+        rf"|(?<![{_L}{_N}])0x[0-9a-f]{{8}}(?![{_L}{_N}])"
+        rf"|(?<![{_L}{_N}])0x[0-9a-f]{{1,2}}(?:\.0x[0-9a-f]{{1,2}}){{3}}(?![{_L}{_N}])"
+    )
+    always_refused = re.compile(
+        rf"(?<![{_L}{_N}])(?:javascript|vbscript):[^{_S}]|(?<![{_L}{_N}])data:(?:,|[a-z]+/)|(?<![{_L}{_N}])file:/"
+        rf"|\\\\[{_L}{_N}][{_L}{_N}.\-]*\\[{_L}{_N}$]"
+    )
+    bracketed_dot = re.compile(rf"[{_S}]*[\[({{][{_S}]*(?:\.|dot)[{_S}]*[\])}}][{_S}]*")
+    spelled_dot = re.compile(rf"(?<=[{_L}{_N}])[{_S}]+dot[{_S}]+(?=[{_L}{_N}])")
+
+    credential = re.compile(
+        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"
+        r"|(?:AKIA|ASIA)[A-Z0-9]{16}"
+        r"|sk-[A-Za-z0-9_\-]{20,}"
+        r"|gh[opusr]_[A-Za-z0-9]{36}"
+        r"|github_pat_[A-Za-z0-9_]{22,}"
+        r"|glpat-[A-Za-z0-9_\-]{20,}"
+        r"|AIza[0-9A-Za-z_\-]{35}"
+        r"|xox[abposr]-"
+        r"|eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"
+        rf"|(?<![a-zA-Z])(?:{_SECRET_NAMES})"
+        rf"[{_S}]*=[^{_S};\"',]"
+    )
+
+    phrase = re.compile(
+        r"(?<![a-z])(?:"
+        r"(?:ignore|disregard|forget|override|bypass) (?:(?:all|any|the|your|my|these|those|every) )?"
+        r"(?:(?:the )?(?:previous|prior|earlier|above|preceding|former|original|system|existing) )?"
+        r"(?:instructions?|directions|directives|prompts?)"
+        r"|(?:ignore|disregard|forget) (?:all (?:the )?(?:previous|prior|earlier|above|preceding)"
+        r"|(?:the|everything) above|everything (?:before|previous|prior))"
+        rf"|you are now (?:a|an|the) (?:[a-z]+ )?(?:{_ROLES})"
+        r"|you are now in (?:[a-z]+ ){0,2}mode"
+        r"|you are now (?:unrestricted|jailbroken|unfiltered|root|admin)"
+        r"|(?:reveal|print|ignore|output|show|repeat|leak|display|dump|disclose) (?:the|your|my) "
+        r"(?:(?:full|entire|original|hidden|initial|secret) )?system prompts?"
+        r"|(?:do not|don t|dont|never) (?:tell|inform|notify|alert) the user"
+        r")(?![a-z])"
+    )
+    new_instructions = re.compile(rf"(?<![{_L}{_N}])new instructions[{_S}]*:")
+    return _Regexes(
+        url, dotted_token, ip, always_refused, bracketed_dot, spelled_dot, credential, phrase, new_instructions
+    )
+
+
 _COLLAPSED_PHRASES = (
     "ignorepreviousinstructions",
     "ignoreallpreviousinstructions",
@@ -255,8 +295,8 @@ def deobfuscate(lower: str) -> str:
     """The common ways of hiding a dot undone: the ideographic and full-width full stops, ``[.]``, ``(.)``, ``{.}``,
     ``[dot]`` and a spelled-out ``dot`` between two words."""
     text = lower.replace("。", ".").replace("｡", ".").replace("．", ".")
-    text = _BRACKETED_DOT.sub(".", text)
-    return _SPELLED_DOT.sub(".", text)
+    text = _rx().bracketed_dot.sub(".", text)
+    return _rx().spelled_dot.sub(".", text)
 
 
 def _trim_url(url: str) -> str:
@@ -288,10 +328,12 @@ def _is_address(match: str) -> bool:
 
 def _links_in_units(units: str) -> Links:
     text = deobfuscate(lower_invariant(units))
-    urls = frozenset(_trim_url(match.group()) for match in _URL.finditer(text))
-    hosts = frozenset(host for match in _DOTTED_TOKEN.finditer(text) if (host := _as_host(match.group())) is not None)
-    addresses = frozenset(match.group() for match in _IP.finditer(text) if _is_address(match.group()))
-    return Links(urls, hosts, addresses, _ALWAYS_REFUSED.search(text) is not None)
+    urls = frozenset(_trim_url(match.group()) for match in _rx().url.finditer(text))
+    hosts = frozenset(
+        host for match in _rx().dotted_token.finditer(text) if (host := _as_host(match.group())) is not None
+    )
+    addresses = frozenset(match.group() for match in _rx().ip.finditer(text) if _is_address(match.group()))
+    return Links(urls, hosts, addresses, _rx().always_refused.search(text) is not None)
 
 
 def links_in(text: str) -> Links:
@@ -307,7 +349,7 @@ def has_link(text: str) -> bool:
 
 def has_credential(text: str) -> bool:
     """Whether ``text`` holds credential-shaped text."""
-    return _CREDENTIAL.search(to_units(text)) is not None
+    return _rx().credential.search(to_units(text)) is not None
 
 
 def _phrase_form(units: str) -> str:
@@ -343,12 +385,12 @@ def has_instruction_override(text: str) -> bool:
     """Whether ``text`` holds instruction-override phrasing, in its phrase form or with its letters run together."""
     units = to_units(text)
     phrase = _phrase_form(units)
-    if _PHRASE.search(phrase):
+    if _rx().phrase.search(phrase):
         return True
     collapsed = phrase.replace(" ", "")
     if any(core in collapsed for core in _COLLAPSED_PHRASES):
         return True
-    return _NEW_INSTRUCTIONS.search(_collapse_whitespace(lower_invariant(units))) is not None
+    return _rx().new_instructions.search(_collapse_whitespace(lower_invariant(units))) is not None
 
 
 def _is_latin(code: int) -> bool:

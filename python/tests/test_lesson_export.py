@@ -52,13 +52,15 @@ def result_json(result: LessonExportResult) -> dict[str, Any]:
     }
 
 
-def export_case(name: str, directory: Path, via: Any = None) -> tuple[LessonExportResult, bytes | None]:
+def export_case(
+    name: str, directory: Path, via: Any = None, make_store: Any = memory_store
+) -> tuple[LessonExportResult, bytes | None]:
     """Runs a case: the seed in an in-memory store, exported at the case's clock to a Markdown sink writing in
     ``directory``, which first holds ``previous.md`` when the case has one."""
     case = FAMILY / name
     options = read_json(case / "options.json")
     now = Instant.parse(options["now"])
-    store = memory_store(read_json(case / "seed.json"))
+    store = make_store(read_json(case / "seed.json"))
     path = directory / "lessons.md"
     if options["hasPreviousFile"]:
         path.write_bytes((case / "previous.md").read_bytes())
@@ -78,6 +80,19 @@ def export_case(name: str, directory: Path, via: Any = None) -> tuple[LessonExpo
 @pytest.mark.parametrize("name", cases("lesson-export"))
 def test_lesson_export(name: str, tmp_path: Path) -> None:
     result, written = export_case(name, tmp_path)
+    difference = json_difference(read_json(FAMILY / name / "expected.json"), result_json(result))
+    assert difference is None, difference
+    assert (written or b"") == (FAMILY / name / "expected.md").read_bytes()
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("name", cases("lesson-export"))
+def test_lesson_export_postgres(pg_server: Any, name: str, tmp_path: Path) -> None:
+    from test_lessons import postgres_store
+
+    result, written = export_case(
+        name, tmp_path, make_store=lambda seed: postgres_store(pg_server, "export_" + name.replace("-", "_"), seed)
+    )
     difference = json_difference(read_json(FAMILY / name / "expected.json"), result_json(result))
     assert difference is None, difference
     assert (written or b"") == (FAMILY / name / "expected.md").read_bytes()
