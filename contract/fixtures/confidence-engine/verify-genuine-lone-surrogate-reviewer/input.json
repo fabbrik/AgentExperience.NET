@@ -1,5 +1,5 @@
 {
-  "description": "A reviewer holding a lone surrogate is signed as .NET encodes it to UTF-8: U+FFFD.",
+  "description": "Minted for a reviewer holding a lone surrogate, which .NET signs as U+FFFD (and JSON carries as U+FFFD): the reviewer spelled with U+FFFD verifies.",
   "operation": "verify",
   "options": {
     "verification": "Verified",
@@ -17,6 +17,6 @@
     "userId": null
   },
   "runId": "000000f6-0000-4000-8000-000000000100",
-  "reviewer": "rev\uFFFDiewer",
+  "reviewer": "rev�iewer",
   "kind": "Supporting"
 }
