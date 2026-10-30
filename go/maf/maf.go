@@ -275,8 +275,33 @@ type Options struct {
 	Model string
 	// PreferredEnvironment is the metadata ranking prefers.
 	PreferredEnvironment map[string]string
-	// ExcludeModelAuthored leaves model-authored lessons out of the search and the ranking.
+	// ExcludeModelAuthored leaves model-authored lessons out of the search and the ranking: the same as
+	// ModelAuthoredLessons Exclude (either one excludes).
 	ExcludeModelAuthored bool
+	// ModelAuthoredLessons is .NET's ModelAuthoredLessonPolicy (contract 1.13): Include (when empty) injects a
+	// model-authored lesson inside the fixed Authored:/End authored: fence; Exclude asks retrieval to leave them out
+	// and omits any that arrives (ae.OmittedModelAuthored, no detail), before the record limit, so it takes no slot.
+	ModelAuthoredLessons ae.ModelAuthoredLessonPolicy
+	// ReceivingAgent is .NET's ReceivingAgentCapabilities (contract 1.13): what the agent receiving the block can and
+	// may do. A record whose verified approach calls a tool it lacks, or one above its MaxRiskClass, is omitted
+	// (ae.OmittedToolUnavailable, ae.OmittedRiskClassExceeded, no detail) before the record limit, so it takes no slot;
+	// while the gate can reject and a request names its own Limit, retrieval is asked for a wider window. With
+	// UseRunTools the tool check reads the tools the SDK hands the context providers (the configuration's Tools and
+	// the run's agent.WithTool options, and any an earlier context provider added). nil gates nothing. Validated and
+	// copied by UseAgentExperience.
+	ReceivingAgent *ae.ReceivingAgent
+	// ResolveRequest is .NET's ResolveRequest / ResolveRequestAsync (contract 1.13): called once per invocation the
+	// identity resolved for, before retrieval, it returns what to retrieve. nil (the default) retrieves the derived
+	// task text with PreferredEnvironment. A nil request with a nil error skips the invocation (inject outcome
+	// Skipped); an error or a panic injects nothing (OnInjectionFailure, outcome Failed), and the invocation runs; the
+	// caller's own cancellation (an error while ctx is done) propagates from Invoking. A request retrieval refuses (a
+	// blank or overlong task text, a Limit outside 1..CandidateLimit) is RetrievalFailed. No timeout is put around it.
+	ResolveRequest func(ctx context.Context, rc RequestContext) (*InjectionRequest, error)
+	// DecideInjection is .NET's DecideInjection (contract 1.13): asked about each selected record, in order, before the
+	// block is rendered. It can only deny: a denial omits the record as ae.OmittedHostDenied with the decision's
+	// Reason as its detail (ae.HostDeniedDetail when empty), and it fails closed: the zero InjectionDecision, or a
+	// panic, denies. A denied record has taken its slot. Synchronous, as .NET's.
+	DecideInjection func(DecisionContext) InjectionDecision
 	// MessageRole is the injected message's role: message.RoleUser (when empty) or message.RoleSystem.
 	MessageRole message.Role
 	// DisableInjection captures without injecting.
@@ -380,6 +405,8 @@ type settings struct {
 	// retrieval and decay are the resolved retrieval policy and confidence decay (contract 1.12; decay nil for none).
 	retrieval ae.RetrievalPolicy
 	decay     *ae.ConfidenceDecayPolicy
+	// gate is the receiving agent's capability gate, validated and copied (contract 1.13); nil for none.
+	gate *ae.CapabilityGate
 	// measured are the memory providers UseMeasuredMemory wrapped on this configuration (contract 1.11), whose
 	// records the context provider's Close waits for too.
 	measuredMu sync.Mutex
@@ -489,6 +516,22 @@ func newSettings(options Options) (*settings, error) {
 	if err := options.Benefit.Validate(); err != nil {
 		return nil, fmt.Errorf("maf: %w", err)
 	}
+	if err := options.ModelAuthoredLessons.Validate(); err != nil {
+		return nil, fmt.Errorf("maf: %w", err)
+	}
+	if options.ExcludeModelAuthored {
+		options.ModelAuthoredLessons = ae.ModelAuthoredExclude
+	}
+	if options.ModelAuthoredLessons == ae.ModelAuthoredExclude {
+		options.ExcludeModelAuthored = true
+	} else {
+		options.ModelAuthoredLessons = ae.ModelAuthoredInclude
+	}
+	gate, err := ae.NewCapabilityGate(options.ReceivingAgent)
+	if err != nil {
+		return nil, fmt.Errorf("maf: %w", err)
+	}
+	options.ReceivingAgent = nil // copied into gate; the host's value is never read again
 	if options.Holdout.Salt == "" {
 		options.Holdout.Salt = ae.DefaultHoldoutSalt
 	}
@@ -499,7 +542,7 @@ func newSettings(options Options) (*settings, error) {
 		options.NewID = ae.NewRandomUUID
 	}
 	s := &settings{Options: options, vectorSlots: make(chan struct{}, MaxVectorCalls), retrieval: resolvedPolicy,
-		decay: resolvedDecay}
+		decay: resolvedDecay, gate: gate}
 	if options.Environment != nil {
 		s.environment = *options.Environment
 	} else {
