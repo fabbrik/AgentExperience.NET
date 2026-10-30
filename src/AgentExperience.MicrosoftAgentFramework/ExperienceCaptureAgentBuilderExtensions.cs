@@ -261,10 +261,23 @@ internal sealed class ExperienceCaptureMiddleware(IExperienceCaptureService capt
         catch (Exception ex)
         {
             scope.FailToolCall(pending, ex);
+
+            // Recall at the moment of failure, after the call is recorded as the tool's own. It never throws, and the
+            // exception below is the tool's, rethrown unchanged.
+            if (scope.Recall is { } recallAfterThrow)
+            {
+                await recallAfterThrow.OnFailureAsync(scope, context, pending.ToolName, CaptureScope.ErrorOf(ex), cancellationToken).ConfigureAwait(false);
+            }
+
             throw;
         }
 
-        scope.CompleteToolCall(pending, result);
+        var failedWith = scope.CompleteToolCall(pending, result);
+        if (failedWith is not null && scope.Recall is { } recall)
+        {
+            await recall.OnFailureAsync(scope, context, pending.ToolName, failedWith, cancellationToken).ConfigureAwait(false);
+        }
+
         return result;
     }
 

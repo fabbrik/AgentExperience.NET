@@ -125,7 +125,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection;
 /// host denial is recorded on the result only.
 /// </para>
 /// </remarks>
-public sealed class ExperienceContextProvider : AIContextProvider
+public sealed partial class ExperienceContextProvider : AIContextProvider
 {
     /// <summary>
     /// The <see cref="ChatMessage.AdditionalProperties"/> key stamped on the injected message, set to
@@ -220,6 +220,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
         _stateKeys = Array.AsReadOnly(new[] { _stateKey });
         _benefit = options.Benefit.Enabled ? new ExperienceBenefitCache(store, options.Benefit, options.TimeProvider) : null;
         _recorder = new BackgroundRecorder(options.TimeProvider, options.Limits.MaxAbandonedReads);
+        _recall = options.Recall;
+        _signatureLookup = options.Recall is { } recall && (recall.SignatureSource ?? store as IExperienceSignatureSource) is { } source
+            ? new ExperienceSignatureRetrievalService(source, retrieval.Policy, options.TimeProvider)
+            : null;
     }
 
     /// <summary>
@@ -488,6 +492,10 @@ public sealed class ExperienceContextProvider : AIContextProvider
         // every outcome below -- a retrieval that timed out, one that was denied, one that threw -- and
         // not only for the ones that produced a result to read it back off.
         InjectionDiagnostics.Tag(trace, InjectionDiagnostics.CorrelationIdAttribute, request.CorrelationId);
+
+        // Recall at the moment of failure (off unless configured): this invocation's later tool failures are looked up
+        // under the request just resolved. Changes nothing about the block.
+        BeginRecall(context.Agent, context.Session, request, capabilityGate);
 
         // Story 17.4: the session's account is read, decided on, and written back under the session's lock, so a
         // concurrent invocation on the same session waits for this one's stage instead of reading the same account
@@ -839,6 +847,9 @@ public sealed class ExperienceContextProvider : AIContextProvider
         if (withheld is null)
         {
             RecordExposures(context.Agent, assignment is null ? Rendered(payload, recheckOutcome.Injectable) : [.. assignment.Records]);
+
+            // A record the block gave this run is not hinted to it again.
+            NoteBlockDelivered(context.Agent, payload.ExperienceIds);
         }
 
         // Story 21.8: when each delivered record was injected, for the lessons view. Started last, in the background,
@@ -1511,7 +1522,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
         List<OmittedExperience> omitted,
         SessionTracker? session,
         CapabilityGate? capabilityGate,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? bound = null)
     {
         var injectable = new List<RankedExperience>(selected.Count);
         var withdrawn = new HashSet<Guid>();
@@ -1521,7 +1533,8 @@ public sealed class ExperienceContextProvider : AIContextProvider
         var required = AgentExperience.Core.Holdout.ModelMetadata.WithoutModel(request.RequiredEnvironmentAttributes);
         var unrestricted = required is null or { Count: 0 };
 
-        var timeout = _options.Limits.EligibilityCheckTimeout;
+        // Recall passes what is left of its own lookup bound; the block uses the configured check timeout.
+        var timeout = bound ?? _options.Limits.EligibilityCheckTimeout;
         var started = _options.TimeProvider.GetTimestamp();
 
         // The bound, as a fact about the clock rather than about a timer: a timer callback can run well

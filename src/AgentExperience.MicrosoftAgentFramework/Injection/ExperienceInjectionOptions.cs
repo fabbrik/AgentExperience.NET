@@ -730,6 +730,15 @@ public sealed class ExperienceInjectionOptions
     /// </remarks>
     public ExperienceBenefitPolicy Benefit { get; set; } = ExperienceBenefitPolicy.Off;
 
+    /// <summary>
+    /// Recall at the moment of failure: when a tool call in a captured run fails and a reusable lesson holds the same
+    /// failure signature as resolved, a short labelled hint naming what worked is put in front of the model's next call
+    /// in that run. <see langword="null"/> (the default) is off: nothing is looked up, and the block, telemetry and
+    /// storage are exactly what they are without it. See <see cref="ExperienceRecallOptions"/>.
+    /// </summary>
+    /// <remarks>A bound out of range is refused when the provider is constructed.</remarks>
+    public ExperienceRecallOptions? Recall { get; set; }
+
     /// <summary>A shallow copy, taken before validation, so a later change to these options changes nothing.</summary>
     internal ExperienceInjectionOptions Snapshot()
     {
@@ -800,6 +809,7 @@ public sealed class ExperienceInjectionOptions
         Holdout.Validate($"{paramName}.{nameof(Holdout)}");
         ArgumentNullException.ThrowIfNull(Benefit, $"{paramName}.{nameof(Benefit)}");
         Benefit.Validate($"{paramName}.{nameof(Benefit)}");
+        Recall?.Validate($"{paramName}.{nameof(Recall)}");
 
         if (SessionLimits is not null && Limits.MaxBytes < HistoricalReferenceWriter.RetractionBlockBytes)
         {

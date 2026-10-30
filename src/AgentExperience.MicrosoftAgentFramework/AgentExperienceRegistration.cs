@@ -54,6 +54,9 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
         {
             ResolveRequestAsync = (context, cancellationToken) => ResolveRequestAsync(context, clock, cancellationToken),
             TimeProvider = clock,
+            Recall = Options.Recall is { } recall && recall.SignatureSource is null
+                ? recall with { SignatureSource = services.GetService<IExperienceSignatureSource>() }
+                : Options.Recall,
         };
         Options.Injection?.Invoke(injection);
 
