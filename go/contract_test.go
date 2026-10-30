@@ -114,7 +114,7 @@ func TestEveryFixtureFamilyHasCases(t *testing.T) {
 			families = append(families, entry.Name())
 		}
 	}
-	if strings.Join(families, ",") != "benefit-estimate,benefit-select,embedding-summary,embedding-write,encoding,erased,error-class,finalize,holdout-assign,"+
+	if strings.Join(families, ",") != "benefit-estimate,benefit-select,content-guard,embedding-summary,embedding-write,encoding,erased,error-class,finalize,holdout-assign,"+
 		"holdout-outcomes,holdout-record,hybrid-merge,inject,inject-options,lesson-export,lessons-html,lessons-view,model-metadata,provider-benefit-estimate,"+
 		"provider-holdout-assign,provider-holdout-record,record-injection,reflection-output,reflection-prompt,retrieval-policy,search,task-text,vector-search" {
 		t.Fatalf("families: %v", families)

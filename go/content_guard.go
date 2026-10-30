@@ -5,7 +5,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // The content guard (contract 1.14): the fixed, deterministic filter screening applies to a model-authored reflection
@@ -176,6 +178,43 @@ var phrasePattern = regexp.MustCompile(`(?:^|[^a-z])(?:` +
 	`|(?:do not|don t|dont|never) (?:tell|inform|notify|alert) the user` +
 	`)(?:[^a-z]|$)`)
 
+// ---- The work bound ---------------------------------------------------------------------------------------------
+
+// guardTimeLimit bounds the work on one text, as .NET bounds each match to one second.
+var guardTimeLimit = time.Second
+
+// guardWork is the work done on one text: past its deadline, a step panics with errOutOfTime, which the guard's entry
+// points recover (a run content text then admits nothing; a field is refused as not checked in time).
+type guardWork struct {
+	deadline time.Time
+	steps    int
+}
+
+type outOfTime struct{}
+
+func newGuardWork() *guardWork { return &guardWork{deadline: time.Now().Add(guardTimeLimit)} }
+
+func (w *guardWork) step() {
+	w.steps++
+	if w.steps&1023 == 0 && time.Now().After(w.deadline) {
+		panic(outOfTime{})
+	}
+}
+
+// bounded runs f, reporting whether it finished within the work bound; any other panic goes on.
+func bounded(f func()) (finished bool) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if _, ok := recovered.(outOfTime); !ok {
+				panic(recovered)
+			}
+			finished = false
+		}
+	}()
+	f()
+	return true
+}
+
 // ---- Links -----------------------------------------------------------------------------------------------------
 
 // ModelTextLinks are the links found in one text: whole URLs, whole hostnames and IP addresses, lower-cased, and
@@ -189,28 +228,36 @@ func isRegexSpace(r rune) bool { return isWhitespace(r) }
 
 // deobfuscate is .NET's Deobfuscate on lower-cased text: the ideographic and full-width full stops become '.', and
 // so do [.], (.), {.}, [dot], (dot), {dot} with any spaces inside or around them, and a spelled-out dot between two
-// words.
-func deobfuscate(lower string) string {
-	text := []rune(strings.NewReplacer("。", ".", "｡", ".", "．", ".").Replace(lower))
-	text = replaceBracketedDots(text)
-	return string(replaceSpelledDots(text))
+// words. Linear: each whitespace run is measured once.
+func (w *guardWork) deobfuscate(lower string) string {
+	text := []rune(strings.NewReplacer("\u3002", ".", "\uFF61", ".", "\uFF0E", ".").Replace(lower))
+	text = w.replaceBracketedDots(text)
+	return string(w.replaceSpelledDots(text))
 }
 
-func skipSpaces(text []rune, i int) int {
-	for i < len(text) && isRegexSpace(text[i]) {
-		i++
+// spaceEnds is, for each index, the first index at or after it that is not white space.
+func spaceEnds(text []rune) []int {
+	ends := make([]int, len(text)+1)
+	ends[len(text)] = len(text)
+	for i := len(text) - 1; i >= 0; i-- {
+		if isRegexSpace(text[i]) {
+			ends[i] = ends[i+1]
+		} else {
+			ends[i] = i
+		}
 	}
-	return i
+	return ends
 }
 
 // replaceBracketedDots is \s*[\[\(\{]\s*(?:\.|dot)\s*[\]\)\}]\s* replaced by ".".
-func replaceBracketedDots(text []rune) []rune {
+func (w *guardWork) replaceBracketedDots(text []rune) []rune {
+	skip := spaceEnds(text)
 	match := func(i int) int {
-		j := skipSpaces(text, i)
+		j := skip[i]
 		if j >= len(text) || (text[j] != '[' && text[j] != '(' && text[j] != '{') {
 			return -1
 		}
-		j = skipSpaces(text, j+1)
+		j = skip[j+1]
 		switch {
 		case j < len(text) && text[j] == '.':
 			j++
@@ -219,14 +266,15 @@ func replaceBracketedDots(text []rune) []rune {
 		default:
 			return -1
 		}
-		j = skipSpaces(text, j)
+		j = skip[j]
 		if j >= len(text) || (text[j] != ']' && text[j] != ')' && text[j] != '}') {
 			return -1
 		}
-		return skipSpaces(text, j+1)
+		return skip[j+1]
 	}
-	var out []rune
+	out := make([]rune, 0, len(text))
 	for i := 0; i < len(text); {
+		w.step()
 		if end := match(i); end >= 0 {
 			out = append(out, '.')
 			i = end
@@ -238,25 +286,27 @@ func replaceBracketedDots(text []rune) []rune {
 	return out
 }
 
-// replaceSpelledDots is (?<=[\p{L}\p{N}])\s+dot\s+(?=[\p{L}\p{N}]) replaced by ".", the lookarounds read on the text
-// as it was.
-func replaceSpelledDots(text []rune) []rune {
+// replaceSpelledDots is (?<=[\p{L}\p{N}])\s+dot\s+(?=[\p{L}\p{N}]) replaced by ".", the lookarounds read on the
+// text as it was.
+func (w *guardWork) replaceSpelledDots(text []rune) []rune {
+	skip := spaceEnds(text)
 	match := func(i int) int {
 		if i == 0 || !isLN(text[i-1]) {
 			return -1
 		}
-		j := skipSpaces(text, i)
+		j := skip[i]
 		if j == i || j+3 > len(text) || string(text[j:j+3]) != "dot" {
 			return -1
 		}
-		k := skipSpaces(text, j+3)
+		k := skip[j+3]
 		if k == j+3 || k >= len(text) || !isLN(text[k]) {
 			return -1
 		}
 		return k
 	}
-	var out []rune
+	out := make([]rune, 0, len(text))
 	for i := 0; i < len(text); {
+		w.step()
 		if end := match(i); end >= 0 {
 			out = append(out, '.')
 			i = end
@@ -276,37 +326,43 @@ func isSchemeChar(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '+' || r == '.' || r == '-'
 }
 
-// urlAt is the end of a URL match starting at i (.NET's UrlPattern), or -1.
-func urlAt(text []rune, i int) int {
-	// A scheme and ://.
-	if (i == 0 || !isLN(text[i-1])) && text[i] >= 'a' && text[i] <= 'z' {
-		j := i + 1
-		for j < len(text) && isSchemeChar(text[j]) {
-			j++
-		}
-		if j+3 <= len(text) && string(text[j:j+3]) == "://" {
-			k := j + 3
-			for k < len(text) && isURLChar(text[k]) {
-				k++
-			}
-			if k > j+3 {
-				return k
-			}
+// runEnds is, for each index, the end of the run of characters in the class starting there.
+func runEnds(text []rune, in func(rune) bool) []int {
+	ends := make([]int, len(text)+1)
+	ends[len(text)] = len(text)
+	for i := len(text) - 1; i >= 0; i-- {
+		if in(text[i]) {
+			ends[i] = ends[i+1]
+		} else {
+			ends[i] = i
 		}
 	}
-	// www.
-	if i == 0 || !(isLN(text[i-1]) || isMarkU(text[i-1]) || text[i-1] == '_' || text[i-1] == '-' || text[i-1] == '.') {
-		if i+4 <= len(text) && string(text[i:i+4]) == "www." {
-			k := i + 4
-			for k < len(text) && isURLChar(text[k]) {
-				k++
-			}
-			if k > i+4 {
-				return k
+	return ends
+}
+
+// urlMatcher is .NET's UrlPattern at an index, over precomputed runs, so a scan is linear.
+func urlMatcher(text []rune) func([]rune, int) int {
+	schemeEnds, urlEnds := runEnds(text, isSchemeChar), runEnds(text, isURLChar)
+	return func(text []rune, i int) int {
+		// A scheme and ://.
+		if (i == 0 || !isLN(text[i-1])) && text[i] >= 'a' && text[i] <= 'z' {
+			j := schemeEnds[i+1]
+			if j+3 <= len(text) && string(text[j:j+3]) == "://" {
+				if k := urlEnds[j+3]; k > j+3 {
+					return k
+				}
 			}
 		}
+		// www.
+		if i == 0 || !(isLN(text[i-1]) || isMarkU(text[i-1]) || text[i-1] == '_' || text[i-1] == '-' || text[i-1] == '.') {
+			if i+4 <= len(text) && string(text[i:i+4]) == "www." {
+				if k := urlEnds[i+4]; k > i+4 {
+					return k
+				}
+			}
+		}
+		return -1
 	}
-	return -1
 }
 
 func isHostChar(r rune) bool { return isLN(r) || isMarkU(r) || r == '-' }
@@ -460,8 +516,9 @@ func isAddress(match string) bool {
 }
 
 // scan collects the non-overlapping matches of at, leftmost first, as .NET's Matches does.
-func scan(text []rune, at func([]rune, int) int, each func(string)) {
+func (w *guardWork) scan(text []rune, at func([]rune, int) int, each func(string)) {
 	for i := 0; i < len(text); {
+		w.step()
 		if end := at(text, i); end > i {
 			each(string(text[i:end]))
 			i = end
@@ -474,12 +531,13 @@ func scan(text []rune, at func([]rune, int) int, each func(string)) {
 func isNotSpace(r rune) bool { return !isRegexSpace(r) }
 
 // alwaysRefused is .NET's AlwaysRefusedLinkPattern, IsMatch.
-func alwaysRefused(text []rune) bool {
+func (w *guardWork) alwaysRefused(text []rune) bool {
 	has := func(i int, word string) bool {
 		w := []rune(word)
 		return i+len(w) <= len(text) && string(text[i:i+len(w)]) == word
 	}
 	for i := range text {
+		w.step()
 		if i == 0 || !isLN(text[i-1]) {
 			for _, scheme := range []string{"javascript:", "vbscript:"} {
 				if has(i, scheme) && i+len(scheme) < len(text) && isNotSpace(text[i+len(scheme)]) {
@@ -519,37 +577,45 @@ func alwaysRefused(text []rune) bool {
 	return false
 }
 
-// ModelTextLinksIn are the links in text, which the caller has folded (.NET's ModelTextPatterns.LinksIn).
-func ModelTextLinksIn(text string) ModelTextLinks {
-	deobfuscated := []rune(deobfuscate(lowerInvariant(text)))
+// ModelTextLinksIn are the links in text, which the caller has folded (.NET's ModelTextPatterns.LinksIn). ok is false
+// when the text could not be read within the work bound.
+func ModelTextLinksIn(text string) (links ModelTextLinks, ok bool) {
+	work := newGuardWork()
+	ok = bounded(func() { links = work.linksIn(text) })
+	return links, ok
+}
+
+func (w *guardWork) linksIn(text string) ModelTextLinks {
+	deobfuscated := []rune(w.deobfuscate(lowerInvariant(text)))
 	links := ModelTextLinks{URLs: map[string]bool{}, Hosts: map[string]bool{}, Addresses: map[string]bool{}}
-	scan(deobfuscated, urlAt, func(url string) { links.URLs[strings.TrimRight(url, ".,;:!?)]}>")] = true })
-	scan(deobfuscated, dottedTokenAt, func(token string) {
+	w.scan(deobfuscated, urlMatcher(deobfuscated), func(url string) { links.URLs[strings.TrimRight(url, ".,;:!?)]}>")] = true })
+	w.scan(deobfuscated, dottedTokenAt, func(token string) {
 		if host, ok := asHost(token); ok {
 			links.Hosts[host] = true
 		}
 	})
-	scan(deobfuscated, ipAt, func(match string) {
+	w.scan(deobfuscated, ipAt, func(match string) {
 		if isAddress(match) {
 			links.Addresses[match] = true
 		}
 	})
-	links.AlwaysRefused = alwaysRefused(deobfuscated)
+	links.AlwaysRefused = w.alwaysRefused(deobfuscated)
 	return links
 }
 
 // ModelTextHasLink reports whether text holds any URL, hostname, IP address, colon-only scheme or UNC path (.NET's
-// ModelTextPatterns.HasLink, on text as given).
+// ModelTextPatterns.HasLink, on text as given); a text that cannot be read within the work bound counts as one.
 func ModelTextHasLink(text string) bool {
-	links := ModelTextLinksIn(text)
-	return links.AlwaysRefused || len(links.URLs) > 0 || len(links.Hosts) > 0 || len(links.Addresses) > 0
+	links, ok := ModelTextLinksIn(text)
+	return !ok || links.AlwaysRefused || len(links.URLs) > 0 || len(links.Hosts) > 0 || len(links.Addresses) > 0
 }
 
 // ---- Credentials, scripts and phrasing -----------------------------------------------------------------------------
 
-func runOf(text string, i int, allowed func(byte) bool) int {
+// runOf is the length of the run of allowed bytes at i, counted up to limit at most.
+func runOf(text string, i int, allowed func(byte) bool, limit int) int {
 	j := i
-	for j < len(text) && allowed(text[j]) {
+	for j < len(text) && j-i < limit && allowed(text[j]) {
 		j++
 	}
 	return j - i
@@ -563,8 +629,10 @@ func isAlnumUnderscoreDash(b byte) bool { return isAlnum(b) || b == '_' || b == 
 func isAlnumUnderscore(b byte) bool     { return isAlnum(b) || b == '_' }
 
 // hasCredential is .NET's CredentialPattern, IsMatch, on folded text. Every piece is ASCII, so it is scanned on bytes.
-func hasCredential(text string) bool {
+func (w *guardWork) hasCredential(text string) bool {
+	tokenEnds := byteRunEnds(text, isAlnumUnderscoreDash)
 	for i := 0; i < len(text); i++ {
+		w.step()
 		rest := text[i:]
 		switch {
 		case strings.HasPrefix(rest, "-----BEGIN "):
@@ -573,34 +641,34 @@ func hasCredential(text string) bool {
 				if strings.HasPrefix(text[j:], "PRIVATE KEY-----") {
 					return true
 				}
-				n := runOf(text, j, isUpperOrDigit)
+				n := byteRunEnd(text, j, isUpperOrDigit) - j
 				if n == 0 || j+n >= len(text) || text[j+n] != ' ' {
 					break
 				}
 				j += n + 1
 			}
 		case strings.HasPrefix(rest, "AKIA") || strings.HasPrefix(rest, "ASIA"):
-			if runOf(text, i+4, isUpperOrDigit) >= 16 {
+			if runOf(text, i+4, isUpperOrDigit, 16) >= 16 {
 				return true
 			}
 		case strings.HasPrefix(rest, "sk-"):
-			if runOf(text, i+3, isAlnumUnderscoreDash) >= 20 {
+			if runOf(text, i+3, isAlnumUnderscoreDash, 20) >= 20 {
 				return true
 			}
 		case len(rest) >= 4 && rest[0] == 'g' && rest[1] == 'h' && strings.IndexByte("opusr", rest[2]) >= 0 && rest[3] == '_':
-			if runOf(text, i+4, isAlnum) >= 36 {
+			if runOf(text, i+4, isAlnum, 36) >= 36 {
 				return true
 			}
 		case strings.HasPrefix(rest, "github_pat_"):
-			if runOf(text, i+11, isAlnumUnderscore) >= 22 {
+			if runOf(text, i+11, isAlnumUnderscore, 22) >= 22 {
 				return true
 			}
 		case strings.HasPrefix(rest, "glpat-"):
-			if runOf(text, i+6, isAlnumUnderscoreDash) >= 20 {
+			if runOf(text, i+6, isAlnumUnderscoreDash, 20) >= 20 {
 				return true
 			}
 		case strings.HasPrefix(rest, "AIza"):
-			if runOf(text, i+4, isAlnumUnderscoreDash) >= 35 {
+			if runOf(text, i+4, isAlnumUnderscoreDash, 35) >= 35 {
 				return true
 			}
 		case len(rest) >= 5 && strings.HasPrefix(rest, "xox") && strings.IndexByte("abposr", rest[3]) >= 0 && rest[4] == '-':
@@ -616,7 +684,7 @@ func hasCredential(text string) bool {
 					}
 					j++
 				}
-				n := runOf(text, j, isAlnumUnderscoreDash)
+				n := tokenEnds[j] - j
 				if n == 0 {
 					ok = false
 					break
@@ -634,6 +702,27 @@ func hasCredential(text string) bool {
 	return false
 }
 
+// byteRunEnds is, for each byte index, the end of the run of allowed bytes starting there.
+func byteRunEnds(text string, allowed func(byte) bool) []int {
+	ends := make([]int, len(text)+1)
+	ends[len(text)] = len(text)
+	for i := len(text) - 1; i >= 0; i-- {
+		if allowed(text[i]) {
+			ends[i] = ends[i+1]
+		} else {
+			ends[i] = i
+		}
+	}
+	return ends
+}
+
+func byteRunEnd(text string, i int, allowed func(byte) bool) int {
+	for i < len(text) && allowed(text[i]) {
+		i++
+	}
+	return i
+}
+
 // credentialAssignmentAt is (?i:(?<![a-z])(?:AccountKey|SharedAccessSignature|password|pwd)\s*=[^\s;"',]) at byte i.
 func credentialAssignmentAt(text string, i int) bool {
 	if i > 0 {
@@ -645,13 +734,16 @@ func credentialAssignmentAt(text string, i int) bool {
 		if len(text)-i < len(name) || !strings.EqualFold(text[i:i+len(name)], name) {
 			continue
 		}
-		runes := []rune(text[i+len(name):])
-		j := 0
-		for j < len(runes) && isRegexSpace(runes[j]) {
-			j++
+		j := i + len(name)
+		for j < len(text) {
+			r, size := utf8.DecodeRuneInString(text[j:])
+			if !isRegexSpace(r) {
+				break
+			}
+			j += size
 		}
-		if j+1 < len(runes) && runes[j] == '=' {
-			next := runes[j+1]
+		if j+1 < len(text) && text[j] == '=' {
+			next, _ := utf8.DecodeRuneInString(text[j+1:])
 			if !isRegexSpace(next) && next != ';' && next != '"' && next != '\'' && next != ',' {
 				return true
 			}
@@ -671,9 +763,10 @@ func isCyrillicOrGreekU(r rune) bool {
 }
 
 // hasMixedScriptWord is .NET's HasMixedScriptWord.
-func hasMixedScriptWord(text string) bool {
+func (w *guardWork) hasMixedScriptWord(text string) bool {
 	latin, other := false, false
 	for _, r := range text {
+		w.step()
 		if !isLetterU(r) && !(bmp(r) && (category(r) == "Mn" || category(r) == "Mc")) {
 			latin, other = false, false
 			continue
@@ -691,10 +784,11 @@ func hasMixedScriptWord(text string) bool {
 }
 
 // phraseForm is .NET's PhraseForm: lower case, confusables folded, every run of non-letters one space, trimmed.
-func phraseForm(text string) string {
+func (w *guardWork) phraseForm(text string) string {
 	var out strings.Builder
 	space := false
 	for _, r := range lowerInvariant(text) {
+		w.step()
 		if latin, ok := confusables[r]; ok {
 			r = latin
 		}
@@ -729,8 +823,8 @@ func collapseWhitespaceDotNet(text string) string {
 }
 
 // hasInstructionOverride is .NET's HasInstructionOverride.
-func hasInstructionOverride(text string) bool {
-	phrase := phraseForm(text)
+func (w *guardWork) hasInstructionOverride(text string) bool {
+	phrase := w.phraseForm(text)
 	if phrasePattern.MatchString(phrase) {
 		return true
 	}
@@ -741,18 +835,27 @@ func hasInstructionOverride(text string) bool {
 		}
 	}
 	// (?<![\p{L}\p{N}])new instructions\s*:
-	lowered := []rune(collapseWhitespaceDotNet(lowerInvariant(text)))
-	target := []rune("new instructions")
-	for i := 0; i+len(target) <= len(lowered); i++ {
-		if string(lowered[i:i+len(target)]) != "new instructions" || (i > 0 && isLN(lowered[i-1])) {
+	lowered := collapseWhitespaceDotNet(lowerInvariant(text))
+	const target = "new instructions"
+	for from := 0; ; {
+		w.step()
+		found := strings.Index(lowered[from:], target)
+		if found < 0 {
+			return false
+		}
+		i := from + found
+		from = i + 1
+		if before, _ := utf8.DecodeLastRuneInString(lowered[:i]); i > 0 && isLN(before) {
 			continue
 		}
-		j := skipSpaces(lowered, i+len(target))
+		j := i + len(target)
+		if j < len(lowered) && lowered[j] == ' ' {
+			j++
+		}
 		if j < len(lowered) && lowered[j] == ':' {
 			return true
 		}
 	}
-	return false
 }
 
 // ---- The guard ---------------------------------------------------------------------------------------------------
@@ -772,7 +875,11 @@ func linksOf(content []string) runLinks {
 		if !ok {
 			continue
 		}
-		found := ModelTextLinksIn(folded)
+		// A text that cannot be read within the work bound admits nothing.
+		found, ok := ModelTextLinksIn(folded)
+		if !ok {
+			continue
+		}
 		for url := range found.URLs {
 			links.urls[url] = true
 		}
@@ -796,20 +903,28 @@ func subset(found, run map[string]bool) bool {
 }
 
 // guardCheck is the rule value breaks, as a content-free phrase, or "" (.NET's ModelAuthoredContentGuard.Check).
-func guardCheck(value string, run runLinks) string {
+func guardCheck(value string, run runLinks) (rule string) {
 	folded, ok := fold(value)
 	if !ok {
 		return "text that cannot be normalized"
 	}
+	work := newGuardWork()
+	if !bounded(func() { rule = work.check(folded, run) }) {
+		return "text that could not be checked in time"
+	}
+	return rule
+}
+
+func (w *guardWork) check(folded string, run runLinks) string {
 	switch {
-	case hasCredential(folded):
+	case w.hasCredential(folded):
 		return "credential-shaped text"
-	case hasMixedScriptWord(folded):
+	case w.hasMixedScriptWord(folded):
 		return "a word mixing Latin with Cyrillic or Greek letters"
-	case hasInstructionOverride(folded):
+	case w.hasInstructionOverride(folded):
 		return "instruction-override phrasing"
 	}
-	links := ModelTextLinksIn(folded)
+	links := w.linksIn(folded)
 	switch {
 	case links.AlwaysRefused:
 		return "a data:, javascript:, vbscript: or file: link or a UNC path"
@@ -824,15 +939,20 @@ func guardCheck(value string, run runLinks) string {
 }
 
 // guardCheckCombined is instruction-override phrasing in every field joined by spaces (.NET's CheckCombined).
-func guardCheckCombined(fields []string) string {
+func guardCheckCombined(fields []string) (rule string) {
 	folded, ok := fold(strings.Join(fields, " "))
 	if !ok {
 		return "text that cannot be normalized"
 	}
-	if hasInstructionOverride(folded) {
-		return "instruction-override phrasing"
+	work := newGuardWork()
+	if !bounded(func() {
+		if work.hasInstructionOverride(folded) {
+			rule = "instruction-override phrasing"
+		}
+	}) {
+		return "text that could not be checked in time"
 	}
-	return ""
+	return rule
 }
 
 // DefaultRunContent is the run content a reflector that does not declare its own is taken to have been given (.NET's
@@ -867,3 +987,19 @@ func DefaultRunContent(request ReflectionRequest) []string {
 	}
 	return content
 }
+
+// ---- The guard's parts, for a port's differential tests ------------------------------------------------------------
+
+// ModelTextFold is the guard's fold of text: invisible characters removed, NFKC, removed again; ok is false when no
+// normalizer is registered.
+func ModelTextFold(text string) (string, bool) { return fold(text) }
+
+// ModelTextCheck is the rule a model-authored field breaks against runContent (nil: none, so every URL, hostname and
+// IP address is refused), as the content-free phrase screening's reason names; "" for none.
+func ModelTextCheck(value string, runContent []string) string {
+	return guardCheck(value, linksOf(runContent))
+}
+
+// ModelTextCheckCombined is the rule all fields joined by spaces break (instruction-override phrasing only); "" for
+// none.
+func ModelTextCheckCombined(fields []string) string { return guardCheckCombined(fields) }

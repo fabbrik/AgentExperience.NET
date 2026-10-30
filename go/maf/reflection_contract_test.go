@@ -113,6 +113,9 @@ func (c reflectionCase) options() ChatClientReflectorOptions {
 	if model, ok := member(c.reflector, "modelName").(string); ok {
 		options.ModelName = model
 	}
+	if throws, _ := member(c.reflector, "configureChatOptionsThrows").(bool); throws {
+		options.ConfigureChatOptions = func(*ChatOptions) error { return errors.New("the host's callback failed") }
+	}
 	if temperature := member(c.reflector, "temperature"); temperature != nil {
 		t := float32(ct.Number(temperature))
 		options.Temperature = &t
@@ -212,7 +215,7 @@ func TestTheReflectionPromptFixturesAreWhatTheReflectorSends(t *testing.T) {
 func TestTheReflectionOutputFixturesAreWhatFinalizationStores(t *testing.T) {
 	const family = "reflection-output"
 	cases := ct.Cases(family)
-	if len(cases) != 24 {
+	if len(cases) != 31 {
 		t.Fatalf("%s cases: %v", family, cases)
 	}
 	for _, name := range cases {

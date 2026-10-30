@@ -41,7 +41,7 @@ func exportStore(t *testing.T, c *ct.LessonExportCase) *Store {
 
 func TestTheLessonExportFixturesGiveDotNetsFile(t *testing.T) {
 	cases := ct.Cases(ct.LessonExportFamily)
-	if len(cases) != 6 {
+	if len(cases) != 8 {
 		t.Fatalf("lesson-export cases: %v", cases)
 	}
 	for _, name := range cases {

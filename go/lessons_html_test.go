@@ -84,22 +84,24 @@ func TestTheLessonsHandlerServesThePageWithItsHeaders(t *testing.T) {
 		!strings.Contains(response.Body.String(), "tenant t / application a / project p") {
 		t.Fatalf("%d %s", response.Code, response.Body.String())
 	}
-	for key, value := range map[string]string{"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
-		"X-Frame-Options": "DENY", "Content-Security-Policy": ae.LessonsHTMLContentSecurityPolicy} {
+	expectedHeaders := map[string]string{"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
+		"X-Frame-Options": "DENY", "Content-Security-Policy": ae.LessonsHTMLContentSecurityPolicy}
+	if len(response.Header()) != len(expectedHeaders) {
+		t.Fatalf("headers %v: exactly .NET's four are sent", response.Header())
+	}
+	for key, value := range expectedHeaders {
 		if response.Header().Get(key) != value {
 			t.Errorf("%s: %q", key, response.Header().Get(key))
 		}
 	}
 
-	head := httptest.NewRecorder()
-	handler.ServeHTTP(head, httptest.NewRequest(http.MethodHead, "/lessons", nil))
-	if head.Code != http.StatusOK || head.Body.Len() != 0 {
-		t.Fatalf("HEAD: %d, %d bytes", head.Code, head.Body.Len())
-	}
-	post := httptest.NewRecorder()
-	handler.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/lessons", nil))
-	if post.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("POST: %d", post.Code)
+	// GET only, as .NET's MapGet: HEAD too is 405 with Allow: GET.
+	for _, method := range []string{http.MethodHead, http.MethodPost, http.MethodPut} {
+		refused := httptest.NewRecorder()
+		handler.ServeHTTP(refused, httptest.NewRequest(method, "/lessons", nil))
+		if refused.Code != http.StatusMethodNotAllowed || refused.Header().Get("Allow") != "GET" || refused.Body.Len() != 0 {
+			t.Fatalf("%s: %d %v", method, refused.Code, refused.Header())
+		}
 	}
 
 	// The host decides who may see it: no identity is 403, a failure 500, and neither says why.
@@ -112,7 +114,7 @@ func TestTheLessonsHandlerServesThePageWithItsHeaders(t *testing.T) {
 	failed := httptest.NewRecorder()
 	failing.ServeHTTP(failed, httptest.NewRequest(http.MethodGet, "/lessons", nil))
 	if forbidden.Code != http.StatusForbidden || failed.Code != http.StatusInternalServerError ||
-		strings.Contains(failed.Body.String(), "secret") {
+		forbidden.Body.Len() != 0 || failed.Body.Len() != 0 {
 		t.Fatalf("%d, %d %q", forbidden.Code, failed.Code, failed.Body.String())
 	}
 

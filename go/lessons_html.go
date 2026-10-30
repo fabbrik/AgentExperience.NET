@@ -1,7 +1,7 @@
 package agentexperience
 
 import (
-	"bytes"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -194,14 +194,15 @@ func lessonHTML(html *strings.Builder, lesson *Lesson, injectionsTracked bool) {
 // frame-ancestors, so the header carries it.
 const LessonsHTMLContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
 
-// LessonsHTMLHandler serves the lessons page of the caller's own scope. It maps nothing itself: mount it where you
-// choose, behind your own authorization. Exposing it publicly discloses every lesson in the scope.
+// LessonsHTMLHandler serves the lessons page of the caller's own scope, as the deployment guide's .NET endpoint does.
+// It maps nothing itself: mount it where you choose, behind your own authorization. Exposing it publicly discloses
+// every lesson in the scope.
 //
 // Identity resolves the caller from the host's own authentication (the request's authenticated principal), never
-// from its query or body: nil, nil answers 403 Forbidden and an error 500, each with no body detail. Query is the
-// lessons query (the defaults when zero). The page is sent as text/html; charset=utf-8 with Cache-Control: no-store,
-// X-Frame-Options: DENY and LessonsHTMLContentSecurityPolicy; a HEAD request gets the headers alone, and a method
-// other than GET or HEAD 405.
+// from its query or body. Query is the lessons query (the defaults when zero). It answers GET only: any other method,
+// HEAD included, is 405 with Allow: GET. No identity (nil, nil) is 403, and a resolution or read that fails 500, each
+// with no body. The page is sent as text/html; charset=utf-8 with exactly .NET's headers, Cache-Control: no-store,
+// X-Frame-Options: DENY and LessonsHTMLContentSecurityPolicy, and no others.
 type LessonsHTMLHandler struct {
 	Lessons  *Lessons
 	Identity func(r *http.Request) (*Identity, error)
@@ -210,39 +211,34 @@ type LessonsHTMLHandler struct {
 
 // ServeHTTP lists the identity's lessons and writes the page.
 func (h LessonsHTMLHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	if h.Lessons == nil || h.Identity == nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	identity, err := h.Identity(r)
 	if err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	if identity == nil {
-		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	page, err := h.Lessons.ListFor(r.Context(), *identity, h.Query)
 	if err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	body := []byte(RenderLessonsHTML(page))
 	header := w.Header()
 	header.Set("Content-Type", "text/html; charset=utf-8")
 	header.Set("Cache-Control", "no-store")
 	header.Set("X-Frame-Options", "DENY")
 	header.Set("Content-Security-Policy", LessonsHTMLContentSecurityPolicy)
-	header.Set("X-Content-Type-Options", "nosniff")
-	header.Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(http.StatusOK)
-	if r.Method == http.MethodGet {
-		_, _ = bytes.NewReader(body).WriteTo(w)
-	}
+	_, _ = io.WriteString(w, RenderLessonsHTML(page))
 }

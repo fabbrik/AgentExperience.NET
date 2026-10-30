@@ -184,7 +184,9 @@ result, err := lessons.ExportMeasured(ctx, identity, sink, nil) // nil: the bene
 - **The file** names the scope and the export instant, then each lesson's revision, measured benefit and text (the
   verbose block's lesson lines, `ae.RenderLessonText`). Everything drawn from a record is an indented code block, so no
   lesson can add a heading, a link or an instruction outside it. It is written to a temporary file beside it and
-  renamed over it, so a reader sees the old file or the new one; the directory must exist.
+  renamed over it, so a reader sees the old file or the new one; the directory must exist. The file is created as
+  .NET creates one, `0666` less the umask (`0644` under the usual one), never owner-only. The previous file is read as
+  .NET reads it: a leading byte order mark is dropped, and a heading's GUID may have white space around it.
 - **The path is yours.** A blank one is refused and the rest made absolute; as in .NET it is confined to nothing, so a
   path from configuration you do not trust is yours to check.
 - **Your own sink** implements `ae.LessonSink` (`Sync(ctx, scope, current)`): another memory store, an instruction
@@ -198,8 +200,10 @@ result, err := lessons.ExportMeasured(ctx, identity, sink, nil) // nil: the bene
 `ae.RenderLessonsHTML(page)` is a lessons page as one self-contained HTML document (inline CSS, no script, no external
 request, light and dark mode), byte for byte .NET's `ExperienceLessonsHtml.Render`, every value HTML-encoded as .NET's
 `WebUtility.HtmlEncode` encodes it. `ae.LessonsHTMLHandler` is an `http.Handler` that lists the caller's scope and
-serves it with `Cache-Control: no-store`, `X-Frame-Options: DENY` and a `frame-ancestors 'none'` content security
-policy. **Authorization is yours:** `Identity` resolves the caller from your own authentication (never from the
+serves it with exactly the headers .NET's documented endpoint sets: `Content-Type: text/html; charset=utf-8`,
+`Cache-Control: no-store`, `X-Frame-Options: DENY` and a `frame-ancestors 'none'` content security policy. Like that
+endpoint (`MapGet`) it answers `GET` only (any other method, `HEAD` included, is 405 with `Allow: GET`); no identity is
+403 and a failure 500, neither with a body. **Authorization is yours:** `Identity` resolves the caller from your own authentication (never from the
 request's query or body; `nil` answers 403), and the page discloses every lesson in the scope:
 
 ```go
@@ -236,7 +240,10 @@ bound field from the request, and returns a reflection marked model-authored. Fi
 links and UNC paths, and any URL, hostname or IP address the run did not show the model), and the block fences it as
 model-authored. A failure is a `*maf.ReflectionFailedError` with .NET's kind and fixed message; the record is then
 stored `Quarantined` with no lesson, as in .NET (`FinalizedExperience.ReflectionFailure`; a refusal is
-`ScreeningRefusal`, an `*ae.ScreeningRefusalError` with .NET's code and reason). It emits no telemetry of its own.
+`ScreeningRefusal`, an `*ae.ScreeningRefusalError` with .NET's code and reason; a binding check or a screening that
+panics is refused `Unreadable`, naming only the panic value's type, as .NET's backstop). The guard bounds its work on
+each text to one second, as .NET bounds each match: a run content text not read in time admits nothing, and a field not
+checked in time is refused as "text that could not be checked in time". It emits no telemetry of its own.
 Privacy is .NET's: sanitized captured run content leaves your process for your model provider.
 
 | .NET | Go |

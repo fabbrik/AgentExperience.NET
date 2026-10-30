@@ -63,6 +63,10 @@ func LoadLessonExportCase(name string) (*LessonExportCase, error) {
 		if c.Previous, err = os.ReadFile(filepath.Join(dir, "previous.md")); err != nil {
 			return nil, err
 		}
+		// The file before the export starts with a UTF-8 byte order mark (contract files never hold one).
+		if bom, _ := get(options, "previousFileBom").(bool); bom {
+			c.Previous = append([]byte{0xEF, 0xBB, 0xBF}, c.Previous...)
+		}
 	}
 	if c.ExpectedFile, err = os.ReadFile(filepath.Join(dir, "expected.md")); err != nil {
 		return nil, err

@@ -73,7 +73,7 @@ func (r ReflectionRequest) EnsureMatches(reflection Reflection) error {
 		mismatch = "CompletionScore"
 	case reflection.VerificationRuleVersion != r.Evaluation.RuleVersion:
 		mismatch = "VerificationRuleVersion"
-	case !slices.Equal(reflection.EvidenceIDs, ids) && !(len(reflection.EvidenceIDs) == 0 && len(ids) == 0):
+	case reflection.EvidenceIDs == nil || !slices.Equal(reflection.EvidenceIDs, ids):
 		mismatch = "EvidenceIds"
 	}
 	if mismatch == "" {
@@ -97,6 +97,8 @@ const (
 	RefusalMissingProducer     ScreeningRefusalCode = "MissingProducer"
 	RefusalUndefinedAuthorship ScreeningRefusalCode = "UndefinedAuthorship"
 	RefusalUnsafeContent       ScreeningRefusalCode = "UnsafeContent"
+	// RefusalUnreadable is a binding check or a screening that failed (panicked): .NET's backstop.
+	RefusalUnreadable ScreeningRefusalCode = "Unreadable"
 )
 
 // ScreeningRefusalError is a reflection screening refused: its code and its content-free reason (it names fields,
@@ -104,6 +106,8 @@ const (
 type ScreeningRefusalError struct {
 	Code   ScreeningRefusalCode
 	Reason string
+	// ExceptionType is the type of what a failed screening panicked with (Unreadable); never its value.
+	ExceptionType string
 }
 
 func (e *ScreeningRefusalError) Error() string { return ErrScreeningRefused.Error() + ": " + e.Reason }
@@ -138,6 +142,25 @@ func reflectAndScreen(ctx context.Context, reflector Reflector, request Reflecti
 		}
 		return nil, failure, nil, nil
 	}
+	return bindAndScreen(reflector, request, written)
+}
+
+// bindAndScreen binds and screens a reflection. A binding check or a screening that fails never escapes: as .NET's
+// backstop, it is a refusal coded Unreadable, naming only the type of what it panicked with.
+func bindAndScreen(reflector Reflector, request ReflectionRequest, written Reflection) (
+	reflection *Reflection, failure error, refusal error, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t := reflect.TypeOf(recovered)
+			name := "nil"
+			if t != nil {
+				name = t.String()
+			}
+			reflection, failure, err = nil, nil, nil
+			refusal = &ScreeningRefusalError{Code: RefusalUnreadable, Reason: "screening the reflection threw",
+				ExceptionType: name}
+		}
+	}()
 	written.EvidenceIDs = slices.Clone(written.EvidenceIDs)
 	if bindingErr := request.EnsureMatches(written); bindingErr != nil {
 		return nil, bindingErr, nil, nil

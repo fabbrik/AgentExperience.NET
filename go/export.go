@@ -2,6 +2,8 @@ package agentexperience
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -238,7 +240,8 @@ func (s *MarkdownLessonFileSink) Sync(ctx context.Context, scope Scope, current 
 
 	previous := map[UUID]string{}
 	if data, err := os.ReadFile(s.Path); err == nil {
-		previous = markdownSections(string(data))
+		// Read as .NET's File.ReadAllText reads it: a leading UTF-8 byte order mark is dropped.
+		previous = markdownSections(strings.TrimPrefix(string(data), "\uFEFF"))
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return LessonSyncResult{}, err
 	}
@@ -372,7 +375,8 @@ func markdownSections(file string) map[UUID]string {
 	}
 	for _, line := range strings.Split(strings.ReplaceAll(file, "\r\n", "\n"), "\n") {
 		if strings.HasPrefix(line, LessonHeadingPrefix) {
-			if next, err := ParseUUID(line[len(LessonHeadingPrefix):]); err == nil {
+			// .NET's Guid.TryParseExact trims char.IsWhiteSpace characters (the no-break space too) at both ends.
+			if next, err := ParseUUID(strings.TrimFunc(line[len(LessonHeadingPrefix):], isWhitespace)); err == nil {
 				closeSection()
 				id = &next
 				section.Reset()
@@ -387,14 +391,18 @@ func markdownSections(file string) map[UUID]string {
 	return sections
 }
 
-// writeAtomically writes content to a temporary file beside path, then renames it over path; a failure removes the
-// temporary file.
+// writeAtomically writes content to a temporary file beside path, created as .NET creates one (0666 less the
+// process's umask, never owner-only), then renames it over path; a failure removes the temporary file.
 func writeAtomically(path, content string) (err error) {
-	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
+	var random [16]byte
+	if _, err = rand.Read(random[:]); err != nil {
+		return err
+	}
+	name := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+"."+hex.EncodeToString(random[:])+".tmp")
+	temporary, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
 	if err != nil {
 		return err
 	}
-	name := temporary.Name()
 	defer func() {
 		if err != nil {
 			_ = os.Remove(name)
