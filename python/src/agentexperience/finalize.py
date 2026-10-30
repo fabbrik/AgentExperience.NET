@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import inspect
 import uuid
-from collections.abc import Awaitable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
