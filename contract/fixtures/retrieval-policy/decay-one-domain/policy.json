@@ -1,0 +1,32 @@
+{
+  "description": "One domain decays, with a 30-day half-life measured from created_at: one half-life old ranks on half its stored confidence, two half-lives on a quarter, and its Confidence component reports the stored value as undecayedValue. A created_at in the future (clock skew) decays nothing but still reports undecayedValue. Domains match ordinally (\"Framework-API\" is not listed), and a record with no domain does not decay: their undecayedValue is null.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {},
+  "excludeModelAuthored": false,
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.5,
+    "maxAgeTicks": null,
+    "recencyHalfLifeTicks": 25920000000000,
+    "candidateLimit": 50,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": null
+  },
+  "confidenceDecay": {
+    "domainKey": "domain",
+    "halfLivesTicks": {
+      "framework-api": 25920000000000
+    },
+    "defaultHalfLifeTicks": null
+  }
+}

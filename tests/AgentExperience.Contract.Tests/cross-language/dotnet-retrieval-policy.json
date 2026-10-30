@@ -1,0 +1,964 @@
+{
+  "description": "Story 27.4: insert seed as a search seed is inserted, search it for taskText in scope through the port's own store, and retrieve at now with policy, confidenceDecay and preferredEnvironment: the outcome, truncated, the ranked IDs in order with every score and component (within 1e-12) and the exclusions must be expected's.",
+  "scope": {
+    "tenantId": "cross-language-retrieval",
+    "applicationId": "retrieval-app",
+    "projectId": "retrieval-project",
+    "teamId": null,
+    "agentId": "retrieval-agent",
+    "userId": null
+  },
+  "taskText": "Rotate the signing keys before the release",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {
+    "region": "us-east"
+  },
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.5,
+    "maxAgeTicks": 155520000000000,
+    "recencyHalfLifeTicks": 12096000000000,
+    "candidateLimit": 50,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": null
+  },
+  "confidenceDecay": {
+    "domainKey": "domain",
+    "halfLivesTicks": {
+      "framework-api": 25920000000000,
+      "math": null,
+      "security": 77760000000000
+    },
+    "defaultHalfLifeTicks": 315360000000000
+  },
+  "seed": [
+    {
+      "columns": {
+        "experience_id": "000000c1-0000-4000-8000-000000000001",
+        "source_run_id": "000000c1-0000-4000-8000-000000000101",
+        "tenant_id": "cross-language-retrieval",
+        "application_id": "retrieval-app",
+        "project_id": "retrieval-project",
+        "team_id": null,
+        "agent_id": "retrieval-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.95,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-01-01T09:00:00+00:00",
+        "updated_at": "2026-02-28T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000c1-0000-4000-8000-000000000e01",
+              "verificationRoundId": "000000c1-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "000000c1-0000-4000-8000-000000000201",
+          "experienceRunId": "000000c1-0000-4000-8000-000000000101",
+          "lesson": "Lesson 1: verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "000000c1-0000-4000-8000-000000000e01"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west",
+            "domain": "framework-api"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    {
+      "columns": {
+        "experience_id": "000000c1-0000-4000-8000-000000000002",
+        "source_run_id": "000000c1-0000-4000-8000-000000000102",
+        "tenant_id": "cross-language-retrieval",
+        "application_id": "retrieval-app",
+        "project_id": "retrieval-project",
+        "team_id": null,
+        "agent_id": "retrieval-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Reinforced",
+        "reuse_confidence": 0.8,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-01-01T09:00:00+00:00",
+        "updated_at": "2026-02-10T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000c1-0000-4000-8000-000000000e02",
+              "verificationRoundId": "000000c1-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "000000c1-0000-4000-8000-000000000202",
+          "experienceRunId": "000000c1-0000-4000-8000-000000000102",
+          "lesson": "Lesson 2: verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "000000c1-0000-4000-8000-000000000e02"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west",
+            "domain": "security"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    {
+      "columns": {
+        "experience_id": "000000c1-0000-4000-8000-000000000003",
+        "source_run_id": "000000c1-0000-4000-8000-000000000103",
+        "tenant_id": "cross-language-retrieval",
+        "application_id": "retrieval-app",
+        "project_id": "retrieval-project",
+        "team_id": null,
+        "agent_id": "retrieval-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.7,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2024-10-18T09:00:00+00:00",
+        "updated_at": "2025-09-04T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000c1-0000-4000-8000-000000000e03",
+              "verificationRoundId": "000000c1-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "000000c1-0000-4000-8000-000000000203",
+          "experienceRunId": "000000c1-0000-4000-8000-000000000103",
+          "lesson": "Lesson 3: verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "000000c1-0000-4000-8000-000000000e03"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west",
+            "domain": "math"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    {
+      "columns": {
+        "experience_id": "000000c1-0000-4000-8000-000000000004",
+        "source_run_id": "000000c1-0000-4000-8000-000000000104",
+        "tenant_id": "cross-language-retrieval",
+        "application_id": "retrieval-app",
+        "project_id": "retrieval-project",
+        "team_id": null,
+        "agent_id": "retrieval-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.99,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2025-08-14T09:00:00+00:00",
+        "updated_at": "2025-09-02T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000c1-0000-4000-8000-000000000e04",
+              "verificationRoundId": "000000c1-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "000000c1-0000-4000-8000-000000000204",
+          "experienceRunId": "000000c1-0000-4000-8000-000000000104",
+          "lesson": "Lesson 4: verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "000000c1-0000-4000-8000-000000000e04"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west",
+            "domain": "math"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    {
+      "columns": {
+        "experience_id": "000000c1-0000-4000-8000-000000000005",
+        "source_run_id": "000000c1-0000-4000-8000-000000000105",
+        "tenant_id": "cross-language-retrieval",
+        "application_id": "retrieval-app",
+        "project_id": "retrieval-project",
+        "team_id": null,
+        "agent_id": "retrieval-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.6,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-01-31T09:00:00+00:00",
+        "updated_at": "2026-01-31T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000c1-0000-4000-8000-000000000e05",
+              "verificationRoundId": "000000c1-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "000000c1-0000-4000-8000-000000000205",
+          "experienceRunId": "000000c1-0000-4000-8000-000000000105",
+          "lesson": "Lesson 5: verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "000000c1-0000-4000-8000-000000000e05"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "us-east"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    {
+      "columns": {
+        "experience_id": "000000c1-0000-4000-8000-000000000006",
+        "source_run_id": "000000c1-0000-4000-8000-000000000106",
+        "tenant_id": "cross-language-retrieval",
+        "application_id": "retrieval-app",
+        "project_id": "retrieval-project",
+        "team_id": null,
+        "agent_id": "retrieval-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.75,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2025-01-26T09:00:00+00:00",
+        "updated_at": "2026-02-27T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000c1-0000-4000-8000-000000000e06",
+              "verificationRoundId": "000000c1-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "000000c1-0000-4000-8000-000000000206",
+          "experienceRunId": "000000c1-0000-4000-8000-000000000106",
+          "lesson": "Lesson 6: verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "000000c1-0000-4000-8000-000000000e06"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west",
+            "domain": "business-rule"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    {
+      "columns": {
+        "experience_id": "000000c1-0000-4000-8000-000000000007",
+        "source_run_id": "000000c1-0000-4000-8000-000000000107",
+        "tenant_id": "cross-language-retrieval",
+        "application_id": "retrieval-app",
+        "project_id": "retrieval-project",
+        "team_id": null,
+        "agent_id": "retrieval-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.4,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-02-20T09:00:00+00:00",
+        "updated_at": "2026-03-01T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000c1-0000-4000-8000-000000000e07",
+              "verificationRoundId": "000000c1-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "000000c1-0000-4000-8000-000000000207",
+          "experienceRunId": "000000c1-0000-4000-8000-000000000107",
+          "lesson": "Lesson 7: verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "000000c1-0000-4000-8000-000000000e07"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west",
+            "domain": "framework-api"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    {
+      "columns": {
+        "experience_id": "000000c1-0000-4000-8000-000000000008",
+        "source_run_id": "000000c1-0000-4000-8000-000000000108",
+        "tenant_id": "cross-language-retrieval",
+        "application_id": "retrieval-app",
+        "project_id": "retrieval-project",
+        "team_id": null,
+        "agent_id": "retrieval-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Quarantined",
+        "reuse_confidence": 0.9,
+        "supporting_validations": 0,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-02-20T09:00:00+00:00",
+        "updated_at": "2026-03-01T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Failed",
+          "evidence": [
+            {
+              "evidenceId": "000000c1-0000-4000-8000-000000000e08",
+              "verificationRoundId": "000000c1-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 0,
+        "reflection": null,
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    {
+      "columns": {
+        "experience_id": "000000c1-0000-4000-8000-000000000009",
+        "source_run_id": "000000c1-0000-4000-8000-000000000109",
+        "tenant_id": "cross-language-retrieval",
+        "application_id": "retrieval-app",
+        "project_id": "retrieval-project",
+        "team_id": null,
+        "agent_id": "retrieval-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Reinforced",
+        "reuse_confidence": 0.55,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-03-01T09:00:00+00:00",
+        "updated_at": "2026-03-01T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000c1-0000-4000-8000-000000000e09",
+              "verificationRoundId": "000000c1-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "000000c1-0000-4000-8000-000000000209",
+          "experienceRunId": "000000c1-0000-4000-8000-000000000109",
+          "lesson": "Lesson 9: verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "000000c1-0000-4000-8000-000000000e09"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west",
+            "domain": "ops"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    }
+  ],
+  "expected": {
+    "outcome": "Completed",
+    "truncated": false,
+    "ranked": [
+      {
+        "experienceId": "000000c1-0000-4000-8000-000000000009",
+        "score": 0.6924934036411872,
+        "components": [
+          {
+            "kind": "Relevance",
+            "value": 0.75,
+            "weight": 0.35,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Confidence",
+            "value": 0.5489565227583771,
+            "weight": 0.25,
+            "undecayedValue": 0.55
+          },
+          {
+            "kind": "Recency",
+            "value": 0.9516951530106196,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Status",
+            "value": 1,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "EnvironmentCompatibility",
+            "value": 0,
+            "weight": 0.1,
+            "undecayedValue": null
+          }
+        ]
+      },
+      {
+        "experienceId": "000000c1-0000-4000-8000-000000000005",
+        "score": 0.6131578566968561,
+        "components": [
+          {
+            "kind": "Relevance",
+            "value": 0.75,
+            "weight": 0.35,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Confidence",
+            "value": 0.5667728771478389,
+            "weight": 0.25,
+            "undecayedValue": 0.6
+          },
+          {
+            "kind": "Recency",
+            "value": 0.22643091606597668,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Status",
+            "value": 0.5,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "EnvironmentCompatibility",
+            "value": 1,
+            "weight": 0.1,
+            "undecayedValue": null
+          }
+        ]
+      },
+      {
+        "experienceId": "000000c1-0000-4000-8000-000000000002",
+        "score": 0.5942168908321228,
+        "components": [
+          {
+            "kind": "Relevance",
+            "value": 0.75,
+            "weight": 0.35,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Confidence",
+            "value": 0.5039684199579493,
+            "weight": 0.25,
+            "undecayedValue": 0.8
+          },
+          {
+            "kind": "Recency",
+            "value": 0.3714985722842371,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Status",
+            "value": 1,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "EnvironmentCompatibility",
+            "value": 0,
+            "weight": 0.1,
+            "undecayedValue": null
+          }
+        ]
+      },
+      {
+        "experienceId": "000000c1-0000-4000-8000-000000000006",
+        "score": 0.5545172892877296,
+        "components": [
+          {
+            "kind": "Relevance",
+            "value": 0.75,
+            "weight": 0.35,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Confidence",
+            "value": 0.3508854644027319,
+            "weight": 0.25,
+            "undecayedValue": 0.75
+          },
+          {
+            "kind": "Recency",
+            "value": 0.8619728212469777,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Status",
+            "value": 0.5,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "EnvironmentCompatibility",
+            "value": 0,
+            "weight": 0.1,
+            "undecayedValue": null
+          }
+        ]
+      },
+      {
+        "experienceId": "000000c1-0000-4000-8000-000000000001",
+        "score": 0.532733549639586,
+        "components": [
+          {
+            "kind": "Relevance",
+            "value": 0.75,
+            "weight": 0.35,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Confidence",
+            "value": 0.2375,
+            "weight": 0.25,
+            "undecayedValue": 0.95
+          },
+          {
+            "kind": "Recency",
+            "value": 0.9057236642639067,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Status",
+            "value": 0.5,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "EnvironmentCompatibility",
+            "value": 0,
+            "weight": 0.1,
+            "undecayedValue": null
+          }
+        ]
+      },
+      {
+        "experienceId": "000000c1-0000-4000-8000-000000000003",
+        "score": 0.5125212426035063,
+        "components": [
+          {
+            "kind": "Relevance",
+            "value": 0.75,
+            "weight": 0.35,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Confidence",
+            "value": 0.7,
+            "weight": 0.25,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Recency",
+            "value": 0.00014161735670900418,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "Status",
+            "value": 0.5,
+            "weight": 0.15,
+            "undecayedValue": null
+          },
+          {
+            "kind": "EnvironmentCompatibility",
+            "value": 0,
+            "weight": 0.1,
+            "undecayedValue": null
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "experienceId": "000000c1-0000-4000-8000-000000000004",
+        "reason": "Expired"
+      }
+    ]
+  }
+}

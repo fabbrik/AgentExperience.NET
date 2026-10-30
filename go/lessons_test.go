@@ -99,8 +99,7 @@ func TestLessonsViewFixtures(t *testing.T) {
 				// and PostgreSQL stores run them.
 				t.Skip("needs a store that reads the holdout")
 			}
-			now := c.Now
-			lessons := lessonsOf(t, readerOf(c), ae.LessonsOptions{Clock: func() ae.Instant { return now }})
+			lessons := lessonsOf(t, readerOf(c), c.Options())
 			page, err := lessons.List(context.Background(), ae.BoundsOf(c.Scope), c.Scope, c.Query())
 			if err != nil {
 				t.Fatal(err)

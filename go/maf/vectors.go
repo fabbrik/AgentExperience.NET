@@ -172,9 +172,10 @@ func (s *settings) indexOf() (ae.EmbeddingIndex, *ae.VectorFallback) {
 }
 
 // vectorChannel is the vector channel (contract 1.6): embed the task text, search the stored vectors, both within
-// VectorTimeout. It never panics and never fails the invocation: whatever goes wrong is the fallback it answers with
+// ctx (the retrieval policy's Timeout) and, when bounded (VectorTimeout is strictly shorter), VectorTimeout. It never panics and never fails the invocation: whatever goes wrong is the fallback it answers with
 // (and no rows), and the fallback's text never quotes record or vector content.
-func (s *settings) vectorChannel(ctx context.Context, identity *ae.Identity, taskText string) (rows []ae.SearchRow,
+func (s *settings) vectorChannel(ctx context.Context, identity *ae.Identity, taskText string,
+	bounded bool) (rows []ae.SearchRow,
 	fallback *ae.VectorFallback) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -186,16 +187,22 @@ func (s *settings) vectorChannel(ctx context.Context, identity *ae.Identity, tas
 	if fallback != nil {
 		return nil, fallback
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.VectorTimeout)
-	defer cancel()
+	if bounded {
+		// VectorTimeout is strictly shorter than the retrieval policy's Timeout: past it, a fallback.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.VectorTimeout)
+		defer cancel()
+	}
 
 	query, err := callBounded(ctx, s.vectorSlots, func(ctx context.Context) (ae.VectorQuery, error) {
 		e, err := s.embed(ctx, taskText)
 		if err != nil {
 			return ae.VectorQuery{}, err
 		}
-		query := ae.VectorQuery{Scope: identity.Scope, ModelID: e.modelID, Vector: e.vector,
-			ExcludeModelAuthored: s.ExcludeModelAuthored}
+		query, err := s.retrieval.VectorQuery(identity.Scope, e.modelID, e.vector, s.ExcludeModelAuthored)
+		if err != nil {
+			return ae.VectorQuery{}, err
+		}
 		return query, query.Validate()
 	})
 	if err != nil {

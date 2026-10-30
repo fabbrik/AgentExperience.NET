@@ -212,6 +212,9 @@ type InjectionResult struct {
 	// Omitted are the ranked records that were not put in the block, and why (contract 1.10): measured harmful,
 	// model-authored, past the record limit or over the byte budget, in the order .NET reports them.
 	Omitted []ae.OmittedRecord
+	// Excluded are the candidates ranking left out, and why (contract 1.12, .NET's Excluded): IneligibleStatus,
+	// ModelAuthored or Expired (RetrievalPolicy.MaxAge). Not a complete account: what the search filtered never shows.
+	Excluded []ae.Exclusion
 }
 
 // HoldoutOptions are the injection holdout (contract 1.8). The zero value is off.
@@ -316,8 +319,21 @@ type Options struct {
 	// ones included.
 	Embedder ae.Embedder
 	// MinVectorRelevance, when set (0 to 1), drops vector candidates whose relevance is below it; text candidates
-	// never are.
+	// never are. When set, it replaces RetrievalPolicy.MinimumVectorRelevance (as .NET's one-call setup lets
+	// MinimumSemanticSimilarity replace the policy's floor).
 	MinVectorRelevance *float64
+	// RetrievalPolicy is .NET's RetrievalPolicy (contract 1.12): the retrieval's Timeout (the text search and the
+	// vector channel together: past it, even when only the vector channel is still running, the invocation gets no
+	// block and the inject outcome RetrievalTimedOut; VectorTimeout is a fallback only when strictly shorter), the
+	// search's confidence floor, candidate limit and minimum of matched terms, the expiry (MaxAge, from a record's
+	// last lifecycle activity), the recency half-life, the abandoned-search cap and the vector floor. The zero policy
+	// is .NET's RetrievalPolicy.Default; a zero field means its default (a zero MaxAge, no expiry), and a negative or
+	// otherwise invalid one is refused by UseAgentExperience (an *ae.PolicyError naming the .NET option).
+	RetrievalPolicy ae.RetrievalPolicy
+	// ConfidenceDecay is .NET's ConfidenceDecayPolicy (contract 1.12): the confidence component fades by the lesson's
+	// age (from CreatedAt) at its domain's half-life. Ranking only: it never excludes. nil decays nothing. Copied
+	// when UseAgentExperience is called.
+	ConfidenceDecay *ae.ConfidenceDecayPolicy
 	// VectorTimeout bounds the vector channel of one injection in all (embedding the task text, then searching):
 	// past it the injection answers from text alone and reports ProviderUnavailable or VectorSearchFailed.
 	// DefaultVectorTimeout when 0.
@@ -361,6 +377,9 @@ type settings struct {
 	index tracker
 	// benefit is the cache the benefit policy acts on (contract 1.10); nil with the policy off.
 	benefit *benefitCache
+	// retrieval and decay are the resolved retrieval policy and confidence decay (contract 1.12; decay nil for none).
+	retrieval ae.RetrievalPolicy
+	decay     *ae.ConfidenceDecayPolicy
 	// measured are the memory providers UseMeasuredMemory wrapped on this configuration (contract 1.11), whose
 	// records the context provider's Close waits for too.
 	measuredMu sync.Mutex
@@ -447,6 +466,23 @@ func newSettings(options Options) (*settings, error) {
 	if options.MinVectorRelevance != nil && !(*options.MinVectorRelevance >= 0 && *options.MinVectorRelevance <= 1) {
 		return nil, errors.New("maf: the minimum vector relevance must be a number from 0 to 1")
 	}
+	retrievalPolicy := options.RetrievalPolicy
+	if options.MinVectorRelevance != nil {
+		// As .NET's one-call setup: the integration's floor replaces the policy's.
+		retrievalPolicy.MinimumVectorRelevance = options.MinVectorRelevance
+	}
+	resolvedPolicy, err := retrievalPolicy.Resolved()
+	if err != nil {
+		return nil, fmt.Errorf("maf: %w", err)
+	}
+	var resolvedDecay *ae.ConfidenceDecayPolicy
+	if options.ConfidenceDecay != nil {
+		decay, err := options.ConfidenceDecay.Resolved()
+		if err != nil {
+			return nil, fmt.Errorf("maf: %w", err)
+		}
+		resolvedDecay = &decay
+	}
 	if math.IsNaN(options.Holdout.Rate) || options.Holdout.Rate < 0 || options.Holdout.Rate > 1 {
 		return nil, errors.New("maf: the holdout rate must be a number from 0 to 1")
 	}
@@ -462,7 +498,8 @@ func newSettings(options Options) (*settings, error) {
 	if options.NewID == nil {
 		options.NewID = ae.NewRandomUUID
 	}
-	s := &settings{Options: options, vectorSlots: make(chan struct{}, MaxVectorCalls)}
+	s := &settings{Options: options, vectorSlots: make(chan struct{}, MaxVectorCalls), retrieval: resolvedPolicy,
+		decay: resolvedDecay}
 	if options.Environment != nil {
 		s.environment = *options.Environment
 	} else {

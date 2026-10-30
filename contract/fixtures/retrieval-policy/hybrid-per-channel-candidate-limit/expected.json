@@ -1,0 +1,95 @@
+{
+  "outcome": "Completed",
+  "query": {
+    "minConfidence": 0.5,
+    "limit": 3,
+    "minimumMatchedTerms": 3,
+    "excludeModelAuthored": false
+  },
+  "vectorQuery": {
+    "minConfidence": 0.5,
+    "limit": 3,
+    "excludeModelAuthored": false
+  },
+  "truncated": true,
+  "ranked": [
+    {
+      "experienceId": "000000c0-0000-4000-8000-000000000004",
+      "score": 0.7616216153971876,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 0.8,
+          "weight": 0.35,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Confidence",
+          "value": 0.6666666666666666,
+          "weight": 0.25,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Recency",
+          "value": 0.9330329915368074,
+          "weight": 0.15,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15,
+          "undecayedValue": null
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1,
+          "undecayedValue": null
+        }
+      ]
+    },
+    {
+      "experienceId": "000000c0-0000-4000-8000-000000000001",
+      "score": 0.7377157057638118,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 1,
+          "weight": 0.35,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Confidence",
+          "value": 0.26456684199469993,
+          "weight": 0.25,
+          "undecayedValue": 0.6666666666666666
+        },
+        {
+          "kind": "Recency",
+          "value": 0.9771599684342459,
+          "weight": 0.15,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15,
+          "undecayedValue": null
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1,
+          "undecayedValue": null
+        }
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "experienceId": "000000c0-0000-4000-8000-000000000002",
+      "reason": "Expired"
+    }
+  ]
+}

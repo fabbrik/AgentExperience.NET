@@ -24,6 +24,7 @@ from agentexperience import (
     ExperienceRecord,
     Instant,
     LessonsQuery,
+    RetrievalPolicy,
     Scope,
     from_stored,
 )
@@ -33,6 +34,7 @@ from agentexperience.block import render_block
 from agentexperience.inmemory import InMemoryExperienceStore, LessonsRead, LessonsReader
 from agentexperience.lessons import format_number, render_alone
 from agentexperience.observer import classify
+from agentexperience.retrieval import DEFAULT_MINIMUM_CONFIDENCE, timedelta_of_ticks
 
 FAMILY = FIXTURES / "lessons-view"
 NOW = Instant.parse("2026-03-02T15:00:00+00:00")
@@ -160,7 +162,19 @@ def run_case(store: Any, name: str, options: dict[str, Any] | None = None) -> No
         minimum_runs_per_arm=query.get("minimumRunsPerArm") or DEFAULT_MINIMUM_RUNS_PER_ARM,
         per_model=query.get("perModel", False),
     )
-    lessons = ExperienceLessons(store, clock=lambda: Instant.parse(query["now"]), benefit=policy, **(options or {}))
+    # Contract 1.12: the retrieval policy the view applies (its confidence floor and MaxAge), when the case sets them.
+    max_age = query.get("maxAgeTicks")
+    retrieval_policy = RetrievalPolicy(
+        minimum_confidence=query.get("minimumConfidence", DEFAULT_MINIMUM_CONFIDENCE),
+        max_age=None if max_age is None else timedelta_of_ticks(int(max_age)),
+    )
+    lessons = ExperienceLessons(
+        store,
+        clock=lambda: Instant.parse(query["now"]),
+        benefit=policy,
+        retrieval_policy=retrieval_policy,
+        **(options or {}),
+    )
     list_query = LessonsQuery(
         query["statuses"],
         query["limit"],
@@ -208,9 +222,10 @@ def test_lessons_view_postgres(pg_server: Any, name: str) -> None:
     run_case(store, name)
 
 
-def test_the_lessons_view_has_twelve_cases() -> None:
-    # Contract 1.7's eight, and contract 1.10's four with the measured benefit.
-    assert len(cases("lessons-view")) == 12
+def test_the_lessons_view_has_thirteen_cases() -> None:
+    # Contract 1.7's eight, contract 1.10's four with the measured benefit, and contract 1.12's retrieval policy.
+    assert len(cases("lessons-view")) == 13
+    assert "retrieval-policy" in cases("lessons-view")
     assert len([name for name in cases("lessons-view") if name.startswith("measured-benefit")]) == 4
 
 

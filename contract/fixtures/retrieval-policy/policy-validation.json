@@ -1,0 +1,737 @@
+[
+  {
+    "description": "The default policy and no decay.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": null
+  },
+  {
+    "description": "A timeout of exactly one day, the largest.",
+    "policy": {
+      "timeoutTicks": 864000000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": null
+  },
+  {
+    "description": "A timeout of one microsecond.",
+    "policy": {
+      "timeoutTicks": 10,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": null
+  },
+  {
+    "description": "A confidence floor of 0.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": null
+  },
+  {
+    "description": "A confidence floor of 1.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 1,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": null
+  },
+  {
+    "description": "A MaxAge of one microsecond.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": 10,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": null
+  },
+  {
+    "description": "A candidate limit of 1, the smallest.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 1,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": null
+  },
+  {
+    "description": "A candidate limit of 199, the largest (the store is asked for one more, at most 200).",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 199,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": null
+  },
+  {
+    "description": "A minimum vector relevance of 0.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": 0
+    },
+    "confidenceDecay": null,
+    "refusal": null
+  },
+  {
+    "description": "A minimum vector relevance of 1.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": 1
+    },
+    "confidenceDecay": null,
+    "refusal": null
+  },
+  {
+    "description": "A decay policy with a default half-life and a domain that never decays.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": {
+      "domainKey": "domain",
+      "halfLivesTicks": {
+        "framework-api": 25920000000000,
+        "math": null
+      },
+      "defaultHalfLifeTicks": 315360000000000
+    },
+    "refusal": null
+  },
+  {
+    "description": "A decay policy with no half-lives at all.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": {
+      "domainKey": "domain",
+      "halfLivesTicks": {},
+      "defaultHalfLifeTicks": null
+    },
+    "refusal": null
+  },
+  {
+    "description": "A zero timeout.",
+    "policy": {
+      "timeoutTicks": 0,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "Timeout",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A negative timeout.",
+    "policy": {
+      "timeoutTicks": -10,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "Timeout",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A timeout longer than one day.",
+    "policy": {
+      "timeoutTicks": 864000000010,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "Timeout",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A confidence floor below 0.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": -0.01,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "MinimumConfidence",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A confidence floor above 1.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 1.01,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "MinimumConfidence",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A confidence floor that is not a number.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": "NaN",
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "MinimumConfidence",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A zero MaxAge.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": 0,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "MaxAge",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A negative MaxAge.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": -10,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "MaxAge",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A zero recency half-life.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 0,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "RecencyHalfLife",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A negative recency half-life.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": -25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "RecencyHalfLife",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A zero candidate limit.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 0,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "CandidateLimit",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A negative candidate limit.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": -1,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "CandidateLimit",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A candidate limit of 200, one past the largest.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 200,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "CandidateLimit",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A zero abandoned-search cap.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 0,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "MaxAbandonedSearches",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A negative abandoned-search cap.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": -1,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "MaxAbandonedSearches",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A zero minimum of matched terms.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 0,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "MinimumMatchedTerms",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A negative minimum of matched terms.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": -1,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "MinimumMatchedTerms",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A minimum vector relevance below 0.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": -0.01
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "MinimumVectorRelevance",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A minimum vector relevance above 1.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": 1.01
+    },
+    "confidenceDecay": null,
+    "refusal": {
+      "parameter": "MinimumVectorRelevance",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "An empty domain key.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": {
+      "domainKey": "",
+      "halfLivesTicks": {
+        "framework-api": 25920000000000,
+        "math": null
+      },
+      "defaultHalfLifeTicks": 315360000000000
+    },
+    "refusal": {
+      "parameter": "DomainKey",
+      "exception": "ArgumentException"
+    }
+  },
+  {
+    "description": "A blank domain key.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": {
+      "domainKey": "  ",
+      "halfLivesTicks": {
+        "framework-api": 25920000000000,
+        "math": null
+      },
+      "defaultHalfLifeTicks": 315360000000000
+    },
+    "refusal": {
+      "parameter": "DomainKey",
+      "exception": "ArgumentException"
+    }
+  },
+  {
+    "description": "An empty domain in the half-life map.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": {
+      "domainKey": "domain",
+      "halfLivesTicks": {
+        "framework-api": 25920000000000,
+        "math": null,
+        "": 864000000000
+      },
+      "defaultHalfLifeTicks": 315360000000000
+    },
+    "refusal": {
+      "parameter": "HalfLives",
+      "exception": "ArgumentException"
+    }
+  },
+  {
+    "description": "A blank domain in the half-life map.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": {
+      "domainKey": "domain",
+      "halfLivesTicks": {
+        "framework-api": 25920000000000,
+        "math": null,
+        " ": 864000000000
+      },
+      "defaultHalfLifeTicks": 315360000000000
+    },
+    "refusal": {
+      "parameter": "HalfLives",
+      "exception": "ArgumentException"
+    }
+  },
+  {
+    "description": "A zero half-life for a domain.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": {
+      "domainKey": "domain",
+      "halfLivesTicks": {
+        "framework-api": 0,
+        "math": null
+      },
+      "defaultHalfLifeTicks": 315360000000000
+    },
+    "refusal": {
+      "parameter": "HalfLives",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A negative half-life for a domain.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": {
+      "domainKey": "domain",
+      "halfLivesTicks": {
+        "framework-api": -10,
+        "math": null
+      },
+      "defaultHalfLifeTicks": 315360000000000
+    },
+    "refusal": {
+      "parameter": "HalfLives",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A zero default half-life.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": {
+      "domainKey": "domain",
+      "halfLivesTicks": {
+        "framework-api": 25920000000000,
+        "math": null
+      },
+      "defaultHalfLifeTicks": 0
+    },
+    "refusal": {
+      "parameter": "DefaultHalfLife",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  },
+  {
+    "description": "A negative default half-life.",
+    "policy": {
+      "timeoutTicks": 5000000,
+      "minimumConfidence": 0.5,
+      "maxAgeTicks": null,
+      "recencyHalfLifeTicks": 25920000000000,
+      "candidateLimit": 50,
+      "maxAbandonedSearches": 16,
+      "minimumMatchedTerms": 3,
+      "minimumVectorRelevance": null
+    },
+    "confidenceDecay": {
+      "domainKey": "domain",
+      "halfLivesTicks": {
+        "framework-api": 25920000000000,
+        "math": null
+      },
+      "defaultHalfLifeTicks": -10
+    },
+    "refusal": {
+      "parameter": "DefaultHalfLife",
+      "exception": "ArgumentOutOfRangeException"
+    }
+  }
+]

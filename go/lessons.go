@@ -31,19 +31,22 @@ const (
 	LessonsDenied LessonsOutcome = "Denied"
 )
 
-// LessonIneligibility is why retrieval would not currently use a lesson. A port decides these five; .NET's Expired
-// (a retrieval policy's maximum age) and ContentUnconfirmed (provenance signing) do not exist here, because this port
-// has neither a maximum-age policy nor provenance signing, and are never answered.
+// LessonIneligibility is why retrieval would not currently use a lesson. A port decides these six; .NET's
+// ContentUnconfirmed (provenance signing) does not exist here, because this port has no provenance signing, and is
+// never answered.
 type LessonIneligibility string
 
 // The ineligibility codes, in the order they are decided.
 const (
 	// IneligibleStatus is a status that is not Validated or Reinforced.
 	IneligibleStatus LessonIneligibility = "Status"
-	// IneligibleBelowConfidenceFloor is a confidence below the retrieval minimum (DefaultMinConfidence), or NaN.
+	// IneligibleBelowConfidenceFloor is a confidence below the retrieval policy's MinimumConfidence, or NaN.
 	IneligibleBelowConfidenceFloor LessonIneligibility = "BelowConfidenceFloor"
 	// IneligibleModelAuthored is a model-authored lesson when the settings exclude them.
 	IneligibleModelAuthored LessonIneligibility = "ModelAuthored"
+	// IneligibleExpired is a lesson whose last activity (UpdatedAt) is more than the retrieval policy's MaxAge before
+	// the page's GeneratedAt (contract 1.12).
+	IneligibleExpired LessonIneligibility = "Expired"
 	// IneligibleOverByteBudget is a block larger than the block options' maximum bytes.
 	IneligibleOverByteBudget LessonIneligibility = "OverByteBudget"
 	// IneligibleUnrenderable is a record whose block could not be rendered.
@@ -225,6 +228,9 @@ type LessonsOptions struct {
 	ExcludeModelAuthored bool
 	// Clock stamps a page's GeneratedAt; Now when nil.
 	Clock func() Instant
+	// RetrievalPolicy is the injection's retrieval policy (contract 1.12): its MinimumConfidence is the floor a lesson
+	// is held against, and its MaxAge expires a lesson, at the page's clock. The zero policy is the default.
+	RetrievalPolicy RetrievalPolicy
 	// Benefit is the injection's benefit policy (contract 1.10): its Window, MinimumRunsPerArm and PerModel decide the
 	// estimate IncludeMeasuredBenefit reads (their defaults when zero), whether or not the policy is Enabled.
 	Benefit BenefitPolicy
@@ -236,6 +242,8 @@ type Lessons struct {
 	options LessonsOptions
 	// render writes the block of one record alone; RenderAlone, but for a test.
 	render func(*ExperienceRecord, BlockOptions) (string, error)
+	// policy is options.RetrievalPolicy, resolved.
+	policy RetrievalPolicy
 }
 
 // NewLessons is the lessons view over store, with the block options and model-authored flag the injection uses. It
@@ -250,10 +258,14 @@ func NewLessons(store LessonsReader, options LessonsOptions) (*Lessons, error) {
 	if err := options.Benefit.Validate(); err != nil {
 		return nil, err
 	}
+	policy, err := options.RetrievalPolicy.Resolved()
+	if err != nil {
+		return nil, err
+	}
 	if options.Clock == nil {
 		options.Clock = Now
 	}
-	return &Lessons{store: store, options: options, render: RenderAlone}, nil
+	return &Lessons{store: store, options: options, render: RenderAlone, policy: policy}, nil
 }
 
 // ListFor lists the lessons in identity's scope, under its authorization bounds: List(identity.Authorization(),
@@ -303,7 +315,7 @@ func (l *Lessons) List(ctx context.Context, bounds AuthorizationBounds, scope Sc
 			page.OutOfScopeDropped++
 			continue
 		}
-		lesson := l.describe(&held.Record)
+		lesson := l.describe(&held.Record, page.GeneratedAt)
 		if read.InjectionsTracked && held.Injection != nil {
 			at := held.Injection.LastInjectedAt
 			lesson.LastInjectedAt, lesson.InjectionCount = &at, held.Injection.InjectionCount
@@ -360,7 +372,7 @@ func (l *Lessons) addMeasuredBenefit(ctx context.Context, bounds AuthorizationBo
 func ptrTo[T any](value T) *T { return &value }
 
 // describe is one record as a lesson. A record that cannot be rendered is a lesson marked so, never a failure.
-func (l *Lessons) describe(record *ExperienceRecord) (lesson Lesson) {
+func (l *Lessons) describe(record *ExperienceRecord, now Instant) (lesson Lesson) {
 	lesson = Lesson{
 		ExperienceID: record.ExperienceID,
 		TaskID:       record.TaskID,
@@ -392,13 +404,16 @@ func (l *Lessons) describe(record *ExperienceRecord) (lesson Lesson) {
 	case record.Status != StatusValidated && record.Status != StatusReinforced:
 		lesson.Ineligibility = IneligibleStatus
 		lesson.IneligibleReason = "status " + string(record.Status) + " is never retrieved"
-	case !(record.ReuseConfidence >= DefaultMinConfidence):
+	case !(record.ReuseConfidence >= *l.policy.MinimumConfidence):
 		lesson.Ineligibility = IneligibleBelowConfidenceFloor
 		lesson.IneligibleReason = "confidence " + shortNumber(record.ReuseConfidence) +
-			" is below the retrieval floor " + shortNumber(DefaultMinConfidence)
+			" is below the retrieval floor " + shortNumber(*l.policy.MinimumConfidence)
 	case l.options.ExcludeModelAuthored && IsModelAuthored(record.Reflection):
 		lesson.Ineligibility = IneligibleModelAuthored
 		lesson.IneligibleReason = "model-authored lessons are excluded"
+	case l.policy.MaxAge > 0 && now.Sub(record.UpdatedAt).Ticks() > int64(l.policy.MaxAge/100):
+		lesson.Ineligibility = IneligibleExpired
+		lesson.IneligibleReason = "its last activity is older than the retrieval policy's maximum age"
 	case len(text) > maxBytes:
 		lesson.Ineligibility = IneligibleOverByteBudget
 		lesson.IneligibleReason = "its block (" + strconv.Itoa(len(text)) + " bytes) is larger than the " +

@@ -1,0 +1,30 @@
+{
+  "description": "A custom confidence floor (0.75) is what the store is asked for (query.minConfidence); every candidate it returned is at or above it. A 10-day default half-life then decays them all, and those decayed below the floor are still ranked, now by decayed confidence: the younger record stored at 0.75 outranks the older one stored at 0.95.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {},
+  "excludeModelAuthored": false,
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.75,
+    "maxAgeTicks": null,
+    "recencyHalfLifeTicks": 25920000000000,
+    "candidateLimit": 50,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": null
+  },
+  "confidenceDecay": {
+    "domainKey": "domain",
+    "halfLivesTicks": {},
+    "defaultHalfLifeTicks": 8640000000000
+  }
+}

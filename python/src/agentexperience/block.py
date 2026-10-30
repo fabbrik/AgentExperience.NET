@@ -151,6 +151,9 @@ class RankingComponent:
     kind: RankingComponentKind
     value: float
     weight: float
+    undecayed_value: float | None = None
+    """The stored confidence, on the ``Confidence`` component, when a confidence decay half-life applied (contract
+    1.12); ``value`` is then the decayed value that was ranked on. ``None`` otherwise."""
 
     @property
     def contribution(self) -> float:

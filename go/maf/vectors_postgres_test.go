@@ -104,7 +104,7 @@ func TestARecordEmbeddedByTheContractsSQLIsFoundByAGoAgent(t *testing.T) {
 	embedder := newFixed()
 	embedder.vector, embedder.model = query.Vector, query.ModelID
 	v := &vhost{host: newHost(t)}
-	a, _, _ := wire(t, v, store, Options{Embedder: embedder})
+	a, _, _ := wire(t, v, store, Options{Embedder: embedder, RetrievalPolicy: postgresRetrieval})
 	runText(t, a, paraphrase)
 	if len(v.reasons()) != 0 || len(v.injectionFailures) != 0 {
 		t.Fatalf("fallbacks %v, failures %+v", v.reasons(), v.injectionFailures)
@@ -115,7 +115,7 @@ func TestARecordEmbeddedByTheContractsSQLIsFoundByAGoAgent(t *testing.T) {
 
 	// Without the embedder the same query finds nothing, and says why.
 	plain := &vhost{host: newHost(t)}
-	b, _, _ := wire(t, plain, store, Options{})
+	b, _, _ := wire(t, plain, store, Options{RetrievalPolicy: postgresRetrieval})
 	runText(t, b, paraphrase)
 	if reasons := plain.reasons(); len(plain.injections) != 0 || len(reasons) != 1 || reasons[0] != ae.FallbackNotConfigured {
 		t.Fatalf("injections %+v, fallbacks %v", plain.injections, reasons)
@@ -125,7 +125,7 @@ func TestARecordEmbeddedByTheContractsSQLIsFoundByAGoAgent(t *testing.T) {
 	other := newFixed()
 	other.vector, other.model = query.Vector, "another-model"
 	mismatch := &vhost{host: newHost(t)}
-	c, _, _ := wire(t, mismatch, store, Options{Embedder: other})
+	c, _, _ := wire(t, mismatch, store, Options{Embedder: other, RetrievalPolicy: postgresRetrieval})
 	runText(t, c, paraphrase)
 	if reasons := mismatch.reasons(); len(mismatch.injections) != 0 || len(reasons) != 1 || reasons[0] != ae.FallbackModelMismatch {
 		t.Fatalf("injections %+v, fallbacks %v", mismatch.injections, reasons)
@@ -138,7 +138,7 @@ func TestAGoAgentStoresARecordAndItsEmbeddingInPostgreSQL(t *testing.T) {
 	database := createDatabase(t, admin, "vector_roundtrip")
 	store := newStore(t, admin, database)
 	v := &vhost{host: newHost(t)}
-	a, config := storing(t, v, store, Options{Embedder: newFixed(),
+	a, config := storing(t, v, store, Options{Embedder: newFixed(), RetrievalPolicy: postgresRetrieval,
 		Identity: ae.Identity{Principal: "go-principal", Scope: testScope}})
 	runText(t, a, ticket)
 	waitForIndex(t, config)
@@ -164,7 +164,7 @@ func TestAGoAgentStoresARecordAndItsEmbeddingInPostgreSQL(t *testing.T) {
 	}
 
 	later := &vhost{host: newHost(t)}
-	b, _, _ := wire(t, later, store, Options{Embedder: newFixed(),
+	b, _, _ := wire(t, later, store, Options{Embedder: newFixed(), RetrievalPolicy: postgresRetrieval,
 		Identity: ae.Identity{Principal: "go-principal", Scope: testScope}})
 	runText(t, b, "Zebra giraffe antelope")
 	if len(later.injections) != 1 || len(later.reasons()) != 0 {

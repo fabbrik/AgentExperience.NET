@@ -141,6 +141,7 @@ func TestTheGoAgentRecordsTheHoldoutTheDotNetEstimateReads(t *testing.T) {
 		Clock:              fixedClock(),
 		NewID:              ids.newID,
 		Holdout:            HoldoutOptions{Rate: 0.5},
+		RetrievalPolicy:    postgresRetrieval,
 		// Contract 1.9: every run records the model, so the fleet's estimate splits by it.
 		Model: "go-agent-model",
 	})

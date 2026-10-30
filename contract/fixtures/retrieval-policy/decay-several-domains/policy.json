@@ -1,0 +1,35 @@
+{
+  "description": "Several domains, each with its own half-life (framework-api 30 days, security 60, business-rule 365), one mapped to null (math: never decays, whatever the default says) and a 180-day default for a domain that is not listed (ops) or a record with none. Every record is 90 days old, so each decays by its own domain's rate.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {},
+  "excludeModelAuthored": false,
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.5,
+    "maxAgeTicks": null,
+    "recencyHalfLifeTicks": 25920000000000,
+    "candidateLimit": 50,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": null
+  },
+  "confidenceDecay": {
+    "domainKey": "domain",
+    "halfLivesTicks": {
+      "business-rule": 315360000000000,
+      "framework-api": 25920000000000,
+      "math": null,
+      "security": 51840000000000
+    },
+    "defaultHalfLifeTicks": 155520000000000
+  }
+}

@@ -413,8 +413,12 @@ func (s *Store) Search(ctx context.Context, bounds ae.AuthorizationBounds, param
 		}
 		return rows[i].Record.ExperienceID.String() < rows[j].Record.ExperienceID.String()
 	})
-	if len(rows) > ae.StatementLimit {
-		rows = rows[:ae.StatementLimit]
+	limit := parameters.Limit
+	if limit == 0 {
+		limit = ae.StatementLimit
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
 	}
 	return rows, nil
 }

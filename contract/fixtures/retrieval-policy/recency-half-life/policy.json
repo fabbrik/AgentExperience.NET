@@ -1,0 +1,26 @@
+{
+  "description": "A 7-day recency half-life: updated a week ago scores 0.5 on recency, two weeks ago 0.25, a day ago about 0.906, and an updated_at in the future (clock skew) 1. Confidence does not decay without a decay policy.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {},
+  "excludeModelAuthored": false,
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.5,
+    "maxAgeTicks": null,
+    "recencyHalfLifeTicks": 6048000000000,
+    "candidateLimit": 50,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": null
+  },
+  "confidenceDecay": null
+}

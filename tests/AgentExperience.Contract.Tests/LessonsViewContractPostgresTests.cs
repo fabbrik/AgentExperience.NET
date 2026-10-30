@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Holdout;
+using AgentExperience.Core.Retrieval;
 using AgentExperience.MicrosoftAgentFramework;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 using AgentExperience.Storage.Postgres;
@@ -153,6 +154,22 @@ public sealed class LessonsViewContractPostgresTests(ContractPostgresDatabase da
     private static async Task<ExperienceLessonsPage> ListAsync(NpgsqlDataSource application, LessonsViewQuery query)
     {
         var services = new ServiceCollection();
+        if (query.MinimumConfidence is not null || query.MaxAgeTicks is not null)
+        {
+            // Contract 1.12: the host's own retrieval service, under its policy, registered before the one-call setup, which
+            // keeps it; the view's eligibility is that service's.
+            var policy = RetrievalPolicy.Default with
+            {
+                MinimumConfidence = query.MinimumConfidence ?? RetrievalPolicy.DefaultMinimumConfidence,
+                MaxAge = query.MaxAgeTicks is { } ticks ? TimeSpan.FromTicks(ticks) : null,
+            };
+            services.AddSingleton(provider => new ExperienceRetrievalService(
+                provider.GetRequiredService<IExperienceCandidateSource>(),
+                policy,
+                RankingWeights.Default,
+                provider.GetRequiredService<TimeProvider>()));
+        }
+
         services.AddAgentExperience(options =>
             {
                 options.ResolveIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(null);

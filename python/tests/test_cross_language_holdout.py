@@ -36,7 +36,7 @@ pytest.importorskip("agent_framework")
 from _benefit import TOLERANCE, estimate_json
 from _contract import REPOSITORY, json_difference, read_json
 from _maf import ScriptedClient
-from _postgres import Server
+from _postgres import PG_RETRIEVAL_POLICY, Server
 from _sync import run
 from agent_framework import Agent, tool
 
@@ -162,6 +162,7 @@ def run_holdout_agent(store: ExperienceStore) -> tuple[list[Any], list[HoldoutRe
     agent = use_agent_experience(
         Agent(client=ModelClient(calls=1, arguments={"suite": "unit"}), name="Holdout Agent", tools=[tool(run_tests)]),
         store=store,
+        retrieval_policy=PG_RETRIEVAL_POLICY,
         identity=IDENTITY,
         verify=tool_succeeded("run_tests", artifact_revision="build-7"),
         classify_tool_result=exit_code("run_tests"),

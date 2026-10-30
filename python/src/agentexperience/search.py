@@ -18,12 +18,18 @@ from .encoding import Instant
 from .model import without_model
 from .records import ExperienceRecord, ExperienceStatus, Scope
 from .reflector import is_model_authored
+from .retrieval import DEFAULT_POLICY, ConfidenceDecayPolicy, ExclusionReason, RetrievalPolicy, seconds_of, ticks_of
 from .task_text import MAX_TASK_TEXT_LENGTH
 
 ELIGIBLE_STATUSES: tuple[ExperienceStatus, ...] = ("Validated", "Reinforced")
 DEFAULT_MIN_CONFIDENCE = 0.5
 CANDIDATE_LIMIT = 50
 STATEMENT_LIMIT = CANDIDATE_LIMIT + 1
+MIN_STATEMENT_LIMIT = 1
+MAX_STATEMENT_LIMIT = 200
+"""The store's limits on one search's ``limit``: .NET's ``ExperienceCandidateQuery.MinLimit`` and ``MaxLimit``."""
+MAX_MINIMUM_MATCHED_TERMS = 2_147_483_647
+"""The largest minimum of matched terms: the SQL takes an ``integer``."""
 DEFAULT_MINIMUM_MATCHED_TERMS = 3
 RECENCY_HALF_LIFE_SECONDS = 30 * 86_400.0
 
@@ -56,6 +62,17 @@ class AuthorizationBounds:
         return AuthorizationBounds(
             scope.tenant_id, scope.application_id, scope.project_id, scope.team_id, scope.agent_id, scope.user_id
         )
+
+    def permits(self, scope: Scope) -> bool:
+        """Whether these bounds permit ``scope``: the tenant always, and every bounded field exactly."""
+        pairs = (
+            (self.application_id, scope.application_id),
+            (self.project_id, scope.project_id),
+            (self.team_id, scope.team_id),
+            (self.agent_id, scope.agent_id),
+            (self.user_id, scope.user_id),
+        )
+        return self.tenant_id == scope.tenant_id and all(bound is None or bound == value for bound, value in pairs)
 
     def parameters(self) -> dict[str, str]:
         """``sql/declare-bounds.sql``'s parameters: ``=`` and the value, or the empty string for no bound."""
@@ -95,8 +112,10 @@ class SearchParameters:
             )
         if self.with_grants:
             raise ValueError("Grants are outside contract 1.x: with_grants must be false.")
-        if self.limit < 1 or self.minimum_matched_terms < 1:
-            raise ValueError("limit and minimum_matched_terms must be strictly positive.")
+        if not MIN_STATEMENT_LIMIT <= self.limit <= MAX_STATEMENT_LIMIT:
+            raise ValueError(f"limit must be from {MIN_STATEMENT_LIMIT} to {MAX_STATEMENT_LIMIT}.")
+        if not 1 <= self.minimum_matched_terms <= MAX_MINIMUM_MATCHED_TERMS:
+            raise ValueError(f"minimum_matched_terms must be from 1 to {MAX_MINIMUM_MATCHED_TERMS}.")
 
     def parameters(self) -> dict[str, Any]:
         scope = self.scope
@@ -115,6 +134,26 @@ class SearchParameters:
             "with_grants": bool(self.with_grants),
             "minimum_matched_terms": int(self.minimum_matched_terms),
         }
+
+    @staticmethod
+    def for_policy(
+        scope: Scope,
+        task_text: str,
+        policy: RetrievalPolicy | None = None,
+        *,
+        exclude_model_authored: bool = False,
+    ) -> SearchParameters:
+        """The search a retrieval under ``policy`` (contract 1.12; ``None``: the default policy) runs: its confidence
+        floor, ``candidate_limit + 1`` and its minimum of matched terms."""
+        policy = policy or DEFAULT_POLICY
+        return SearchParameters(
+            scope,
+            task_text,
+            min_confidence=policy.minimum_confidence,
+            limit=policy.statement_limit,
+            exclude_model_authored=exclude_model_authored,
+            minimum_matched_terms=policy.minimum_matched_terms,
+        )
 
 
 def widen_real(value: float) -> float:
@@ -136,11 +175,22 @@ class SearchRow:
 
 
 @dataclass(frozen=True)
+class ExcludedRecord:
+    """A candidate an eligibility check left out before ranking, and why (contract 1.12): .NET's
+    ``ExcludedExperience``."""
+
+    experience_id: uuid.UUID
+    reason: ExclusionReason
+
+
+@dataclass(frozen=True)
 class RankedResult:
-    """The ranked records, best first, and whether the statement returned more rows than the candidate limit."""
+    """The ranked records, best first; whether a channel returned more candidates than the candidate limit; and the
+    candidates ranking excluded, in order, with their reasons (contract 1.12)."""
 
     ranked: tuple[RankedRecord, ...]
     truncated: bool
+    excluded: tuple[ExcludedRecord, ...] = ()
 
 
 class SearchSafetyError(Exception):
@@ -162,24 +212,53 @@ def _normalize(value: float) -> float:
     return 0.0 if math.isnan(value) else min(max(value, 0.0), 1.0)
 
 
-def _recency(updated_at: Instant, now: Instant) -> float:
-    age = now - updated_at
+def _decay(since: Instant, now: Instant, half_life_seconds: float) -> float:
+    """``2^(-age / halfLife)``, clamped: 1 when ``since`` is now or (clock skew) later."""
+    age = now - since
     if age.ticks <= 0:
         return 1.0
-    return _normalize(math.pow(2.0, -age.total_seconds / RECENCY_HALF_LIFE_SECONDS))
+    return _normalize(math.pow(2.0, -age.total_seconds / half_life_seconds))
+
+
+def _recency(updated_at: Instant, now: Instant, half_life_seconds: float = RECENCY_HALF_LIFE_SECONDS) -> float:
+    return _decay(updated_at, now, half_life_seconds)
+
+
+def _confidence(record: ExperienceRecord, now: Instant, decay: ConfidenceDecayPolicy | None) -> RankingComponent:
+    """The stored confidence, or, when ``decay`` gives the record's domain a half-life, the stored confidence times
+    ``2^(-age / halfLife)`` (age from ``created_at``) with the stored value as ``undecayed_value``."""
+    stored = _normalize(record.reuse_confidence)
+    if decay is None:
+        return RankingComponent("Confidence", stored, WEIGHT_CONFIDENCE)
+    half_life = decay.half_life_for(record.environment.metadata.get(decay.domain_key))
+    if half_life is None:
+        return RankingComponent("Confidence", stored, WEIGHT_CONFIDENCE)
+    factor = _decay(record.created_at, now, seconds_of(half_life))
+    return RankingComponent("Confidence", _normalize(stored * factor), WEIGHT_CONFIDENCE, undecayed_value=stored)
 
 
 def _status_score(status: str) -> float:
     return {"Reinforced": REINFORCED_STATUS_SCORE, "Validated": VALIDATED_STATUS_SCORE}.get(status, 0.0)
 
 
-def score(row: SearchRow, now: Instant, preferred_environment: Mapping[str, str]) -> RankedRecord:
-    """Scores one row with the default weights, components in the contract's order."""
+def score(
+    row: SearchRow,
+    now: Instant,
+    preferred_environment: Mapping[str, str],
+    *,
+    policy: RetrievalPolicy | None = None,
+    confidence_decay: ConfidenceDecayPolicy | None = None,
+) -> RankedRecord:
+    """Scores one row with the default weights, components in the contract's order; the recency half-life is the
+    policy's, and the confidence decays under ``confidence_decay`` (contract 1.12)."""
     record = row.record
+    policy = policy or DEFAULT_POLICY
     components = (
         RankingComponent("Relevance", _normalize(row.relevance), WEIGHT_RELEVANCE),
-        RankingComponent("Confidence", _normalize(record.reuse_confidence), WEIGHT_CONFIDENCE),
-        RankingComponent("Recency", _recency(record.updated_at, now), WEIGHT_RECENCY),
+        _confidence(record, now, confidence_decay),
+        RankingComponent(
+            "Recency", _recency(record.updated_at, now, seconds_of(policy.recency_half_life)), WEIGHT_RECENCY
+        ),
         RankingComponent("Status", _status_score(record.status), WEIGHT_STATUS),
         RankingComponent(
             "EnvironmentCompatibility",
@@ -193,19 +272,24 @@ def score(row: SearchRow, now: Instant, preferred_environment: Mapping[str, str]
     return RankedRecord(record, total, components)
 
 
-def rank(
-    rows: Sequence[SearchRow],
-    scope: Scope,
-    now: Instant,
-    preferred_environment: Mapping[str, str] | None = None,
-    *,
-    exclude_model_authored: bool = False,
-) -> RankedResult:
-    """
-    From rows to ranked records: the safety checks over the first 50 rows (raising :class:`SearchSafetyError`),
-    truncation to 50, filtering, then scoring and ordering by score, descending, ties by ``experience_id`` as text.
-    """
-    considered = list(rows[:CANDIDATE_LIMIT])
+def exclusion(
+    record: ExperienceRecord, now: Instant, policy: RetrievalPolicy, *, exclude_model_authored: bool
+) -> ExclusionReason | None:
+    """Why ranking leaves ``record`` out, the first rule that applies in .NET's order, or ``None``: a status that is
+    not eligible, a model-authored lesson when they are excluded, a last activity older than ``max_age``."""
+    if record.status not in ELIGIBLE_STATUSES:
+        return "IneligibleStatus"
+    if exclude_model_authored and is_model_authored(record.reflection):
+        return "ModelAuthored"
+    if policy.max_age is not None and (now - record.updated_at).ticks > ticks_of(policy.max_age):
+        return "Expired"
+    return None
+
+
+def check_rows(rows: Sequence[SearchRow], scope: Scope, candidate_limit: int = CANDIDATE_LIMIT) -> list[SearchRow]:
+    """The safety checks over a channel's first ``candidate_limit`` rows (raising :class:`SearchSafetyError`): one
+    outside ``scope`` or a repeated ``experience_id`` fails the result. Returns those rows."""
+    considered = list(rows[:candidate_limit])
     seen: set[uuid.UUID] = set()
     for row in considered:
         if row.shared_by_grant or row.record.scope != scope:
@@ -213,17 +297,61 @@ def rank(
         if row.record.experience_id in seen:
             raise SearchSafetyError("The same record came back more than once; nothing is returned.")
         seen.add(row.record.experience_id)
+    return considered
 
+
+def rank_checked(
+    considered: Sequence[SearchRow],
+    now: Instant,
+    preferred_environment: Mapping[str, str] | None,
+    *,
+    exclude_model_authored: bool,
+    policy: RetrievalPolicy | None,
+    confidence_decay: ConfidenceDecayPolicy | None,
+) -> tuple[tuple[RankedRecord, ...], tuple[ExcludedRecord, ...]]:
+    """Eligibility then scoring and ordering over rows that already passed the checks: the ranked records and the
+    exclusions, in the rows' order."""
+    policy = policy or DEFAULT_POLICY
     preferred = preferred_environment or {}
     ranked: list[RankedRecord] = []
+    excluded: list[ExcludedRecord] = []
     for row in considered:
-        if row.record.status not in ELIGIBLE_STATUSES:
+        reason = exclusion(row.record, now, policy, exclude_model_authored=exclude_model_authored)
+        if reason is not None:
+            excluded.append(ExcludedRecord(row.record.experience_id, reason))
             continue
-        if exclude_model_authored and is_model_authored(row.record.reflection):
-            continue
-        ranked.append(score(row, now, preferred))
+        ranked.append(score(row, now, preferred, policy=policy, confidence_decay=confidence_decay))
 
     # Ordered by score descending, then by experience_id as text, ascending, ordinal (a stable sort, applied twice).
     ranked.sort(key=lambda entry: str(entry.record.experience_id))
     ranked.sort(key=lambda entry: entry.score, reverse=True)
-    return RankedResult(tuple(ranked), truncated=len(rows) > CANDIDATE_LIMIT)
+    return tuple(ranked), tuple(excluded)
+
+
+def rank(
+    rows: Sequence[SearchRow],
+    scope: Scope,
+    now: Instant,
+    preferred_environment: Mapping[str, str] | None = None,
+    *,
+    exclude_model_authored: bool = False,
+    policy: RetrievalPolicy | None = None,
+    confidence_decay: ConfidenceDecayPolicy | None = None,
+) -> RankedResult:
+    """
+    From rows to ranked records: the safety checks over the first ``candidate_limit`` rows (50 by default; raising
+    :class:`SearchSafetyError`), truncation to them, eligibility (each exclusion reported with its reason), then
+    scoring and ordering by score, descending, ties by ``experience_id`` as text. ``policy`` and ``confidence_decay``
+    are contract 1.12's (``None``: the default policy, no decay, which ranks exactly as contract 1.0).
+    """
+    limit = (policy or DEFAULT_POLICY).candidate_limit
+    considered = check_rows(rows, scope, limit)
+    ranked, excluded = rank_checked(
+        considered,
+        now,
+        preferred_environment,
+        exclude_model_authored=exclude_model_authored,
+        policy=policy,
+        confidence_decay=confidence_decay,
+    )
+    return RankedResult(ranked, truncated=len(rows) > limit, excluded=excluded)

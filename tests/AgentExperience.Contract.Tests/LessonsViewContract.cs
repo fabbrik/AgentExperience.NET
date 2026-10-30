@@ -19,7 +19,9 @@ namespace AgentExperience.Contract.Tests;
 /// policy's window, 30 days before <see cref="Now"/>), <see cref="MinimumRunsPerArm"/> (the policy's minimum, the
 /// default 20 when absent), <see cref="PerModel"/> (the policy's per-model switch, which splits the estimate by model) and
 /// <see cref="HoldoutReadRevoked"/> (before listing, the schema's owner revokes the application role's <c>SELECT</c> on
-/// <c>agent_experience.experience_holdout_assignments</c>, so the holdout read fails).
+/// <c>agent_experience.experience_holdout_assignments</c>, so the holdout read fails). Contract 1.12 adds two more, written
+/// only when set: the retrieval policy's <see cref="MinimumConfidence"/> and <see cref="MaxAgeTicks"/> (its other options
+/// the defaults), which the view's eligibility applies as retrieval does.
 /// </remarks>
 internal sealed record LessonsViewQuery(
     string Description,
@@ -31,7 +33,9 @@ internal sealed record LessonsViewQuery(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool IncludeMeasuredBenefit = false,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? MinimumRunsPerArm = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool PerModel = false,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool HoldoutReadRevoked = false);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool HoldoutReadRevoked = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? MinimumConfidence = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? MaxAgeTicks = null);
 
 /// <summary>
 /// A lessons-view case: the records seeded (as stored), the injection rows seeded, the query, and (contract 1.10) the
@@ -102,7 +106,36 @@ internal static class LessonsViewContract
             MinimumRunsPerArm = 2,
             HoldoutReadRevoked = true,
         })),
+
+        // Contract 1.12.
+        ("retrieval-policy", RetrievalPolicyCase()),
     ];
+
+    /// <summary>
+    /// Contract 1.12: the view under a retrieval policy with a 0.7 confidence floor and a 30-day MaxAge, applied as
+    /// retrieval applies them, in order: status, then the floor, then the age (from the last activity, at the page's clock).
+    /// </summary>
+    private static LessonsViewCase RetrievalPolicyCase()
+    {
+        const int f = 0x7e;
+        ExperienceRecord Aged(ExperienceRecord record, int updatedDaysAgo) => record with { UpdatedAt = Now.AddDays(-updatedDaysAgo) };
+        return new LessonsViewCase(
+            [
+                Aged(Record(f, 1, "Verified after 1 attempt.", -40, confidence: 0.8), 1),
+                Aged(Record(f, 2, "Verified after 1 attempt.", -40, confidence: 0.8), 31),
+                Aged(Record(f, 3, "Verified after 1 attempt.", -40, confidence: 0.65), 1),
+                Aged(Record(f, 4, "Verified after 1 attempt.", -40, confidence: 0.65), 31),
+                Aged(Record(f, 5, "Lock timeout.", -40, ExperienceStatus.Quarantined, 0.9), 31),
+                Aged(Record(f, 6, "Verified after 1 attempt.", -40, confidence: 0.7), 30),
+            ],
+            [],
+            Query() with
+            {
+                Description = "A retrieval policy with a 0.7 confidence floor and a 30-day MaxAge: a lesson below the floor is BelowConfidenceFloor, naming the floor; one whose last activity is more than 30 days before the page's clock is Expired; status comes first, then the floor, then the age; exactly at the floor and exactly 30 days old is eligible.",
+                MinimumConfidence = 0.7,
+                MaxAgeTicks = TimeSpan.FromDays(30).Ticks,
+            });
+    }
 
     /// <summary>The error class of the failure a case whose holdout read fails ends in: .NET throws <c>ExperienceStoreException</c>.</summary>
     public const string ReadFailedErrorClass = "Infrastructure";

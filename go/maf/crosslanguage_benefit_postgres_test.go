@@ -63,6 +63,8 @@ func TestAGoAgentOmitsTheLessonADotNetFleetMeasuredHurting(t *testing.T) {
 		Identity: ae.Identity{Principal: "go-principal", Scope: benefitScope},
 		Clock:    func() ae.Instant { return now },
 		Benefit:  ae.BenefitPolicy{Enabled: true, PreferMeasuredHelpful: true, MinimumRunsPerArm: 3},
+		// Cold containers and the race detector: the default 500 ms must not flake the test.
+		RetrievalPolicy: postgresRetrieval,
 		OnInjected: func(r InjectionResult) {
 			mu.Lock()
 			defer mu.Unlock()

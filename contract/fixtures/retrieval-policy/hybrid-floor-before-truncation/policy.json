@@ -1,0 +1,26 @@
+{
+  "description": "Hybrid, with a candidate limit of 2 and a vector floor of 0.6: the index, asked for 3, returns 3, but the floor drops one before the channel is counted, so the vector channel is not truncated, and neither is the result. The merged list holds three eligible records, and the ranked result is cut to the candidate limit: the best two.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {},
+  "excludeModelAuthored": false,
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.5,
+    "maxAgeTicks": null,
+    "recencyHalfLifeTicks": 25920000000000,
+    "candidateLimit": 2,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": 0.6
+  },
+  "confidenceDecay": null
+}

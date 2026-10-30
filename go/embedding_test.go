@@ -77,14 +77,15 @@ func manyRecords(t *testing.T, n int) []ExperienceRecord {
 	return records
 }
 
-func TestRankHybridScoresEveryMergedCandidateUpToOneHundred(t *testing.T) {
+func TestRankHybridScoresEveryMergedCandidateAndKeepsTheBestFifty(t *testing.T) {
 	records := manyRecords(t, 100)
 	scope := records[0].Scope
 	result, err := RankHybrid(rowsOf(records[:50], 0.2), rowsOf(records[50:], 0.9), scope, t0, nil, nil, false)
-	if err != nil || len(result.Ranked) != 100 || result.Truncated {
+	// Contract 1.12's cut: every merged candidate is scored, and the ranked result is cut to the candidate limit.
+	if err != nil || len(result.Ranked) != 50 || result.Truncated {
 		t.Fatalf("%v %d %v", err, len(result.Ranked), result.Truncated)
 	}
-	// The vector candidates' higher relevance puts them first, whichever slice of 50 they were scored in.
+	// The vector candidates' higher relevance puts them first: the 50 kept are exactly they.
 	for i, entry := range result.Ranked {
 		if (i < 50) != (entry.Record.ExperienceID[15] >= 50) {
 			t.Fatalf("entry %d is record %d", i, entry.Record.ExperienceID[15])

@@ -85,9 +85,17 @@ from .records import (
     from_stored,
     to_stored,
 )
+from .retrieval import (
+    ConfidenceDecayPolicy,
+    ExclusionReason,
+    RetrievalOutcome,
+    RetrievalPolicy,
+    RetrievalPolicyError,
+)
 from .sanitization import Sanitization, SanitizationPolicy, SanitizationRejected
 from .search import (
     AuthorizationBounds,
+    ExcludedRecord,
     RankedResult,
     SearchParameters,
     SearchRow,
@@ -102,9 +110,9 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.11"
-"""The contract version this package passes: every fixture of contract 1.11, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
-1.6, 1.7, 1.8, 1.9 and 1.10 fixture."""
+CONTRACT_VERSION = "1.12"
+"""The contract version this package passes: every fixture of contract 1.12, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+1.6, 1.7, 1.8, 1.9, 1.10 and 1.11 fixture."""
 
 SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.0",
@@ -119,6 +127,7 @@ SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.9",
     "1.10",
     "1.11",
+    "1.12",
 )
 """Every contract version whose fixtures this package passes."""
 
@@ -142,12 +151,15 @@ __all__ = [
     "CaptureLimits",
     "CapturedRun",
     "ClosedVerificationRound",
+    "ConfidenceDecayPolicy",
     "Duration",
     "Embedder",
     "EmbeddingWrite",
     "EmbeddingWriteResult",
     "EnvironmentFingerprint",
     "Evidence",
+    "ExcludedRecord",
+    "ExclusionReason",
     "ExperienceLessons",
     "ExperienceRecord",
     "FallbackReason",
@@ -182,6 +194,9 @@ __all__ = [
     "RawToolCall",
     "Reflection",
     "RequiredCheck",
+    "RetrievalOutcome",
+    "RetrievalPolicy",
+    "RetrievalPolicyError",
     "RunCapture",
     "RunExposure",
     "Sanitization",

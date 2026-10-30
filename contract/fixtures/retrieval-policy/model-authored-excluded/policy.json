@@ -1,0 +1,26 @@
+{
+  "description": "Model-authored lessons excluded, under MaxAge 90 days. Each candidate is excluded by the first rule that applies, in .NET's order: a model-authored Candidate is IneligibleStatus; a model-authored record, expired or not, is ModelAuthored; an expired deterministic one is Expired. A record whose producer is the library's own model-backed reflector counts as model-authored whatever authorship it declares. The exclusions are listed in the store's order.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {},
+  "excludeModelAuthored": true,
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.5,
+    "maxAgeTicks": 77760000000000,
+    "recencyHalfLifeTicks": 25920000000000,
+    "candidateLimit": 50,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": null
+  },
+  "confidenceDecay": null
+}

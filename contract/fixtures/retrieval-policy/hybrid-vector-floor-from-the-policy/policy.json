@@ -1,0 +1,26 @@
+{
+  "description": "Hybrid, with the policy's minimum vector relevance (0.75): the vector candidates below it are dropped before the merge (one exactly at it is kept), text candidates are never floored, a record both channels found keeps its text position and the higher relevance, and the index is asked for the policy's floor, confidence and limit plus one.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {},
+  "excludeModelAuthored": false,
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.5,
+    "maxAgeTicks": null,
+    "recencyHalfLifeTicks": 25920000000000,
+    "candidateLimit": 50,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": 0.75
+  },
+  "confidenceDecay": null
+}

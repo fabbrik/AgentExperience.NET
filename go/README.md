@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.11, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.11 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9 and 1.10 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.12, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.12 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10 and 1.11 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -149,10 +149,12 @@ for _, lesson := range page.Lessons {
   the bounds is an empty page with the outcome `Denied`, never an error and never a statement. `HasMore` is set when
   more lessons match, or may (the store answers at most 500 records).
 - **Why a lesson is ineligible**, decided in this order: `Status` (not Validated or Reinforced), `BelowConfidenceFloor`
-  (below the retrieval minimum, 0.5; a NaN is below it), `ModelAuthored` (the setup's `ExcludeModelAuthored`),
-  `OverByteBudget` (its block is larger than `BlockOptions.MaxBytes`) and `Unrenderable` (the block could not be
-  rendered; it is listed, and the others still are). .NET's `Expired` and `ContentUnconfirmed` do not exist here: this
-  port has no maximum-age policy and no provenance signing, so it never answers them.
+  (below the retrieval policy's `MinimumConfidence`, 0.5 by default, which the reason names; a NaN is below it),
+  `ModelAuthored` (the setup's `ExcludeModelAuthored`), `Expired` (contract 1.12: its last activity is more than the
+  retrieval policy's `MaxAge` before the page's clock), `OverByteBudget` (its block is larger than
+  `BlockOptions.MaxBytes`) and `Unrenderable` (the block could not be rendered; it is listed, and the others still
+  are). The view takes the setup's `RetrievalPolicy` (`ae.LessonsOptions.RetrievalPolicy`). .NET's
+  `ContentUnconfirmed` does not exist here: this port has no provenance signing, so it never answers it.
 - **Injections.** `LastInjectedAt` and `InjectionCount` come from the same read as the page. When the injections table
   cannot be read (not migrated, or the role lacks the 1.4 grants) the page is read without them and says
   `InjectionsTracked` false: a nil `LastInjectedAt` then means "not known", not "never".
@@ -413,6 +415,66 @@ fmt.Println(estimate.Overall.Verdict, estimate.Overall.Treatment.Rate, estimate.
 | `ExperienceBenefitOptions.MinimumRunsPerArm` | `ae.BenefitOptions.MinimumRunsPerArm` (0: the default; negative is an error) |
 | `ProviderHoldoutAssignment.IsValidProviderKey` | `ae.ValidProviderKey` |
 
+### The retrieval policy
+
+From contract 1.12 ([what it adds](../contract/README-1.12.md)) a Go agent takes .NET's `RetrievalPolicy` and
+`ConfidenceDecayPolicy`, with their defaults and validation, so it ranks exactly as a .NET agent configured the same
+way:
+
+```go
+month := 30 * 24 * time.Hour
+err := maf.UseAgentExperience(&config, maf.Options{
+	// ...
+	RetrievalPolicy: ae.RetrievalPolicy{MaxAge: 180 * 24 * time.Hour, RecencyHalfLife: 14 * 24 * time.Hour},
+	ConfidenceDecay: &ae.ConfidenceDecayPolicy{
+		HalfLives: map[string]*time.Duration{"framework-api": &month, "math": nil}, // math never decays
+	},
+})
+```
+
+| .NET | Go | Default | Notes |
+| --- | --- | --- | --- |
+| `RetrievalPolicy.Timeout` | `ae.RetrievalPolicy.Timeout` | 500 ms | at most one day; bounds the text search and the vector channel together |
+| `MinimumConfidence` | `MinimumConfidence` (`*float64`) | 0.5 | the search's floor, on stored confidence |
+| `MaxAge` | `MaxAge` | none (0) | excludes a record whose `UpdatedAt` is more than this long ago (`Expired`) |
+| `RecencyHalfLife` | `RecencyHalfLife` | 30 days | the `Recency` component |
+| `CandidateLimit` | `CandidateLimit` | 50 | 1 to 199; the store is asked for one more, to detect truncation |
+| `MaxAbandonedSearches` | `MaxAbandonedSearches` | 16 | per `UseAgentExperience` configuration (its context provider) |
+| `MinimumMatchedTerms` | `MinimumMatchedTerms` | 3 | the text search's |
+| `MinimumVectorRelevance` | `MinimumVectorRelevance` (`*float64`) | none | `Options.MinVectorRelevance`, when set, replaces it (as .NET's `MinimumSemanticSimilarity` does) |
+| `ConfidenceDecayPolicy.DomainKey` | `ae.ConfidenceDecayPolicy.DomainKey` | `domain` | |
+| `HalfLives` | `HalfLives` (`map[string]*time.Duration`) | empty | a nil half-life never decays; matched ordinally; copied |
+| `DefaultHalfLife` | `DefaultHalfLife` (`*time.Duration`) | none | for an unlisted domain or a record with none |
+| `ArgumentOutOfRangeException`, `ArgumentException` | `*ae.PolicyError` (its `Option` is the .NET name) | | returned by `UseAgentExperience`, `Validate`, `Resolved` and `RankWith` |
+| `RetrievalOutcome` (`Completed`, `TimedOut`, `Denied`, `Failed`) | `ae.RetrievalOutcome` (`ae.RetrievalCompleted`, ...) | | the `retrieve` operation's outcomes |
+| `RetrievalExclusionReason` (`IneligibleStatus`, `ModelAuthored`, `Expired`) | `ae.ExclusionReason` (`ae.ExclusionIneligibleStatus`, ...) | | `RankedResult.Excluded`, `InjectionResult.Excluded` |
+| `RankingComponent.UndecayedValue` | `ae.RankingComponent.UndecayedValue` (`*float64`) | | the stored confidence when a half-life applied |
+
+- **Go's zero values.** Go cannot tell an unset field from an explicit zero, so a zero `Timeout`, `RecencyHalfLife`,
+  `CandidateLimit`, `MaxAbandonedSearches` or `MinimumMatchedTerms` means its default, a zero `MaxAge` means no expiry
+  and an empty `DomainKey` means `domain` (.NET refuses each zero). A negative value, and every other value .NET
+  refuses (a timeout over a day, a candidate limit over 199, a confidence outside 0 to 1 or NaN, a blank domain key or
+  domain, a zero or negative half-life in `HalfLives` or `DefaultHalfLife`), is refused, naming the .NET option. The
+  zero `RetrievalPolicy` is .NET's `RetrievalPolicy.Default`, and ranks exactly as before 1.12.
+- **Decay never excludes.** It only reorders: the confidence floor is the search's, on stored confidence. In the
+  verbose block the `Confidence:` line shows the stored value and the applicability line the decayed one, as .NET's.
+- **Timing out.** Past `Timeout` the invocation gets no block, its inject outcome is `RetrievalTimedOut` (retrieve:
+  `TimedOut`) and nothing is reported as a failure. The search is abandoned, its context cancelled, and counted until
+  it returns; while `MaxAbandonedSearches` are still running, an invocation is `RetrievalTimedOut` at once without
+  searching, and `OnInjectionFailure` is told the reason, which names the cap. `Timeout` bounds both channels
+  together, as .NET's does: a vector channel still running at `Timeout` times the call out, even when the text search
+  had answered. `VectorTimeout` is a fallback (the text answer stands, `ProviderUnavailable` or `VectorSearchFailed`)
+  only when it is strictly shorter than `Timeout`. A store that fails at or after the deadline is a timeout too.
+- **The caller's cancellation** propagates: the context provider's `Invoking` returns `ctx.Err()`
+  (`context.Canceled`), so the agent's run ends with it, as .NET's `OperationCanceledException` does; the `inject` and
+  `retrieve` operations are reported `Faulted` with the error class `Cancelled`, and nothing is told
+  `OnInjectionFailure`. Every other failure still leaves the invocation running without a block.
+- **Denied.** A request scope the identity's bounds do not permit is `RetrievalDenied` (retrieve: `Denied`), and
+  nothing is searched or embedded.
+- **Without the agent:** `RetrievalPolicy.SearchParameters` gives the store's parameters (its floor, `CandidateLimit +
+  1`, its minimum of matched terms), and `ae.RankWith` and `ae.RankHybridWith` rank under `ae.RankOptions{Policy,
+  Decay, ExcludeModelAuthored}`; `Rank` and `RankHybrid` are the zero policy.
+
 ### Telemetry: the same spans and metrics as .NET
 
 The optional module `.../go/telemetry` (the OpenTelemetry API only; no SDK, no exporter) reports the operations the port
@@ -466,11 +528,12 @@ Python agents on the same database.
 - **The task text.** `DeriveTaskText` derives the text retrieval searches with from an invocation's messages.
 - **The error class.** `ErrorClass` reduces a captured error to its short class.
 - **Search and ranking.** `SearchParameters` and `AuthorizationBounds` are the contract statements' parameters;
-  `Rank` applies the contract's safety checks, truncation and ranking to the rows a search returns.
+  `Rank` applies the contract's safety checks, truncation and ranking to the rows a search returns, and `RankWith`
+  does so under a retrieval policy and a confidence decay (contract 1.12), reporting each exclusion.
 - **Semantic retrieval** (contract 1.6). `Embedder` is your embedding object; `RetrievalSummary`, `RecordSummary` and
   `ContentHash` are what is embedded and how it is hashed; `EmbeddingWrite` and `VectorQuery` validate before any
-  statement; `MergeChannels` and `RankHybrid` turn the text and vector candidates into one ranked list (`Rank` itself is
-  unchanged, and ranks every merged candidate, up to 100).
+  statement; `MergeChannels` and `RankHybrid` turn the text and vector candidates into one ranked list: every merged candidate
+  is scored, and the ranked list is cut to the candidate limit (50 by default; contract 1.12's cut, as .NET's).
 - **The lessons view** (contract 1.7). `NewLessons` over any `LessonsReader`, `Lessons.List` and `ListFor`, `RenderAlone`;
   see [See what it learned](#see-what-it-learned-the-lessons-view).
 - **PostgreSQL** (the `postgres` package). `Store` writes a finalized record and its initial event as the application
@@ -559,15 +622,18 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.11: capture, finalize, store, text and semantic retrieval, the injected block,
+The port covers contract 1.0 to 1.12: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block,
 injection recording, the lessons view, the injection holdout, the benefit estimate, the benefit policy, measuring another memory provider and telemetry. These .NET features have no counterpart here, so a mixed
 .NET and Go deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
 - **Sharing:** grants, and so the grant-disclosure choices.
-- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `Expired` or `ContentUnconfirmed` lesson state).
+- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `ContentUnconfirmed` lesson state).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
 - **Lessons view HTML and endpoint mapping.**
+- **Required environment attributes** (.NET's `RequiredEnvironmentAttributes`, and so the `EnvironmentMismatch`
+  exclusion): the port only grades preferred attributes.
 - **Exporting lessons.**
 
 What the port does write or read follows the same contract the .NET library is tested against.
@@ -584,7 +650,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.11 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.12 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The
@@ -629,6 +695,11 @@ cancellation, parallel calls), runs the quick start and compares its output
   ([`dotnet-benefit-fleet-rows.json`](../tests/AgentExperience.Contract.Tests/cross-language/dotnet-benefit-fleet-rows.json));
   they go into a database, and a Go agent with the benefit policy on omits that lesson as `MeasuredHarmful` once its
   cache is warm, and injects the other.
+- *The retrieval policy, three languages* (contract 1.12, PostgreSQL leg, in `postgres/pgtest/`). The .NET contract
+  tests check in a seed, a non-default policy (an expiry and per-domain decay) and what .NET retrieved
+  ([`dotnet-retrieval-policy.json`](../tests/AgentExperience.Contract.Tests/cross-language/dotnet-retrieval-policy.json));
+  the seed goes into a database through the Go store, which searches it with the policy's parameters, and
+  `ae.RankWith` must give the same ordered IDs, exclusions and scores, within 1e-12.
 - *Another memory provider, three languages* (contract 1.11). A Go agent wraps a stub provider under `stub-memory` at
   rate 0.5 and runs eight finalized runs; in memory its runs, key and arms must be the rows file's, and in the
   PostgreSQL leg the rows it wrote must be exactly
