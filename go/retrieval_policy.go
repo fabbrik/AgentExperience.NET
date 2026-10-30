@@ -288,13 +288,14 @@ func durationSeconds(d time.Duration) float64 {
 	return DurationFromTicks(int64(d / 100)).TotalSeconds()
 }
 
-// decayFactor is 2^(-age / halfLife), normalized; 1 when since is now or later.
+// decayFactor is 2^(-age / halfLife), normalized; 1 when since is now or later. The power is exp2's, correctly
+// rounded as .NET's Math.Pow is, not math.Pow's (contract 1.18).
 func decayFactor(since, now Instant, halfLifeSeconds float64) float64 {
 	age := now.Sub(since)
 	if age.Ticks() <= 0 {
 		return 1.0
 	}
-	return normalizeScore(math.Pow(2.0, -age.TotalSeconds()/halfLifeSeconds))
+	return normalizeScore(exp2(-age.TotalSeconds() / halfLifeSeconds))
 }
 
 // confidenceComponent is the stored confidence, decayed by the record's domain's half-life when one applies (then

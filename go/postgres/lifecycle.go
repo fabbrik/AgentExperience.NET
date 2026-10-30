@@ -24,10 +24,14 @@ import (
 // LifecycleSQL is contract 1.16's: the lifecycle statements, each starting at its "-- statement: <name>" line.
 const LifecycleSQL = "lifecycle.sql"
 
+// LifecycleScopedLockSQL is contract 1.18's: the supersession lock scoped to the request, which a commit runs in place
+// of LifecycleSQL's unscoped "lock-supersession-rows".
+const LifecycleScopedLockSQL = "lifecycle-1.18.sql"
+
 // The lifecycle statements a commit, a history, a supersession check and a read run.
 var lifecycleStatementNames = []string{"read-record", "sealed-record", "savepoint", "rollback-to-savepoint",
 	"release-savepoint", "insert-evidence", "recorded-only-key-taken", "evidence-id-taken", "select-evidence",
-	"insert-event", "select-event", "lock-supersession-rows", "check-supersession", "update-projection",
+	"insert-event", "select-event", "check-supersession", "update-projection",
 	"update-projection-with-confidence", "update-projection-recorded-only", "select-revision-and-status",
 	"lock-revision-and-status", "read-history"}
 
@@ -44,16 +48,24 @@ const (
 )
 
 func loadLifecycleStatements() (map[string]Statement, error) {
-	statements, err := ContractStatements(LifecycleSQL)
-	if err != nil {
-		return nil, err
-	}
-	loaded := make(map[string]Statement, len(lifecycleStatementNames))
-	for _, name := range lifecycleStatementNames {
-		if statements[name] == "" {
-			return nil, fmt.Errorf("%s has no %q statement", LifecycleSQL, name)
+	loaded := make(map[string]Statement, len(lifecycleStatementNames)+1)
+	for _, file := range []struct {
+		name       string
+		statements []string
+	}{
+		{LifecycleSQL, lifecycleStatementNames},
+		{LifecycleScopedLockSQL, []string{"lock-supersession-rows-scoped"}},
+	} {
+		statements, err := ContractStatements(file.name)
+		if err != nil {
+			return nil, err
 		}
-		loaded[name] = ToDriverPlaceholders(statements[name])
+		for _, name := range file.statements {
+			if statements[name] == "" {
+				return nil, fmt.Errorf("%s has no %q statement", file.name, name)
+			}
+			loaded[name] = ToDriverPlaceholders(statements[name])
+		}
 	}
 	return loaded, nil
 }
@@ -796,10 +808,12 @@ func (c *commitState) eventValues(confidence *ae.ConfidenceUpdate) (map[string]a
 }
 
 // supersessionGate locks both rows and re-decides the replacement inside the commit: a refusal, or nil to proceed.
+// Only rows of the request scope are locked (contract 1.18), so a replacement naming another tenant's record takes no
+// lock on it; the check then reads it as not found.
 func (c *commitState) supersessionGate(tx pgx.Tx, replacementID ae.UUID) (*ae.LifecycleCommitResult, error) {
 	s, ctx := c.store, c.ctx
-	if _, err := s.run(ctx, tx, "lock-supersession-rows", map[string]any{
-		"lock_ids": []pgtype.UUID{uuidValue(c.event.ExperienceRecordID), uuidValue(replacementID)}}); err != nil {
+	if _, err := s.run(ctx, tx, "lock-supersession-rows-scoped", scopeValues(c.scope, map[string]any{
+		"lock_ids": []pgtype.UUID{uuidValue(c.event.ExperienceRecordID), uuidValue(replacementID)}})); err != nil {
 		return nil, err
 	}
 	check, err := s.readSupersession(ctx, tx, c.scope, c.event.ExperienceRecordID, replacementID)

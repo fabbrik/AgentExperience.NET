@@ -19,7 +19,7 @@ import (
 func TestTheEmbeddedSQLIsTheContractSQL(t *testing.T) {
 	for _, name := range []string{DeclareBoundsSQL, SearchSQL, RecordInjectionSQL, WriteEmbeddingSQL, SearchVectorSQL,
 		ListLessonsSQL, RecordHoldoutSQL, QueryHoldoutOutcomesSQL, RecordProviderHoldoutSQL,
-		QueryProviderHoldoutOutcomesSQL, LifecycleSQL, ReuseFeedbackSQL} {
+		QueryProviderHoldoutOutcomesSQL, LifecycleSQL, ReuseFeedbackSQL, LifecycleScopedLockSQL} {
 		embedded, err := ContractSQL(name)
 		if err != nil {
 			t.Fatal(err)

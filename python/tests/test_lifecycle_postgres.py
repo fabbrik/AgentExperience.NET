@@ -241,6 +241,42 @@ def test_writers_racing_at_one_revision_on_separate_connections_commit_exactly_o
     ]
 
 
+def test_a_supersession_naming_another_tenants_record_takes_no_lock_on_it(pg_server: Server) -> None:
+    """
+    Contract 1.18's scoped supersession lock. The store runs as the table owner, whom row-level security does not
+    filter, so only the statement's own scope predicate keeps it off tenant A's row. Tenant A's row is held FOR UPDATE
+    by another transaction throughout; tenant B's store gives up on any lock it would wait for (lock_timeout), so a lock
+    on A's row would fail with 55P03 instead of answering. No clock is read and nothing sleeps.
+    """
+    _, victim, _, owner = _seeded(pg_server, "lifecycle_scoped_lock")
+    scope_b = replace(victim.scope, tenant_id="other-tenant")
+    record_b = replace(victim, experience_id=uuid.UUID(int=0x7200), source_run_id=uuid.UUID(int=0x7201), scope=scope_b)
+    PostgresExperienceStore(owner).insert_record(AuthorizationBounds.of(scope_b), record_b)
+    authorization_b = AuthorizationContext("tenant-b", AuthorizationBounds.of(scope_b))
+    store_b = PostgresExperienceStore(owner + " options='-c lock_timeout=10000'")
+    event = LifecycleEvent(
+        event_id=uuid.UUID(int=0x7202),
+        experience_record_id=record_b.experience_id,
+        prior_status=record_b.status,
+        current_status="Superseded",
+        reason="superseded by another tenant's record",
+        producer="scoped-lock/1.0",
+        occurred_at=Instant.parse("2026-03-02T09:00:00+00:00"),
+        expected_revision=record_b.revision,
+        replacement_experience_id=victim.experience_id,
+    )
+    with psycopg.connect(owner) as holder, holder.transaction():
+        locked = holder.execute(
+            "SELECT experience_id FROM agent_experience.experience_records WHERE experience_id = %s FOR UPDATE",
+            (victim.experience_id,),
+        ).fetchone()
+        assert locked == (victim.experience_id,)
+        result = store_b.commit_lifecycle_event(authorization_b, scope_b, event)
+    # The outcome is unchanged: another tenant's record reads as not found, and nothing is written.
+    assert (result.outcome, result.current_status) == ("ReplacementNotAllowed", None)
+    assert _rows(owner, "lifecycle_events", ["event_id"], "event_id") == []
+
+
 def test_a_sealed_record_is_not_found_for_commit_history_and_read(pg_server: Server) -> None:
     conninfo, record, authorization, owner = _seeded(pg_server, "lifecycle_sealed")
     # A sealed row as the .NET sealing writes one (payload_version 2, opaque payload), inserted as the owner.

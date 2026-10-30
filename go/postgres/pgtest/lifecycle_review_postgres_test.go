@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	ae "github.com/fabbrik/AgentExperience.NET/go"
 	ct "github.com/fabbrik/AgentExperience.NET/go/internal/contracttest"
@@ -270,5 +271,70 @@ func TestACommitCancelledWhileItWaitsWritesNothing(t *testing.T) {
 		countRows(t, owner, "agent_experience.lifecycle_events", record.ExperienceID) != 0 ||
 		countRows(t, owner, "agent_experience.confidence_evidence", record.ExperienceID) != 0 {
 		t.Fatalf("revision %d supporting %d", revision, supporting)
+	}
+}
+
+// Contract 1.18's scoped supersession lock. Tenant B's store runs as the table owner, whom row-level security does not
+// filter, so only the statement's own scope predicate keeps it off tenant A's row. Another transaction holds A's row
+// FOR UPDATE throughout, and B's connections give up on any lock they would wait for (lock_timeout): a lock on A's row
+// would fail with 55P03 instead of answering. No clock is read and nothing sleeps.
+func TestASupersessionNamingAnotherTenantsRecordTakesNoLockOnIt(t *testing.T) {
+	admin := requireServer(t)
+	ctx := context.Background()
+	database := createDatabase(t, admin, "lifecycle_scoped_lock")
+	victim := seededRecord(t, newStore(t, admin, database))
+
+	config, err := pgxpool.ParseConfig(admin.Owner(database))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ConnConfig.RuntimeParams["lock_timeout"] = "10000"
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	storeB, err := postgres.NewStore(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordB := victim
+	recordB.ExperienceID = ae.UUID{0: 0x72, 6: 0x40, 8: 0x80, 15: 1}
+	recordB.SourceRunID = ae.UUID{0: 0x72, 6: 0x40, 8: 0x80, 15: 2}
+	recordB.Scope.TenantID = "other-tenant"
+	if err := storeB.InsertRecord(ctx, ae.BoundsOf(recordB.Scope), &recordB); err != nil {
+		t.Fatal(err)
+	}
+
+	owner := ownerConn(t, admin, database)
+	holder, err := owner.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(context.Background()) }()
+	var locked [16]byte
+	if err := holder.QueryRow(ctx, "SELECT experience_id FROM agent_experience.experience_records "+
+		"WHERE experience_id = $1 FOR UPDATE", [16]byte(victim.ExperienceID)).Scan(&locked); err != nil ||
+		ae.UUID(locked) != victim.ExperienceID {
+		t.Fatalf("%v %v", locked, err)
+	}
+
+	prior := recordB.Status
+	replacement := victim.ExperienceID
+	result, err := storeB.CommitLifecycleEvent(ctx, ae.AuthorizationContext{PrincipalID: "tenant-b",
+		Bounds: ae.BoundsOf(recordB.Scope)}, recordB.Scope, ae.LifecycleEvent{
+		EventID: ae.UUID{0: 0x72, 6: 0x40, 8: 0x80, 15: 3}, ExperienceRecordID: recordB.ExperienceID,
+		PriorStatus: &prior, CurrentStatus: ae.StatusSuperseded, Reason: "superseded by another tenant's record",
+		Producer: "scoped-lock/1.0", OccurredAt: recordB.CreatedAt, ExpectedRevision: recordB.Revision,
+		ReplacementExperienceID: &replacement})
+	// The outcome is unchanged: another tenant's record reads as not found, and nothing is written.
+	if err != nil || result.Outcome != ae.StoreReplacementNotAllowed || result.CurrentStatus != nil {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if countRows(t, owner, "agent_experience.lifecycle_events", recordB.ExperienceID) != 0 {
+		t.Fatal("an event was written")
 	}
 }
