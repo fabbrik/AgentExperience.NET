@@ -58,6 +58,7 @@ import contextvars
 import copy
 import dataclasses
 import functools
+import inspect
 import json
 import threading
 import uuid
@@ -82,7 +83,7 @@ from agent_framework import (
 from . import __version__
 from ._text import is_null_or_whitespace, utf16_len
 from .benefit_policy import BenefitCache, BenefitPolicy, OmittedRecord, select_block
-from .block import BlockOptions, RankedRecord
+from .block import BLOCK_OVERHEAD_BYTES, BlockOptions, RankedRecord
 from .capabilities import ModelAuthoredLessonPolicy, ReceivingAgent, active_gate, gated_window
 from .capture import RawAttempt, RawToolCall, RunCapture, RunExecutionStatus
 from .classifiers import (
@@ -254,8 +255,21 @@ class InjectionResult:
     truncated: bool
     vector_fallback: VectorFallback | None = None
     """Why the injection answered from text alone (contract 1.6), or ``None`` when the vector channel contributed."""
-    outcome: Literal["Injected", "Withheld", "NothingToInject", "RetrievalTimedOut", "RetrievalDenied"] = "Injected"
-    """``Injected``; ``Withheld`` when the holdout withheld the block (contract 1.8); or, as .NET reports it,
+    outcome: Literal[
+        "Injected",
+        "Withheld",
+        "NothingToInject",
+        "RetrievalTimedOut",
+        "RetrievalDenied",
+        "RetrievalFailed",
+        "Skipped",
+        "Failed",
+    ] = "Injected"
+    """``Injected``; ``Withheld`` when the holdout withheld the block (contract 1.8); ``Skipped`` when there is no
+    identity or the request resolver returned ``None``, ``Failed`` when resolving the identity, deriving the task text,
+    the request resolver or the injection itself raised, and ``RetrievalFailed`` when the request was refused or the
+    search failed (contract 1.13: every attempt is reported, as .NET's ``OnContextInjected`` is;
+    ``on_injection_failure`` is still told why); or, as .NET reports it,
     ``NothingToInject`` when there was no task text or every ranked record was omitted (``omitted`` says why: a scope
     measured ``Hurts`` omits them all as ``MeasuredHarmful``); ``RetrievalTimedOut`` when retrieval ran past the
     retrieval policy's timeout or was refused at its abandoned-search cap, and ``RetrievalDenied`` when the identity's
@@ -263,8 +277,10 @@ class InjectionResult:
     withheld_experience_ids: tuple[uuid.UUID, ...] = ()
     """The records a held-out invocation's block named and did not deliver; empty otherwise."""
     omitted: tuple[OmittedRecord, ...] = ()
-    """Every ranked record that was not delivered, and why (contract 1.10): ``MeasuredHarmful`` (the benefit policy),
-    ``ModelAuthored``, ``OverRecordLimit`` or ``OverByteBudget``, each with .NET's detail, in .NET's order."""
+    """Every ranked record that was not delivered, and why, in .NET's order and with .NET's detail: ``MeasuredHarmful``
+    (the benefit policy, contract 1.10), ``ModelAuthored``, ``ToolUnavailable`` or ``RiskClassExceeded`` (the capability
+    gate, no detail, contract 1.13), ``OverRecordLimit``, ``HostDenied`` (the host's decision, contract 1.13) or
+    ``OverByteBudget``."""
     excluded: tuple[ExcludedRecord, ...] = ()
     """The candidates retrieval's eligibility checks left out before ranking, and why (contract 1.12, .NET's
     ``ExperienceInjectionResult.Excluded``): ``IneligibleStatus``, ``ModelAuthored`` or ``Expired``."""
@@ -333,7 +349,8 @@ class InjectionRequest:
 @dataclass(frozen=True)
 class RequestContext:
     """What a request resolver is given (.NET's ``ExperienceInjectionContext``): the agent, the caller's session, the
-    invocation's new input messages, the derived task text (``None`` when no user message qualifies) and the identity
+    invocation's messages as the task text's derivation reads them (the replayed history and earlier context providers'
+    messages, then the new input), the derived task text (``None`` when no user message qualifies) and the identity
     the invocation runs for."""
 
     agent: Any
@@ -528,6 +545,20 @@ class ExperienceSettings:
             raise TypeError("holdout must be a HoldoutOptions.")
         if not isinstance(self.benefit, BenefitPolicy):
             raise TypeError("benefit must be a BenefitPolicy.")
+        if self.block_options.max_bytes <= BLOCK_OVERHEAD_BYTES:
+            # As .NET's ExperienceInjectionLimits: a budget the block's own frame fills could never hold a record.
+            raise ValueError(
+                f"max_bytes must exceed the block's fixed header and footer ({BLOCK_OVERHEAD_BYTES} bytes), or no "
+                "record could ever fit."
+            )
+        if self.decide_injection is not None and (
+            inspect.iscoroutinefunction(self.decide_injection)
+            or inspect.iscoroutinefunction(type(self.decide_injection).__call__)
+        ):
+            raise TypeError(
+                "decide_injection must be synchronous, as .NET's DecideInjection is: decide from what you prefetched "
+                "in resolve_request, which may be async."
+            )
         if self.message_role not in ("user", "system"):
             raise ValueError("message_role must be 'user' or 'system'.")
         if self.model_authored_lessons not in ("Include", "Exclude"):
@@ -1377,6 +1408,16 @@ class ExperienceContextProvider(ContextProvider):
             if op is not None:
                 op.outcome(outcome)
 
+    def _nothing(
+        self, outcome: Literal["Skipped", "Failed", "RetrievalFailed"], op: Any
+    ) -> Literal["Skipped", "Failed", "RetrievalFailed"]:
+        """An attempt that injects nothing before any selection (contract 1.13): reported through ``on_injected`` with
+        its outcome, as .NET reports every attempt, and tagged with no omission."""
+        if op is not None:
+            op.set("agentexperience.omitted_count", 0)
+        self.settings.report_injected(InjectionResult((), 0, False, outcome=outcome))
+        return outcome
+
     async def _inject(self, agent: Any, session: Any, context: Any, op: Any) -> str:
         """The injection; answers its outcome (``InjectionOutcome``'s member name). A raise is the invocation's own
         cancellation, which the observer reports as ``Faulted``/``Cancelled``."""
@@ -1391,9 +1432,9 @@ class ExperienceContextProvider(ContextProvider):
                 identity = await settings.resolve_identity(agent, session)
         except Exception as ex:
             settings.report_injection(InjectionFailure(f"Resolving the identity raised {_type_name(ex)}.", ex))
-            return "Failed"
+            return self._nothing("Failed", op)
         if identity is None:
-            return "Skipped"
+            return self._nothing("Skipped", op)
 
         retrieval_failed = False
         assignment: HoldoutAssignment | None = None
@@ -1410,7 +1451,7 @@ class ExperienceContextProvider(ContextProvider):
             derived = derive_task_text(_task_messages(context.input_messages, earlier))
         except Exception as ex:
             settings.report_injection(InjectionFailure(f"Injection raised {_type_name(ex)}; no block was added.", ex))
-            return "Failed"
+            return self._nothing("Failed", op)
         policy = settings.retrieval_policy
         exclude = settings.excludes_model_authored
         preferred: Mapping[str, str] = settings.preferred_environment
@@ -1418,28 +1459,32 @@ class ExperienceContextProvider(ContextProvider):
         if settings.resolve_request is not None:
             # Contract 1.13: the host's request resolver, sync or async. None skips this invocation; a raise injects
             # nothing (Failed); the invocation's own cancellation propagates.
+            messages = [message for batch in context.context_messages.values() for message in batch]
+            messages += list(context.input_messages)
             try:
                 request = await resolve(
-                    settings.resolve_request(
-                        RequestContext(agent, session, list(context.input_messages), derived, identity)
-                    )
+                    settings.resolve_request(RequestContext(agent, session, messages, derived, identity))
                 )
                 if request is not None and not isinstance(request, InjectionRequest):
                     raise TypeError("The request resolver must return an InjectionRequest or None.")
-            except Exception as ex:
+            except (Exception, asyncio.CancelledError) as ex:
+                # As .NET: a cancellation propagates only when the invocation itself is being cancelled; any other is
+                # a failure like any other raise.
+                if isinstance(ex, asyncio.CancelledError) and _being_cancelled():
+                    raise
                 settings.report_injection(
                     InjectionFailure(f"The injection request resolver (resolve_request) raised {_type_name(ex)}.", ex)
                 )
-                return "Failed"
+                return self._nothing("Failed", op)
             if request is None:
-                return "Skipped"
+                return self._nothing("Skipped", op)
             if request.correlation_id is not None and op is not None:
                 op.set("agentexperience.correlation_id", request.correlation_id)
             refusal = _refused(request, policy)
             if refusal is not None:
                 # As .NET's retrieval refuses such a request: nothing is searched, and retrieval failed.
                 settings.report_injection(InjectionFailure(refusal))
-                return "RetrievalFailed"
+                return self._nothing("RetrievalFailed", op)
             task_text: str | None = request.task_text
             exclude = exclude or request.exclude_model_authored
             if request.preferred_environment is not None:
@@ -1611,7 +1656,7 @@ class ExperienceContextProvider(ContextProvider):
                 context.extend_messages(self, [message])
         except Exception as ex:
             settings.report_injection(InjectionFailure(f"Injection raised {_type_name(ex)}; no block was added.", ex))
-            return "RetrievalFailed" if retrieval_failed else "Failed"
+            return self._nothing("RetrievalFailed" if retrieval_failed else "Failed", op)
 
         if assignment is not None and assignment.arm == "Holdout":
             # The holdout arm: nothing handed over, no exposure, no injection record; the assignment is recorded in the
@@ -1696,10 +1741,23 @@ def _decide(decide: DecideInjection, candidate: RankedRecord) -> OmittedRecord |
             "HostDenied",
             f"The host injection decision threw {_type_name(ex)}, so the record was denied.",
         )
+    if inspect.iscoroutine(decision):
+        # Synchronous only, as .NET's: an awaitable is not a decision, so it denies (closed, never awaited).
+        decision.close()
     if isinstance(decision, InjectionDecision) and decision.permitted is True:
         return None
     reason = decision.reason if isinstance(decision, InjectionDecision) else None
     return OmittedRecord(record.experience_id, "HostDenied", HOST_DENIED_DETAIL if reason is None else reason)
+
+
+def _being_cancelled() -> bool:
+    """Whether the running task (the invocation) is itself being cancelled. Before Python 3.11 a task cannot say, so
+    every cancellation counts as the invocation's own."""
+    task = asyncio.current_task()
+    if task is None:
+        return False
+    cancelling = getattr(task, "cancelling", None)
+    return True if cancelling is None else bool(cancelling())
 
 
 def _tool_list(value: Any) -> list[Any]:

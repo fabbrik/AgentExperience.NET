@@ -520,12 +520,12 @@ def test_the_one_call_setup_reaches_the_lessons_view() -> None:
         Agent(client=ScriptedClient(), name="triage"),
         store=store,
         identity=identity,
-        block_options=BlockOptions(max_bytes=400),
+        block_options=BlockOptions(rendering="Verbose"),
         clock=lambda: NOW,
     )
     page = agent_experience_lessons(agent).list()
     assert page.generated_at == NOW and len(page.lessons) == 9
-    assert page.lessons[0].ineligibility == "OverByteBudget"  # the setup's block options
+    assert "\nApplicability" in page.lessons[0].block_text  # the setup's block options (the verbose layout)
     settings = ExperienceSettings(store=store, identity=identity)
     assert len(agent_experience_lessons(settings).list().lessons) == 9
     with pytest.raises(TypeError):

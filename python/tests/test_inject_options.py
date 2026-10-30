@@ -9,17 +9,22 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from _benefit import estimate_of
 from _contract import FIXTURES, cases, read_json
 
 from agentexperience import (
+    BenefitViews,
     BlockOptions,
     ReceivingAgent,
     RetrievalPolicy,
     gated_window,
     select_block,
 )
-from agentexperience.block import ranked_from_json
+from agentexperience.benefit_policy import OmittedRecord
+from agentexperience.block import RankedRecord, ranked_from_json
 from agentexperience.capabilities import active_gate
+from agentexperience.maf import HOST_DENIED_DETAIL
+from agentexperience.reflector import is_model_authored
 
 FAMILY = FIXTURES / "inject-options"
 
@@ -49,13 +54,32 @@ def run_case(name: str) -> tuple[dict[str, Any], str]:
     )
     gate = active_gate(receiving_agent(options["receivingAgent"]), options["runTools"])
     exclude = options["modelAuthoredLessons"] == "Exclude"
+    view = None
+    if (directory / "estimate.json").exists():
+        views = BenefitViews.of(estimate_of(read_json(directory / "estimate.json")))
+        view = views.for_model(None) if views is not None else None
+    decisions: list[dict[str, Any]] = []
+    host = options["hostDecisions"]
+
+    def decide(candidate: RankedRecord) -> OmittedRecord | None:
+        record = candidate.record
+        decisions.append(
+            {"experienceId": str(record.experience_id), "modelAuthored": is_model_authored(record.reflection)}
+        )
+        answer = host.get(str(record.experience_id))
+        if answer is None or answer["permitted"]:
+            return None
+        return OmittedRecord(record.experience_id, "HostDenied", answer["reason"] or HOST_DENIED_DETAIL)
+
     selection = select_block(
         ranked,
-        None,
+        view,
         block_options,
         request_limit=options["requestLimit"],
         exclude_model_authored=exclude,
+        prefer_measured_helpful=options["preferMeasuredHelpful"],
         gate=gate,
+        decide=None if host is None else decide,
     )
     block = selection.block
     expected = {
@@ -67,7 +91,7 @@ def run_case(name: str) -> tuple[dict[str, Any], str]:
             ),
             "excludeModelAuthored": exclude,
         },
-        "selected": [str(item.record.experience_id) for item in selection.selected],
+        "decisions": decisions,
         "injected": [str(record.experience_id) for record in block.included],
         "byteCount": block.byte_count,
         "omitted": [
@@ -87,7 +111,7 @@ def test_inject_options(name: str) -> None:
 
 
 def test_the_inject_options_family_covers_every_case() -> None:
-    assert len(cases("inject-options")) == 20
+    assert len(cases("inject-options")) == 26
 
 
 # ---- The receiving agent -------------------------------------------------------------------------------------------
@@ -151,3 +175,17 @@ def test_run_tools_read_names_and_objects() -> None:
     gate = ReceivingAgent(use_run_tools=True).gate.for_invocation([Tool("a"), "b", " ", Tool("")])
     assert gate.available_tools == frozenset({"a", "b"})
     assert not gate.use_run_tools
+
+
+def test_a_run_tools_gate_not_narrowed_to_an_invocation_fails_closed() -> None:
+    from agentexperience.capabilities import CapabilityGate
+
+    gate = ReceivingAgent(use_run_tools=True).gate
+    assert isinstance(gate, CapabilityGate)
+    case = FAMILY / "run-tools"
+    ranked = ranked_from_json(read_json(case / "records.json"))
+    with_tools = [item for item in ranked if item.record.attempts and item.record.attempts[-1].tool_calls]
+    assert with_tools and all(gate.check(item.record) == "ToolUnavailable" for item in with_tools)
+    # Narrowed to an invocation offering the tools, the same gate passes them.
+    names = {call.tool_name for item in with_tools for call in item.record.attempts[-1].tool_calls}
+    assert all(gate.for_invocation(names).check(item.record) is None for item in with_tools)

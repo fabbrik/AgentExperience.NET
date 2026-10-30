@@ -194,7 +194,7 @@ agent = use_agent_experience(
 | .NET | Python |
 | --- | --- |
 | `RetrievalOutcome` `Completed`, `TimedOut`, `Denied`, `Failed` | the `retrieve` operation's outcome (`RetrievalOutcome`) |
-| `InjectionOutcome` `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed` | the `inject` operation's outcome; `InjectionResult.outcome` for the first two |
+| `InjectionOutcome` `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed` | the `inject` operation's outcome, and `InjectionResult.outcome` |
 | `RetrievalExclusionReason` `IneligibleStatus`, `ModelAuthored`, `Expired` | `ExcludedRecord.reason` (`ExclusionReason`); never `EnvironmentMismatch` or `UnconfirmedContent` (no required attributes, no provenance signing) |
 
 The lessons view applies the same policy (`agent_experience_lessons` takes the setup's): a lesson below
@@ -245,22 +245,31 @@ agent = use_agent_experience(
   them): a tool missing from `available_tools` omits it as `ToolUnavailable`, then a tool whose class (a tool not in
   `tool_risk_classes` is `Critical`) is above `max_risk_class` as `RiskClassExceeded`, with no detail. It runs before
   the record limit, so a gated record takes no slot. A blank tool name, an undefined class or a multiplier below 1
-  raises `ValueError` when the `ReceivingAgent` is built; it copies the collections it is given.
+  raises `ValueError` when the `ReceivingAgent` is built; it copies the collections it is given. A `max_bytes` that
+  does not exceed the verbose block's fixed overhead (754 bytes) is refused when the agent is built, as .NET refuses it.
 - **`use_run_tools`** checks against the tools the provider is handed: the agent's own tools and those an earlier
   context provider added. agent-framework does not hand a context provider the `tools=` of one `run` call, nor an MCP
   server's functions, so a record whose approach calls one of those is withheld (where .NET's agent-level provider sees
   a run's own tools).
-- **The resolver.** `None` skips the invocation (`inject` outcome `Skipped`); a raise injects nothing and is reported
-  through `on_injection_failure` (`Failed`); the invocation's cancellation propagates. A request retrieval refuses (a
+- **The resolver** is given the messages the task text is derived from (the replayed history, earlier context
+  providers' messages, then the new input). `None` skips the invocation (`inject` outcome `Skipped`); a raise injects
+  nothing and is reported through `on_injection_failure` (`Failed`); a cancellation propagates only when the invocation
+  itself is being cancelled (on Python 3.10, which cannot tell, every cancellation does), otherwise it is `Failed`.
+  Every attempt also reaches `on_injected`, as .NET's `OnContextInjected`: `Skipped` (no identity, or the resolver
+  returned `None`), `Failed` and `RetrievalFailed` included, with nothing delivered. `InjectionResult` has no
+  `CorrelationId` or `Failure` field (.NET's do): the correlation ID is on the span, and the failure goes to
+  `on_injection_failure`. A request retrieval refuses (a
   blank task text, one over 4,096 UTF-16 code units, a `limit` outside 1 to the policy's `candidate_limit`) is
   `RetrievalFailed`. The `limit` cuts the ranking (widened while a gate can reject, as .NET's gated window) and caps
   what is injected; `correlation_id` is the `inject` span's `agentexperience.correlation_id`. The authorization and
   scope are the identity's.
 - **The decision** is asked once per selected record, after the selection and before the byte budget. A denial omits
   the record as `HostDenied` with its reason (or .NET's default detail); it fails closed (a raise, `None` or anything
-  but an `InjectionDecision` denies), and a denied record keeps its slot.
+  but an `InjectionDecision` denies), and a denied record keeps its slot. It is synchronous, as .NET's: an `async`
+  callable is refused when the agent is built, and one that returns an awaitable denies.
 - The pure parts are public: `ReceivingAgent.gate`, `CapabilityGate`, `gated_window`, `approach_tool_calls`, and
-  `select_block(..., gate=, decide=)`.
+  `select_block(..., gate=, decide=)`. A `use_run_tools` gate checks only once `for_invocation(tools)` has narrowed it;
+  checked directly it knows no tool, so it fails closed (`ToolUnavailable` for any approach that calls a tool).
 
 ### See what it learned: the lessons view
 

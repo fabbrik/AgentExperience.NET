@@ -153,10 +153,14 @@ class CapabilityGate:
 
     def check(self, record: ExperienceRecord) -> GateReason | None:
         """Why ``record`` is kept out, or ``None`` when it passes: the tool check on its approach's calls, then the risk
-        check. A record with no approach, or whose approach calls no tool, passes."""
+        check. A record with no approach, or whose approach calls no tool, passes. A ``use_run_tools`` gate that was not
+        narrowed to an invocation's tools by :meth:`for_invocation` knows of no tool the invocation offers, so it fails
+        closed: every approach that calls a tool is ``ToolUnavailable``."""
         calls = approach_tool_calls(record)
         if not calls:
             return None
+        if self.use_run_tools:
+            return "ToolUnavailable"
         if self.available_tools is not None:
             for call in calls:
                 # A blank recorded name names no tool the agent could have: always unavailable.

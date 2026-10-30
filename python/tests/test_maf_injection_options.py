@@ -202,6 +202,27 @@ def test_a_sync_resolver_replaces_the_request() -> None:
     assert contexts[0].messages[-1].text == NEXT_TICKET
 
 
+def test_the_resolver_is_given_the_history_and_the_new_input() -> None:
+    from agent_framework import InMemoryHistoryProvider
+
+    contexts: list[RequestContext] = []
+
+    def resolve(context: RequestContext) -> InjectionRequest | None:
+        contexts.append(context)
+        return None
+
+    host, client = Host(), ScriptedClient(calls=1)
+    agent = host.wire(client, resolve_request=resolve)
+    agent.context_providers.insert(0, InMemoryHistoryProvider())
+    session = agent.create_session()
+    run(agent.run(TICKET, session=session))
+    run(agent.run(NEXT_TICKET, session=session))
+
+    # As .NET's and Go's: the messages the derivation reads, the replayed history first, then the new input.
+    texts = [message.text for message in contexts[1].messages]
+    assert texts[0] == TICKET and texts[-1] == NEXT_TICKET and len(texts) > 2
+
+
 def test_an_async_resolver_is_awaited() -> None:
     async def resolve(context: RequestContext) -> InjectionRequest | None:
         await asyncio.sleep(0)
@@ -227,8 +248,12 @@ def test_a_resolver_returning_none_skips_the_invocation(recording: Recording) ->
     run(host.wire(client, store=Counting(), resolve_request=lambda _: None).run(NEXT_TICKET))
 
     assert Counting.searches == 0
-    assert client.blocks() == [] and host.results == [] and host.failures == []
-    assert [outcome for outcome, _ in recording.injects] == ["Skipped"]
+    assert client.blocks() == [] and host.failures == []
+    # Reported through on_injected too, as .NET reports every attempt through OnContextInjected.
+    assert [(result.outcome, result.experience_ids, result.omitted) for result in host.results] == [("Skipped", (), ())]
+    assert [
+        (outcome, attributes.get("agentexperience.omitted_count")) for outcome, attributes in recording.injects
+    ] == [("Skipped", 0)]
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -249,9 +274,24 @@ def test_a_resolver_that_raises_injects_nothing_and_fails(recording: Recording, 
     assert response.text == "done"
     assert client.blocks() == []
     assert [outcome for outcome, _ in recording.injects] == ["Failed"]
+    assert recording.injects[0][1].get("agentexperience.omitted_count") == 0
+    assert [result.outcome for result in host.results] == ["Failed"]
     assert len(host.failures) == 1
     assert "resolve_request" in host.failures[0].reason
     assert isinstance(host.failures[0].exception, LookupError)
+
+
+@pytest.mark.skipif(not hasattr(asyncio.Task, "cancelling"), reason="a task says it is being cancelled from 3.11")
+def test_a_cancellation_that_is_not_the_invocations_is_a_failure(recording: Recording) -> None:
+    async def resolve(_: RequestContext) -> InjectionRequest:
+        raise asyncio.CancelledError("the resolver's own lookup was cancelled")
+
+    host, client = Host(), ScriptedClient(calls=1)
+    response = run(host.wire(client, store=learned(TICKET), resolve_request=resolve).run(NEXT_TICKET))
+
+    assert response.text == "done"
+    assert [outcome for outcome, _ in recording.injects] == ["Failed"]
+    assert isinstance(host.failures[0].exception, asyncio.CancelledError)
 
 
 def test_the_invocations_cancellation_propagates_from_an_async_resolver() -> None:
@@ -291,6 +331,7 @@ def test_a_request_retrieval_refuses_is_retrieval_failed(recording: Recording, r
 
     assert client.blocks() == []
     assert [outcome for outcome, _ in recording.injects] == ["RetrievalFailed"]
+    assert [result.outcome for result in host.results] == ["RetrievalFailed"]
     assert len(host.failures) == 1 and host.failures[0].reason.startswith("Retrieval refused the request")
 
 
@@ -389,6 +430,110 @@ def test_the_model_authored_policy_is_validated_and_either_option_excludes() -> 
     assert not ExperienceSettings(store=store, identity=identity).excludes_model_authored
     assert ExperienceSettings(store=store, identity=identity, model_authored_lessons="Exclude").excludes_model_authored
     assert ExperienceSettings(store=store, identity=identity, exclude_model_authored=True).excludes_model_authored
+
+
+def test_a_budget_the_frame_fills_and_an_async_decision_are_refused() -> None:
+    store, identity = InMemoryExperienceStore(), development_identity(application="tests")
+    # As .NET's ExperienceInjectionLimits: max_bytes must exceed the verbose block's fixed overhead, 754 bytes.
+    with pytest.raises(ValueError, match="754"):
+        ExperienceSettings(store=store, identity=identity, block_options=BlockOptions(max_bytes=754))
+    ExperienceSettings(store=store, identity=identity, block_options=BlockOptions(max_bytes=755))
+
+    async def decide(_: DecisionContext) -> InjectionDecision:
+        return InjectionDecision.permit()
+
+    class Decider:
+        async def __call__(self, _: DecisionContext) -> InjectionDecision:
+            return InjectionDecision.permit()
+
+    for decider in (decide, Decider()):
+        with pytest.raises(TypeError, match="synchronous"):
+            ExperienceSettings(store=store, identity=identity, decide_injection=decider)  # type: ignore[arg-type]
+
+
+def test_a_decision_that_answers_an_awaitable_denies() -> None:
+    async def later() -> InjectionDecision:
+        return InjectionDecision.permit()
+
+    host, client = Host(), ScriptedClient(calls=1)
+    run(host.wire(client, store=learned(TICKET), decide_injection=lambda _: later()).run(NEXT_TICKET))
+
+    assert client.blocks() == []
+    assert [(item.reason, item.detail) for item in host.results[0].omitted] == [("HostDenied", HOST_DENIED_DETAIL)]
+
+
+def learned_with(tool_name: str, ticket: str, store: InMemoryExperienceStore) -> None:
+    """Learns one lesson for ``ticket`` whose approach calls ``tool_name``."""
+    finalized: list[FinalizedExperience] = []
+    agent = use_agent_experience(
+        Agent(
+            client=ScriptedClient(tool=tool_name, calls=1),
+            name="triage-ticket",
+            tools=[tool(lambda: "exit=0", name=tool_name)],
+        ),
+        store=store,
+        identity=development_identity(application="tests"),
+        environment=ENVIRONMENT,
+        clock=lambda: T0,
+        inject=False,
+        on_finalized=finalized.append,
+        verify=tool_succeeded(tool_name),
+    )
+    run(agent.run(ticket))
+    assert len(finalized) == 1
+
+
+@pytest.mark.parametrize(("multiplier", "injected"), [(4, 1), (1, 0)])
+def test_a_gate_widens_the_requests_window_and_backfills(multiplier: int, injected: int) -> None:
+    store = InMemoryExperienceStore()
+    learned_with("drop_ledger", TICKET, store)
+    learned_with("run_tests", NEXT_TICKET, store)
+    host, client = Host(), ScriptedClient(calls=1)
+    agent = host.wire(
+        client,
+        store=store,
+        block_options=BlockOptions(max_records=1),
+        receiving_agent=ReceivingAgent(
+            max_risk_class="Low", tool_risk_classes={"run_tests": "Low"}, gated_retrieval_window_multiplier=multiplier
+        ),
+        # The drop_ledger lesson's own ticket ranks it first; the request's limit is 1.
+        resolve_request=lambda _: InjectionRequest(TICKET, limit=1),
+    )
+    run(agent.run(NEXT_TICKET))
+
+    result = host.results[0]
+    # The top record, inside the host's window of 1, is gated and reported either way.
+    assert [item.reason for item in result.omitted] == ["RiskClassExceeded"]
+    # A window of 1 x 4 lets the run_tests lesson past the request's limit backfill the slot; a window of 1 x 1 cuts
+    # the ranking to the gated record alone, so nothing is injected.
+    assert len(result.experience_ids) == injected
+    assert result.outcome == ("Injected" if injected else "NothingToInject")
+
+
+def test_run_tools_include_tools_an_earlier_context_provider_added() -> None:
+    from agent_framework import ContextProvider
+
+    class Tools(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__("tool-provider")
+
+        async def before_run(self, *, agent: Any, session: Any, context: Any, state: dict[str, Any]) -> None:
+            context.extend_tools(self.source_id, [tool(lambda: "exit=0", name="run_tests")])
+
+    host, client = Host(), ScriptedClient(calls=1)
+    agent = use_agent_experience(
+        Agent(client=client, name="triage-ticket"),
+        store=learned(TICKET),
+        identity=development_identity(application="tests"),
+        environment=ENVIRONMENT,
+        on_injected=host.results.append,
+        receiving_agent=ReceivingAgent(use_run_tools=True),
+    )
+    agent.context_providers.insert(0, Tools())
+    run(agent.run(NEXT_TICKET))
+
+    assert client.blocks()
+    assert host.results[0].omitted == ()
 
 
 def test_every_inject_outcome_is_a_dotnet_name(recording: Recording) -> None:
