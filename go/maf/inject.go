@@ -314,4 +314,3 @@ func taskMessages(messages []*message.Message) []ae.Message {
 	}
 	return result
 }
-
