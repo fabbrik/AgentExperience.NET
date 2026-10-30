@@ -84,9 +84,12 @@ internal static class HybridRetrievalRun
             hybrid.Add(new QueryOutcome(query, [.. Merge(lexical.Candidates, aboveFloor).Select(c => Id(c, query.Id))]));
         }
 
+        // Story 28.2: the signature channel does not depend on vectors, so both columns carry the same lookups.
+        var signatures = await RetrievalQualityRun.SignatureOutcomesAsync(
+            corpus, authorization, queryScope, new InMemoryExperienceSignatureSource(store), cancellationToken);
         return new HybridRetrievalResult(
-            new RetrievalQualityResult(adapter, corpus, text),
-            new RetrievalQualityResult(adapter + " + vectors", corpus, hybrid),
+            new RetrievalQualityResult(adapter, corpus, text, signatures),
+            new RetrievalQualityResult(adapter + " + vectors", corpus, hybrid, signatures),
             embedded);
     }
 

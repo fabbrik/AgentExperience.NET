@@ -293,3 +293,124 @@ stopword-06 [stopword-heavy]
   text: is there anything we should know before we add a migration
   expected: mig-02 (not returned)
   returned: none
+
+SIGNATURE CHANNEL
+
+What it measures: IExperienceSignatureSource.FindBySignatureAsync, called directly with the failure signature of
+a failed call seen in a sibling run (other paths, numbers, IDs and literals). exact: the same tool, error class
+and fingerprint. coarse: the same tool and error class, whatever the message. A query's expected records hold
+the same failure; a query with none expected is a failure no lesson knows, so every hit is a false positive.
+Failures: 28 records hold a failed call (24 eligible, 4 ineligible, holding a queried failure).
+Queries: 18 (15 with a lesson, 3 without). Same statuses, floor and limit as above.
+
+match                  n  lab    R@1    R@3    R@8    P@3    P@8   FP@8    MRR   zero
+exact                 18   15  0.867  0.867  0.867  1.000  1.000  0.000  0.867  0.278
+coarse                18   15  0.933  1.000  1.000  0.867  0.867  0.222  0.967  0.167
+
+sig-01 [run_app, PostgresException]
+  error: Npgsql.PostgresException (0x80004005): 42703: column "invoices.due_date" does not exist
+  expected: mig-01
+  exact: mig-01
+  coarse: mig-01
+
+sig-02 [dotnet_ef, unclassified error]
+  error: The migration '20261101120000_AddInvoiceDueDate' has already been applied to the database. Revert it and try again.
+  expected: mig-04
+  exact: mig-04
+  coarse: mig-04
+
+sig-03 [dotnet_ef, NpgsqlException]
+  error: Npgsql.NpgsqlException (0x80004005): Exception while reading from stream
+  expected: mig-05
+  exact: mig-05
+  coarse: mig-05
+
+sig-04 [run_tests, TimeoutException]
+  error: System.TimeoutException: The operation has timed out after 00:00:45 waiting for http://localhost:61022/health
+  expected: ci-01
+  exact: ci-01
+  coarse: ci-01, dis-04
+
+sig-05 [run_tests, PostgresException]
+  error: Npgsql.PostgresException (0x80004005): 23505: duplicate key value violates unique constraint "pk_invoices"
+  expected: ci-02
+  exact: ci-02
+  coarse: ci-02
+
+sig-06 [run_build, IOException]
+  error: System.IO.IOException: No space left on device : '/home/runner/work/_temp/build-9902.log'
+  expected: ci-04
+  exact: ci-04
+  coarse: ci-04
+
+sig-07 [docker_run, exit 139]
+  error: Container billing-api-11a0 exited with code 139 (segmentation fault)
+  expected: dock-02
+  exact: none
+  coarse: dock-02
+
+sig-08 [docker_run, ECONNREFUSED]
+  error: connect ECONNREFUSED 172.18.0.3:5432
+  expected: dock-04
+  exact: dock-04
+  coarse: dock-04
+
+sig-09 [docker_run, exit 137]
+  error: Container worker-5 exited with code 137 (OOMKilled)
+  expected: dock-06
+  exact: dock-06
+  coarse: dock-06
+
+sig-10 [dotnet_restore, unclassified error]
+  error: error NU1605: Detected package downgrade: Newtonsoft.Json from 13.0.3 to 12.0.1. Reference the package directly from the project to select a different version.
+  expected: pkg-01
+  exact: none
+  coarse: pkg-04, pkg-01
+
+sig-11 [dotnet_restore, HTTP 401]
+  error: error NU1301: Unable to load the service index for source https://nuget.acme.test/v3/index.json. Response status code does not indicate success: 401 (Unauthorized).
+  expected: pkg-02
+  exact: pkg-02
+  coarse: pkg-02
+
+sig-12 [call_api, HTTP 401]
+  error: HTTP 401 Unauthorized: Bearer error="invalid_token", error_description="The token expired at 2026-11-02T08:15:40Z"
+  expected: auth-01
+  exact: auth-01
+  coarse: auth-01, dis-15
+
+sig-13 [call_api, SecurityTokenInvalidSignatureException]
+  error: Microsoft.IdentityModel.Tokens.SecurityTokenInvalidSignatureException: IDX10503: Signature validation failed. Keys tried: 'kid-c41d07'.
+  expected: auth-02
+  exact: auth-02
+  coarse: auth-02
+
+sig-14 [oauth_login, unclassified error]
+  error: AADSTS50011: The redirect URI 'https://localhost:5001/signin-oidc' specified in the request does not match the redirect URIs configured for the application '0c7f2a1e-3b4d-4e5f-8a9b-1c2d3e4f5a6b'.
+  expected: auth-05
+  exact: auth-05
+  coarse: auth-05
+
+sig-15 [run_tests, EqualException]
+  error: Xunit.Sdk.EqualException: Assert.Equal() Failure: Values differ
+  expected: ci-03
+  exact: ci-03
+  coarse: ci-03, ci-06
+
+sig-16 [run_tests, NullReferenceException]
+  error: System.NullReferenceException: Object reference not set to an instance of an object.
+  expected: none
+  exact: none
+  coarse: none
+
+sig-17 [docker_run, exit 1]
+  error: Container orders-api-2 exited with code 1
+  expected: none
+  exact: none
+  coarse: none
+
+sig-18 [call_api, HTTP 403]
+  error: HTTP 403 Forbidden: missing role 'billing-admin'
+  expected: none
+  exact: none
+  coarse: none

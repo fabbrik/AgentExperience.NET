@@ -1,6 +1,6 @@
 # Store conformance suite
 
-What any implementation of the core storage ports must do, written as tests. The library holds four abstract xUnit
+What any implementation of the core storage ports must do, written as tests. The library holds five abstract xUnit
 classes. A test project that implements the ports subclasses each one and supplies its store through a factory
 method; its own runner then discovers and runs the inherited tests. The library itself is not a test project, is
 never packed, and depends only on `AgentExperience.Abstractions` and xUnit's assertion and core packages.
@@ -11,6 +11,7 @@ never packed, and depends only on `AgentExperience.Abstractions` and xUnit's ass
 | `CandidateSourceConformanceTests` | `IExperienceCandidateSource` (seeded through an `IExperienceRecordStore`) | `CreateRecordStore()`, `CreateCandidateSource()` |
 | `ReuseFeedbackStoreConformanceTests` | `IExperienceReuseFeedbackStore` | `CreateStore()` |
 | `EmbeddingIndexConformanceTests` | `IExperienceEmbeddingIndex` (seeded through an `IExperienceRecordStore`) | `CreateRecordStore()`, `CreateEmbeddingIndex()` |
+| `SignatureSourceConformanceTests` | `IExperienceSignatureSource` (seeded through an `IExperienceRecordStore`) | `CreateRecordStore()`, `CreateSignatureSource()` |
 
 Every test observes the ports only, with no SQL and no knowledge of how a store is built. Each test works in a
 tenant of its own, so a store shared by all tests (one database, one container) still keeps them independent.

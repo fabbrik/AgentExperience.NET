@@ -2,7 +2,7 @@ namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
 /// The canonical row-level security policies: every <c>rls_*</c> policy <c>0019</c> creates on this
-/// package's tables, <c>0026</c> on <c>experience_injections</c>, <c>0027</c> on <c>experience_holdout_assignments</c>, <c>0029</c> on <c>experience_provider_holdout_assignments</c>, and the vectors package's <c>0020</c> creates on
+/// package's tables, <c>0026</c> on <c>experience_injections</c>, <c>0027</c> on <c>experience_holdout_assignments</c>, <c>0029</c> on <c>experience_provider_holdout_assignments</c>, <c>0030</c> on <c>experience_failure_signatures</c>, and the vectors package's <c>0020</c> creates on
 /// <c>experience_embeddings</c>, as the exact DDL those scripts contain. The privileges call re-runs this DDL, under
 /// the migrator's lock, every time it enables row-level security, so a policy altered or dropped by hand since the
 /// migration is put back before anything is enabled; and
@@ -369,6 +369,22 @@ $body$;
         // there is no record to check: the scope lying inside the bounds is the whole condition.
         policies.Add(new(ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable, "rls_provider_holdout_assignments_select", "SELECT", scope, null));
         policies.Add(new(ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable, "rls_provider_holdout_assignments_insert", "INSERT", null, scope));
+
+        // Story 28.2 (0030): a record's failure signatures, read exactly as their record is -- inside the bounds, or shared
+        // by a live grant -- and written only inside the bounds, for a live record with that ID in exactly that scope.
+        var signedRecord =
+            "EXISTS (\n" +
+            "            SELECT 1 FROM agent_experience.experience_records r\n" +
+            "            WHERE r.experience_id = experience_failure_signatures.experience_id\n" +
+            "              AND r.tenant_id = experience_failure_signatures.tenant_id\n" +
+            "              AND r.application_id = experience_failure_signatures.application_id\n" +
+            "              AND r.project_id = experience_failure_signatures.project_id\n" +
+            "              AND r.team_id IS NOT DISTINCT FROM experience_failure_signatures.team_id\n" +
+            "              AND r.agent_id IS NOT DISTINCT FROM experience_failure_signatures.agent_id\n" +
+            "              AND r.user_id IS NOT DISTINCT FROM experience_failure_signatures.user_id\n" +
+            "              AND r.deleted_at IS NULL)";
+        policies.Add(new(ApplicationRolePrivileges.FailureSignaturesTable, "rls_failure_signatures_select", "SELECT", Readable(), null));
+        policies.Add(new(ApplicationRolePrivileges.FailureSignaturesTable, "rls_failure_signatures_insert", "INSERT", null, $"{scope}\n        AND {signedRecord}"));
 
         policies.Add(new(ApplicationRolePrivileges.EmbeddingsTable, "rls_embeddings_select", "SELECT", Readable(), null));
         policies.Add(new(ApplicationRolePrivileges.EmbeddingsTable, "rls_embeddings_insert", "INSERT", null, scope));

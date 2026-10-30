@@ -47,6 +47,15 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
 
     private readonly Dictionary<Guid, ExperienceRecord> _records = [];
     private readonly Dictionary<Guid, RecordSearchText> _searchText = [];
+
+    /// <summary>
+    /// Each record's failure signatures, derived once when it is created (a record's attempts never change
+    /// afterwards), and the two indexes the signature source looks them up by: the whole key, and the tool and error
+    /// class. Kept under the same lock as the records, so a committed write is visible to the next lookup.
+    /// </summary>
+    private readonly Dictionary<Guid, IReadOnlyList<ExperienceRecordFailureSignature>> _signatures = [];
+    private readonly Dictionary<string, List<Guid>> _signaturesByKey = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string ToolName, string ErrorClass), List<Guid>> _signaturesByToolAndClass = [];
     private readonly Dictionary<Guid, StoredEvent> _events = [];
     private readonly Dictionary<Guid, List<StoredEvent>> _history = [];
     private readonly Dictionary<Guid, StoredEvidence> _evidence = [];
@@ -105,6 +114,7 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
         // caller's instance, and its text never changes afterwards.
         var snapshot = StoredSnapshots.Record(record);
         var searchText = SearchText.Index(snapshot);
+        var signatures = ExperienceFailureSignatures.Of(snapshot);
 
         lock (_gate)
         {
@@ -115,6 +125,7 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
             }
 
             _searchText.Add(snapshot.ExperienceId, searchText);
+            IndexSignatures(snapshot.ExperienceId, signatures);
             return Task.FromResult(new ExperienceRecordCreateResult(ExperienceStoreOutcome.Created, NoErrors));
         }
     }
@@ -745,6 +756,84 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
             return [.. _records.Values
                 .Where(record => record.Scope == scope && predicate(record))
                 .Select(record => (record, _searchText[record.ExperienceId]))];
+        }
+    }
+
+    /// <summary>
+    /// The records in exactly <paramref name="scope"/> that <paramref name="predicate"/> accepts and that hold a failure
+    /// signature matching <paramref name="signature"/> under <paramref name="match"/>, each with how it matched and
+    /// whether its matched signature was resolved (for a coarse match, whether any matching one was; for an exact
+    /// match, the exact one), read under the store's lock, for the signature source that searches this store.
+    /// Signatures of a version other than <see cref="ExperienceFailureSignature.SignatureVersion"/> are never stored here.
+    /// </summary>
+    internal List<(ExperienceRecord Record, ExperienceSignatureMatch Match, ExperienceSignatureResolution Resolution)> SelectBySignature(
+        Scope scope,
+        Func<ExperienceRecord, bool> predicate,
+        ExperienceFailureSignature signature,
+        ExperienceSignatureMatch match)
+    {
+        var key = signature.Key;
+        lock (_gate)
+        {
+            var ids = match == ExperienceSignatureMatch.Exact
+                ? _signaturesByKey.GetValueOrDefault(key)
+                : _signaturesByToolAndClass.GetValueOrDefault((signature.ToolName, signature.ErrorClass));
+            if (ids is null)
+            {
+                return [];
+            }
+
+            var found = new List<(ExperienceRecord, ExperienceSignatureMatch, ExperienceSignatureResolution)>();
+            foreach (var id in ids)
+            {
+                var record = _records[id];
+                if (record.Scope != scope || !predicate(record))
+                {
+                    continue;
+                }
+
+                var held = _signatures[id];
+                var exact = held.Where(s => string.Equals(s.Signature.Key, key, StringComparison.Ordinal)).ToList();
+                var matched = exact.Count > 0
+                    ? exact
+                    : [.. held.Where(s => string.Equals(s.Signature.ToolName, signature.ToolName, StringComparison.Ordinal)
+                        && string.Equals(s.Signature.ErrorClass, signature.ErrorClass, StringComparison.Ordinal))];
+                found.Add((
+                    record,
+                    exact.Count > 0 ? ExperienceSignatureMatch.Exact : ExperienceSignatureMatch.Coarse,
+                    matched.Any(s => s.Resolution == ExperienceSignatureResolution.Resolved)
+                        ? ExperienceSignatureResolution.Resolved
+                        : ExperienceSignatureResolution.Unresolved));
+            }
+
+            return found;
+        }
+    }
+
+    /// <summary>Adds a newly created record's signatures to both indexes. Called under the store's lock.</summary>
+    private void IndexSignatures(Guid experienceId, IReadOnlyList<ExperienceRecordFailureSignature> signatures)
+    {
+        _signatures.Add(experienceId, signatures);
+        foreach (var held in signatures)
+        {
+            var signature = held.Signature;
+            Add(_signaturesByKey, signature.Key, experienceId);
+            Add(_signaturesByToolAndClass, (signature.ToolName, signature.ErrorClass), experienceId);
+        }
+
+        static void Add<TKey>(Dictionary<TKey, List<Guid>> index, TKey key, Guid experienceId)
+            where TKey : notnull
+        {
+            if (!index.TryGetValue(key, out var ids))
+            {
+                index[key] = ids = [];
+            }
+
+            // A record holds each key once, but two of its signatures can share a tool and class.
+            if (ids.Count == 0 || ids[^1] != experienceId)
+            {
+                ids.Add(experienceId);
+            }
         }
     }
 

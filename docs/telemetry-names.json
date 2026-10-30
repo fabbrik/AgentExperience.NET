@@ -51,8 +51,10 @@
     "agentexperience.reflection.screening_refusal",
     "agentexperience.reflection_id",
     "agentexperience.retracted_count",
+    "agentexperience.retrieval.channel",
     "agentexperience.reuse_evidence.submitted",
     "agentexperience.run_id",
+    "agentexperience.signature.match",
     "agentexperience.stage",
     "error.type"
   ],
@@ -169,6 +171,17 @@
         "Completed",
         "TimedOut",
         "Denied",
+        "Failed"
+      ]
+    },
+    {
+      "operation": "retrieve.signature",
+      "source": "AgentExperience.Core",
+      "span": true,
+      "outcomes": [
+        "Completed",
+        "Denied",
+        "Invalid",
         "Failed"
       ]
     },

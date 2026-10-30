@@ -296,6 +296,70 @@ collect one registration per search that never ends.
 port threw — a driver message can quote SQL text or connection detail, so treat it as local diagnostics rather than
 something to pass on.
 
+## Failure signatures
+
+A request's text says what the user asked for; what predicts whether a lesson applies is often the situation the agent
+is in: which tool just failed, and how. Every failed tool call a record holds has a **failure
+signature**, and both stores can find records by it. Nothing about injection or ranking uses it yet: it is the key
+recall at the moment of failure and consolidating lessons per situation build on.
+
+**What a signature is.** `ExperienceFailureSignature.From(ToolCallRecord)` (or `From(toolName, error)` for a failure no
+record holds yet) gives `(ToolName, ErrorClass, Fingerprint)`, and `Key`, the three joined by U+001F. The error class is
+the first token of the call's error class, exactly what its `[failed: …]` marker in the injected block shows
+(`TimeoutException`, `exit 2`, `HTTP 503`, `ENOENT`, `Timeout`, or `unclassified error`). The fingerprint is the first
+16 bytes of the SHA-256 of the error's **normalized excerpt**, as 32 lowercase hexadecimal characters. A call with no
+error has no signature, and neither does one whose tool name is blank, longer than 256 characters or holds a control
+character.
+
+**Normalization** (`ExperienceFailureSignature.NormalizeExcerpt`, `SignatureVersion = 1`), with ASCII
+semantics throughout (only `A-Z` is lowercased, a word character is `[a-z0-9_]`, and any other character, non-ASCII
+included, is left as it is), so another runtime derives the same fingerprint. In this order: the error's first
+non-blank line is taken -- or its last non-blank line when the first is a bare header that names no failure, such as
+Python's `Traceback (most recent call last):`, .NET's `Unhandled exception.` or a lone `Error:` -- and lowercased;
+then GUIDs become `<guid>`; runs of 8 or more hexadecimal characters holding both a digit and a letter (or after `0x`)
+become `<hex>`; file paths, absolute or relative, POSIX or Windows, become `<path>` followed by the file name's
+extension (`<path>.py`); quoted literals (`'…'`, `"…"`) become `<str>`, where a quote opens after no word character
+and closes before none, so the apostrophe in `can't` is not a quote; ISO 8601 dates and timestamps become `<time>`;
+numbers become `<n>`; whitespace collapses to single spaces; and only then is the result cut to 500 characters. The
+unit tests hold golden vectors (input, excerpt, fingerprint) a port can check itself against. So the same failure in two runs, with different
+temporary directories, ports, line numbers, IDs and names in quotes, has the same fingerprint, while different failures
+keep different ones. What is not normalized stays in the fingerprint: a package name, a container name, an unquoted
+identifier. The error class keeps apart what the excerpt alone would merge (`exit 1` and `exit 2`).
+
+**A record's signatures.** `ExperienceFailureSignatures.Of(record)` lists every failed call's signature in attempt and
+call order, de-duplicated by key, each `Resolved` when the record's run was verified and some call after the failure's
+last occurrence succeeded (the lesson knows what worked after it), `Unresolved` otherwise. Both stores derive them when
+a record is created; nothing is added to what capture records.
+
+**The port.** `IExperienceSignatureSource.FindBySignatureAsync(authorization, scope, query, ct)` is optional and separate
+from `IExperienceCandidateSource`, which is unchanged. It applies text search's eligibility -- exact scope (and live
+sharing grants, on PostgreSQL), live records only, the query's statuses, its confidence floor, and the authorship
+exclusion when asked -- and matches either the exact key (`ExperienceSignatureMatch.Exact`) or the tool and error class
+(`Coarse`). Each record comes back once, saying how it matched and whether its matched signature was resolved: exact
+matches first, then resolved, then by confidence, then the most recent. `InMemoryExperienceSignatureSource` and
+`PostgresExperienceSignatureSource` implement it, both storage registrations register it, and the store conformance
+suite's `SignatureSourceConformanceTests` holds both to it. A refusal is `Denied` or `Invalid`, as in text search.
+
+**In Core**, `ExperienceSignatureRetrievalService.FindAsync` (registered by `AddAgentExperienceCore`, resolvable where a
+signature source is registered) asks the source for records eligible for reuse at or above the policy's confidence
+floor, drops expired ones (`RetrievalPolicy.MaxAge`), keeps the strict scope check, and turns a refusal or a thrown
+source into `Denied`, `Invalid` or `Failed` instead of an exception. It emits one `retrieve.signature` span with
+`agentexperience.retrieval.channel = signature` and the match; the signature itself is never a telemetry value. See
+[Telemetry](../telemetry.md).
+
+**On PostgreSQL** the signatures are migration `0030`'s `experience_failure_signatures` rows, written in the record's
+own transaction, removed with its erasure, behind row-level security, and in the clear in encrypted mode (no error
+text, only the class and the fingerprint). Records stored before `0030` gain theirs from the owner-run
+`BackfillFailureSignaturesAsync` (plaintext records only; a sealed record gains them when it is finalized again). See
+[0030 in the schema guide](postgres-schema.md#0030-each-records-failure-signatures).
+
+**Measured.** The retrieval benchmark's signature section (`tests/AgentExperience.RetrievalQuality`, both goldens)
+looks up 18 failures as a sibling run would see them: 15 that a corpus record holds, 3 that none does. The exact match
+finds 13 of 15 with no false positive; the two it misses name another package and another container, which are other
+fingerprints. The coarse match finds all 15, at 0.22 unexpected candidates per query (same tool and class, another
+message). Neither returns a record outside the scope, below the floor or in an ineligible status, though ineligible
+records hold four of the queried failures.
+
 ## In Python and Go
 
 From contract 1.12 ([what it adds](../../contract/README-1.12.md)) the Python and Go ports take the same retrieval

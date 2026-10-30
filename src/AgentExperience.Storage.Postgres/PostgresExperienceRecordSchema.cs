@@ -430,6 +430,24 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string ExperienceProviderHoldoutAssignmentsScriptName = "0029_experience_provider_holdout_assignments.sql";
 
+    /// <summary>
+    /// The script that indexes each record's failure signatures: it creates
+    /// <c>agent_experience.experience_failure_signatures</c>, one row per record and signature (tool name, error class,
+    /// fingerprint, whether it was resolved, and the derivation's version, never error text), which
+    /// <see cref="PostgresExperienceRecordStore.CreateAsync"/> writes with the record and
+    /// <see cref="PostgresExperienceSignatureSource"/> searches; a trigger that deletes a record's rows when it is erased;
+    /// and the table's row-level security policies, on <c>0019</c>'s helpers.
+    /// </summary>
+    /// <remarks>
+    /// It adds a table to the application role's manifest: re-run
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// after migrating. Until then a record is created without its signatures. Records written before this script hold
+    /// none until the owner-run
+    /// <see cref="PostgresExperienceRecordStore.BackfillFailureSignaturesAsync(AgentExperience.Abstractions.AuthorizationContext, AgentExperience.Abstractions.Scope, int, ScopeMatch, Guid?, CancellationToken)"/>
+    /// derives them (plaintext records only). No existing table is rewritten.
+    /// </remarks>
+    public const string ExperienceFailureSignaturesScriptName = "0030_experience_failure_signatures.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -437,7 +455,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0029</c> are present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0030</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -467,6 +485,7 @@ public static class PostgresExperienceRecordSchema
         ExperienceHoldoutAssignmentsScriptName,
         ExperienceRecordsSourceRunScriptName,
         ExperienceProviderHoldoutAssignmentsScriptName,
+        ExperienceFailureSignaturesScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

@@ -42,6 +42,17 @@ namespace AgentExperience.Storage.Postgres
         public ExperienceEncryption(AgentExperience.Abstractions.IExperienceKeyStore keyStore) { }
         public AgentExperience.Abstractions.IExperienceKeyStore KeyStore { get; }
     }
+    public sealed class ExperienceFailureSignatureBackfillResult : System.IEquatable<AgentExperience.Storage.Postgres.ExperienceFailureSignatureBackfillResult>
+    {
+        public ExperienceFailureSignatureBackfillResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, int RecordCount, int SignatureCount, int SkippedCount, bool MoreRemain, System.Guid? ResumeAfter, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public bool MoreRemain { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public int RecordCount { get; init; }
+        public System.Guid? ResumeAfter { get; init; }
+        public int SignatureCount { get; init; }
+        public int SkippedCount { get; init; }
+    }
     public sealed class ExperienceGrantAccessPurgeResult : System.IEquatable<AgentExperience.Storage.Postgres.ExperienceGrantAccessPurgeResult>
     {
         public ExperienceGrantAccessPurgeResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, int PurgedCount, bool MoreRemain, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
@@ -157,6 +168,7 @@ namespace AgentExperience.Storage.Postgres
         public const string CryptoShreddingScriptName = "0016_crypto_shredding.sql";
         public const string DeleteAndExpireScriptName = "0010_delete_and_expire.sql";
         public const string EvidenceAdmissionScriptName = "0018_evidence_admission.sql";
+        public const string ExperienceFailureSignaturesScriptName = "0030_experience_failure_signatures.sql";
         public const string ExperienceHoldoutAssignmentsScriptName = "0027_experience_holdout_assignments.sql";
         public const string ExperienceInjectionsScriptName = "0026_experience_injections.sql";
         public const string ExperienceProviderHoldoutAssignmentsScriptName = "0029_experience_provider_holdout_assignments.sql";
@@ -192,6 +204,8 @@ namespace AgentExperience.Storage.Postgres
         public bool TracksHoldout { get; }
         public bool TracksInjections { get; }
         public bool TracksProviderHoldout { get; }
+        public System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceFailureSignatureBackfillResult> BackfillFailureSignaturesAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, int batchSize, AgentExperience.Storage.Postgres.ScopeMatch match, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceFailureSignatureBackfillResult> BackfillFailureSignaturesAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, int batchSize, AgentExperience.Storage.Postgres.ScopeMatch match, System.Guid? startAfter, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceAuthorshipBackfillResult> BackfillSealedAuthorshipAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, int batchSize, AgentExperience.Storage.Postgres.ScopeMatch match, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Storage.Postgres.ExperienceAuthorshipBackfillResult> BackfillSealedAuthorshipAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, int batchSize, AgentExperience.Storage.Postgres.ScopeMatch match, System.Guid? startAfter, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSupersessionCheckResult> CheckSupersessionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Guid replacementExperienceId, System.Threading.CancellationToken cancellationToken) { }
@@ -218,6 +232,11 @@ namespace AgentExperience.Storage.Postgres
     {
         public PostgresExperienceReuseFeedbackStore(Npgsql.NpgsqlDataSource dataSource, System.TimeProvider? timeProvider = null, AgentExperience.Storage.Postgres.ExperienceEncryption? encryption = null) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceReuseFeedbackStoreResult> RecordAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.RecordedExperienceReuseFeedback feedback, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class PostgresExperienceSignatureSource : AgentExperience.Abstractions.IExperienceSignatureSource
+    {
+        public PostgresExperienceSignatureSource(Npgsql.NpgsqlDataSource dataSource, System.Action<AgentExperience.Storage.Postgres.ExperienceGrantSupportNotice>? onGrantsUnavailable = null, AgentExperience.Abstractions.ExperienceGrantAuditing? auditing = null, AgentExperience.Storage.Postgres.ExperienceEncryption? encryption = null) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSignatureSearchResult> FindBySignatureAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.ExperienceSignatureQuery query, System.Threading.CancellationToken cancellationToken) { }
     }
     public enum ScopeMatch
     {

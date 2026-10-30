@@ -81,7 +81,7 @@ One transaction, this order, all inside `0010`'s `agent_experience.purge_experie
 | 6 | `experience_grants` | Purged with the record, because `experience_grants` has no foreign key to it and a re-appearing ID would otherwise re-apply them |
 | 7 | `lifecycle_events` | The record's own history |
 | 8 | `experience_embeddings` | Guarded by `to_regclass`: the table belongs to the vectors package, and a text-only deployment simply skips the step |
-| 9 | `experience_records` | The tombstone, last, so every scope-dependent sweep above still had its scope. `0026`'s trigger deletes the record's `experience_injections` row in the same statement, and `0027`'s deletes every `experience_holdout_assignments` row naming the record, and, when it was its run's last live record in the tenant, `0027`'s and `0029`'s delete that run's `experience_holdout_assignments` and `experience_provider_holdout_assignments` rows |
+| 9 | `experience_records` | The tombstone, last, so every scope-dependent sweep above still had its scope. `0026`'s trigger deletes the record's `experience_injections` row in the same statement, and `0027`'s deletes every `experience_holdout_assignments` row naming the record, and, when it was its run's last live record in the tenant, `0027`'s and `0029`'s delete that run's `experience_holdout_assignments` and `experience_provider_holdout_assignments` rows; `0030`'s deletes the record's `experience_failure_signatures` rows |
 
 **`experience_grant_access` rows are deliberately kept.** They name a grant and a principal, carry no record
 payload, and are the answer to "who read this before it was deleted" — which is exactly the question a deletion

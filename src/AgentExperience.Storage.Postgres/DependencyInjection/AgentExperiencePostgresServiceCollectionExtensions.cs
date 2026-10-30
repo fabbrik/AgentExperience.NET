@@ -314,7 +314,8 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
     /// <summary>
     /// Registers <see cref="PostgresExperienceCandidateSource"/> as the singleton
     /// <see cref="IExperienceCandidateSource"/>, over an <see cref="NpgsqlDataSource"/> resolved from
-    /// the container, so Core's retrieval service has something to search.
+    /// the container, so Core's retrieval service has something to search, and
+    /// <see cref="PostgresExperienceSignatureSource"/> as the singleton <see cref="IExperienceSignatureSource"/> beside it.
     /// </summary>
     /// <remarks>
     /// Registered separately from the store: the two are independent ports, and a host that only
@@ -337,12 +338,21 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
                 auditing: provider.GetService<ExperienceGrantAuditing>(),
                 encryption: provider.GetService<ExperienceEncryption>()));
 
+        // Story 28.2: the optional signature port, a search channel of the same database, on the same terms.
+        services.TryAddSingleton<IExperienceSignatureSource>(provider =>
+            new PostgresExperienceSignatureSource(
+                provider.GetRequiredService<NpgsqlDataSource>(),
+                onGrantsUnavailable: null,
+                auditing: provider.GetService<ExperienceGrantAuditing>(),
+                encryption: provider.GetService<ExperienceEncryption>()));
+
         return services;
     }
 
     /// <summary>
     /// Registers <see cref="PostgresExperienceCandidateSource"/> as the singleton
-    /// <see cref="IExperienceCandidateSource"/> over <paramref name="dataSource"/>, for a host that
+    /// <see cref="IExperienceCandidateSource"/>, and <see cref="PostgresExperienceSignatureSource"/> as the singleton
+    /// <see cref="IExperienceSignatureSource"/>, over <paramref name="dataSource"/>, for a host that
     /// keeps its data source outside the container.
     /// </summary>
     /// <param name="services">The service collection to add to.</param>
@@ -358,6 +368,14 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
         // picked up however the two registrations are ordered. Still one singleton either way.
         services.TryAddSingleton<IExperienceCandidateSource>(provider =>
             new PostgresExperienceCandidateSource(
+                dataSource,
+                onGrantsUnavailable: null,
+                auditing: provider.GetService<ExperienceGrantAuditing>(),
+                encryption: provider.GetService<ExperienceEncryption>()));
+
+        // Story 28.2: the optional signature port, over the same data source.
+        services.TryAddSingleton<IExperienceSignatureSource>(provider =>
+            new PostgresExperienceSignatureSource(
                 dataSource,
                 onGrantsUnavailable: null,
                 auditing: provider.GetService<ExperienceGrantAuditing>(),

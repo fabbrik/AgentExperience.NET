@@ -176,6 +176,35 @@
         public double? ReuseConfidence { get; init; }
         public AgentExperience.Abstractions.ExperienceStatus? Status { get; init; }
     }
+    public sealed class ExperienceFailureSignature : System.IEquatable<AgentExperience.Abstractions.ExperienceFailureSignature>
+    {
+        public const int FingerprintLength = 32;
+        public const string GuidPlaceholder = "<guid>";
+        public const string HexPlaceholder = "<hex>";
+        public const int MaxErrorClassLength = 64;
+        public const int MaxExcerptLength = 500;
+        public const int MaxScannedLength = 4096;
+        public const int MaxToolNameLength = 256;
+        public const string NumberPlaceholder = "<n>";
+        public const string PathPlaceholder = "<path>";
+        public const int SignatureVersion = 1;
+        public const string StringPlaceholder = "<str>";
+        public const string TimePlaceholder = "<time>";
+        public ExperienceFailureSignature(string ToolName, string ErrorClass, string Fingerprint) { }
+        public string ErrorClass { get; init; }
+        public string Fingerprint { get; init; }
+        public string Key { get; }
+        public string ToolName { get; init; }
+        public static string FingerprintOf(string error) { }
+        public static AgentExperience.Abstractions.ExperienceFailureSignature? From(AgentExperience.Abstractions.ToolCallRecord toolCall) { }
+        public static AgentExperience.Abstractions.ExperienceFailureSignature? From(string? toolName, string? error) { }
+        public static bool IsKeyableToolName(string? toolName) { }
+        public static string NormalizeExcerpt(string error) { }
+    }
+    public static class ExperienceFailureSignatures
+    {
+        public static System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceRecordFailureSignature> Of(AgentExperience.Abstractions.ExperienceRecord record) { }
+    }
     public sealed class ExperienceGrant : System.IEquatable<AgentExperience.Abstractions.ExperienceGrant>
     {
         public const int DefaultListLimit = 100;
@@ -527,6 +556,12 @@
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
         public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
     }
+    public sealed class ExperienceRecordFailureSignature : System.IEquatable<AgentExperience.Abstractions.ExperienceRecordFailureSignature>
+    {
+        public ExperienceRecordFailureSignature(AgentExperience.Abstractions.ExperienceFailureSignature Signature, AgentExperience.Abstractions.ExperienceSignatureResolution Resolution) { }
+        public AgentExperience.Abstractions.ExperienceSignatureResolution Resolution { get; init; }
+        public AgentExperience.Abstractions.ExperienceFailureSignature Signature { get; init; }
+    }
     public sealed class ExperienceRecordGetManyResult : System.IEquatable<AgentExperience.Abstractions.ExperienceRecordGetManyResult>
     {
         public const int MaxCount = 200;
@@ -678,6 +713,47 @@
         public System.DateTimeOffset StartedAt { get; init; }
         public string? TaskDescription { get; init; }
         public string TaskId { get; init; }
+    }
+    public sealed class ExperienceSignatureCandidate : System.IEquatable<AgentExperience.Abstractions.ExperienceSignatureCandidate>
+    {
+        public ExperienceSignatureCandidate(AgentExperience.Abstractions.ExperienceRecord Record, AgentExperience.Abstractions.ExperienceSignatureMatch Match, AgentExperience.Abstractions.ExperienceSignatureResolution Resolution, bool SharedByGrant = false, System.Guid? PermittingGrantId = default) { }
+        public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
+        public AgentExperience.Abstractions.ExperienceSignatureMatch Match { get; init; }
+        public System.Guid? PermittingGrantId { get; init; }
+        public AgentExperience.Abstractions.ExperienceRecord Record { get; init; }
+        public AgentExperience.Abstractions.ExperienceSignatureResolution Resolution { get; init; }
+        public bool SharedByGrant { get; init; }
+    }
+    public enum ExperienceSignatureMatch
+    {
+        Exact = 0,
+        Coarse = 1,
+    }
+    public sealed class ExperienceSignatureQuery : System.IEquatable<AgentExperience.Abstractions.ExperienceSignatureQuery>
+    {
+        public const int DefaultLimit = 20;
+        public const int MaxLimit = 200;
+        public const int MinLimit = 1;
+        public ExperienceSignatureQuery(AgentExperience.Abstractions.ExperienceFailureSignature Signature, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> EligibleStatuses, double MinimumConfidence, AgentExperience.Abstractions.ExperienceSignatureMatch Match = 0, int Limit = 20, string? CorrelationId = null) { }
+        public string? CorrelationId { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> EligibleStatuses { get; init; }
+        public bool ExcludeModelAuthored { get; init; }
+        public int Limit { get; init; }
+        public AgentExperience.Abstractions.ExperienceSignatureMatch Match { get; init; }
+        public double MinimumConfidence { get; init; }
+        public AgentExperience.Abstractions.ExperienceFailureSignature Signature { get; init; }
+    }
+    public enum ExperienceSignatureResolution
+    {
+        Unresolved = 0,
+        Resolved = 1,
+    }
+    public sealed class ExperienceSignatureSearchResult : System.IEquatable<AgentExperience.Abstractions.ExperienceSignatureSearchResult>
+    {
+        public ExperienceSignatureSearchResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceSignatureCandidate> Candidates, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceSignatureCandidate> Candidates { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
     }
     public enum ExperienceStatus
     {
@@ -907,6 +983,10 @@
     public interface IExperienceReuseFeedbackStore
     {
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceReuseFeedbackStoreResult> RecordAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.RecordedExperienceReuseFeedback feedback, System.Threading.CancellationToken cancellationToken);
+    }
+    public interface IExperienceSignatureSource
+    {
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSignatureSearchResult> FindBySignatureAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.ExperienceSignatureQuery query, System.Threading.CancellationToken cancellationToken);
     }
     public interface IExperienceWrappedKeyRepository
     {

@@ -998,6 +998,74 @@ internal static partial class ExperienceRecordValidator
         return errors;
     }
 
+    /// <summary>
+    /// Validates a signature search: the scope, a signature whose parts are what a derivation could
+    /// produce, the eligibility filters as <see cref="ValidateCandidateQuery"/> checks them, the match and the limit.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateSignatureQuery(Scope scope, ExperienceSignatureQuery query)
+    {
+        var errors = new List<StoreValidationError>();
+        ValidateScope(scope, "Scope", errors);
+
+        if (query.Signature is not { } signature)
+        {
+            errors.Add(new("Signature", Required));
+        }
+        else
+        {
+            if (!ExperienceFailureSignature.IsKeyableToolName(signature.ToolName))
+            {
+                errors.Add(new(
+                    "Signature.ToolName",
+                    $"must be non-blank, at most {ExperienceFailureSignature.MaxToolNameLength} characters, well-formed, and free of control characters."));
+            }
+
+            if (string.IsNullOrWhiteSpace(signature.ErrorClass)
+                || signature.ErrorClass.Length > ExperienceFailureSignature.MaxErrorClassLength
+                || signature.ErrorClass.Any(char.IsControl)
+                || signature.ErrorClass.Any(char.IsSurrogate))
+            {
+                errors.Add(new(
+                    "Signature.ErrorClass",
+                    $"must be non-blank, at most {ExperienceFailureSignature.MaxErrorClassLength} characters, and free of control characters."));
+            }
+
+            if (signature.Fingerprint is not { Length: ExperienceFailureSignature.FingerprintLength } fingerprint
+                || !fingerprint.All(c => char.IsAsciiDigit(c) || c is >= 'a' and <= 'f'))
+            {
+                errors.Add(new(
+                    "Signature.Fingerprint",
+                    $"must be {ExperienceFailureSignature.FingerprintLength} lowercase hexadecimal characters."));
+            }
+        }
+
+        if (query.EligibleStatuses is null)
+        {
+            errors.Add(new("EligibleStatuses", Required));
+        }
+        else if (query.EligibleStatuses.Count == 0)
+        {
+            errors.Add(new("EligibleStatuses", "must contain at least one status."));
+        }
+        else
+        {
+            for (var i = 0; i < query.EligibleStatuses.Count; i++)
+            {
+                RequireDefined(query.EligibleStatuses[i], $"EligibleStatuses[{i}]", errors);
+            }
+        }
+
+        RequireUnitInterval(query.MinimumConfidence, "MinimumConfidence", errors);
+        RequireDefined(query.Match, "Match", errors);
+
+        if (query.Limit is < ExperienceSignatureQuery.MinLimit or > ExperienceSignatureQuery.MaxLimit)
+        {
+            errors.Add(new("Limit", $"must be between {ExperienceSignatureQuery.MinLimit} and {ExperienceSignatureQuery.MaxLimit}."));
+        }
+
+        return errors;
+    }
+
     private static void ValidateScope(Scope? scope, string path, List<StoreValidationError> errors)
     {
         if (scope is null)

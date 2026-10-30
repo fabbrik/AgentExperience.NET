@@ -23,7 +23,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
     [
         "experience_records", "lifecycle_events", "confidence_evidence", "experience_grants", "experience_grant_events",
         "experience_grant_access", "reuse_feedback", "reuse_feedback_exposures", "experience_injections",
-        "experience_holdout_assignments", "experience_provider_holdout_assignments",
+        "experience_holdout_assignments", "experience_provider_holdout_assignments", "experience_failure_signatures",
     ];
 
     // ---------------------------------------------------------------- nothing declared
@@ -491,6 +491,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
         { "experience_injections", "experience_id" },
         { "experience_holdout_assignments", "run_id" },
         { "experience_provider_holdout_assignments", "run_id" },
+        { "experience_failure_signatures", "experience_id" },
     };
 
     [Theory]
@@ -513,9 +514,10 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
         Assert.Contains("row-level security", refused.MessageText, StringComparison.Ordinal);
 
         // The grant's recipient (tenant B, team-b) sees exactly what a grant confers: the live grant, its own access
-        // row and the shared record -- never the owner's history, evidence, feedback, or the grant's audit trail.
+        // row, the shared record and the record's failure signatures (story 28.2), which a signature search reads with
+        // it -- never the owner's history, evidence, feedback, or the grant's audit trail.
         var recipient = Authorize(tenantB) with { TeamId = "team-b" };
-        var recipientSees = table is "experience_records" or "experience_grants" or "experience_grant_access";
+        var recipientSees = table is "experience_records" or "experience_grants" or "experience_grant_access" or "experience_failure_signatures";
         Assert.Equal(recipientSees ? 1L : 0L, await ScalarAsync<long>(world.App, recipient, $"SELECT count(*) FROM agent_experience.{table}"));
         if (table != "experience_grant_access")
         {
@@ -1058,9 +1060,10 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
                 CancellationToken.None);
 
         /// <summary>Creates a record through the store, as the application role, and returns its ID.</summary>
-        public async Task<Guid> CreateAsync(string tenant, Scope scope, DateTimeOffset? createdAt = null)
+        public async Task<Guid> CreateAsync(string tenant, Scope scope, DateTimeOffset? createdAt = null, bool withFailedCall = false)
         {
             var record = Minimal(scope, createdAt: createdAt is { } at ? new DateTimeOffset(at.UtcTicks - (at.UtcTicks % 10), TimeSpan.Zero) : null);
+            record = withFailedCall ? WithFailedCall(record) : record;
             var created = await new PostgresExperienceRecordStore(App).CreateAsync(Authorize(tenant), record, CancellationToken.None);
             Assert.Equal(ExperienceStoreOutcome.Created, created.Outcome);
             return record.ExperienceId;
@@ -1100,15 +1103,16 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
 
         /// <summary>
         /// One row in every covered table for <paramref name="tenant"/>, through the stores as the application role
-        /// where they write it and as the owner where only a hand-written row will do: a team-a record with a lifecycle
-        /// event and a piece of evidence, a grant to team-b with its issue event, team-b's audited read of it, and a
+        /// where they write it and as the owner where only a hand-written row will do: a team-a record with a failure
+        /// signature, a lifecycle event and a piece of evidence, a grant to team-b with its issue event, team-b's audited read of it, and a
         /// feedback submission with its exposure.
         /// </summary>
         public async Task SeedEveryTableAsync(string tenant)
         {
             var owner = Scope(tenant, team: "team-a");
             var recipient = Scope(tenant, team: "team-b");
-            var record = await CreateAsync(tenant, owner);
+            // Story 28.2: with a failed call, so the store writes its failure signature beside it.
+            var record = await CreateAsync(tenant, owner, withFailedCall: true);
             await CommitAsync(tenant, owner, record);
 
             await using (var evidence = Owner.CreateCommand(

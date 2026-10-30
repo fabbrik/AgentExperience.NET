@@ -101,7 +101,49 @@ internal static class RetrievalQualityReport
                 : Invariant($"  returned {outcome.Returned.Count}: {string.Join(", ", outcome.Returned.Take(Shown))}{(outcome.Returned.Count > Shown ? $", ... {outcome.Returned.Count - Shown} more" : string.Empty)}"));
         }
 
+        RenderSignatures(result, Line);
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// Story 28.2: the signature channel's section: what it measures, its recall and false positives for the exact and
+    /// the coarse match, and every query's two answers.
+    /// </summary>
+    private static void RenderSignatures(RetrievalQualityResult result, Action<string> line)
+    {
+        var corpus = result.Corpus;
+        var holders = corpus.Failures.Select(f => corpus.Record(f.Record)).ToList();
+        var labelled = corpus.SignatureQueries.Count(q => q.Expected.Count > 0);
+
+        line(string.Empty);
+        line("SIGNATURE CHANNEL");
+        line(string.Empty);
+        line("What it measures: IExperienceSignatureSource.FindBySignatureAsync, called directly with the failure signature of");
+        line("a failed call seen in a sibling run (other paths, numbers, IDs and literals). exact: the same tool, error class");
+        line("and fingerprint. coarse: the same tool and error class, whatever the message. A query's expected records hold");
+        line("the same failure; a query with none expected is a failure no lesson knows, so every hit is a false positive.");
+        line(Invariant($"Failures: {holders.Count} records hold a failed call ({holders.Count(r => r.IsEligible)} eligible, {holders.Count(r => !r.IsEligible)} ineligible, holding a queried failure)."));
+        line(Invariant($"Queries: {corpus.SignatureQueries.Count} ({labelled} with a lesson, {corpus.SignatureQueries.Count - labelled} without). Same statuses, floor and limit as above."));
+        line(string.Empty);
+        line(Row("match", "n", "lab", "R@1", "R@3", "R@8", "P@3", "P@8", "FP@8", "MRR", "zero"));
+        line(Row(RetrievalMetrics.Of([.. result.Signatures.Select(o => o.Exact)]), "exact"));
+        line(Row(RetrievalMetrics.Of([.. result.Signatures.Select(o => o.Coarse)]), "coarse"));
+
+        foreach (var outcome in result.Signatures)
+        {
+            var query = outcome.Query;
+            var signature = query.Signature;
+            line(string.Empty);
+            line($"{query.Id} [{signature.ToolName}, {signature.ErrorClass}]");
+            line($"  error: {query.Error.Split('\n')[0]}");
+            line("  expected: " + (query.Expected.Count == 0 ? "none" : string.Join(", ", query.Expected)));
+            line("  exact: " + Returned(outcome.Exact));
+            line("  coarse: " + Returned(outcome.Coarse));
+        }
+
+        static string Returned(QueryOutcome outcome) => outcome.Returned.Count == 0
+            ? "none"
+            : string.Join(", ", outcome.Returned.Take(Shown)) + (outcome.Returned.Count > Shown ? Invariant($", ... {outcome.Returned.Count - Shown} more") : string.Empty);
     }
 
     private static string Ineligibility(RetrievalCorpus corpus)

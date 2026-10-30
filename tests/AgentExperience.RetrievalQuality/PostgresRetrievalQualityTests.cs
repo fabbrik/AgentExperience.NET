@@ -26,7 +26,8 @@ public sealed class PostgresRetrievalQualityTests(PostgresRetrievalQualityFixtur
             Adapter,
             corpus,
             new PostgresExperienceRecordStore(dataSource),
-            new PostgresExperienceCandidateSource(dataSource));
+            new PostgresExperienceCandidateSource(dataSource),
+            new PostgresExperienceSignatureSource(dataSource));
     }
 }
 

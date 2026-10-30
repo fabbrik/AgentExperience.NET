@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019` and `0021`–`0029` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019` and `0021`–`0030` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -830,6 +830,42 @@ captured run was assigned to (see [Measuring another memory provider](injection.
   `sql/record-provider-holdout-assignment.sql` and `sql/query-provider-holdout-outcomes.sql`, and
   `sql/application-role-privileges-1.11.sql` grants it after the earlier files.
 - No existing table is rewritten; creating the trigger takes a brief lock on `experience_records`.
+
+### 0030: each record's failure signatures
+
+`0030_experience_failure_signatures.sql` indexes the failure signatures each record holds (see
+[Failure signatures](retrieval.md#failure-signatures)):
+
+- `agent_experience.experience_failure_signatures`: one row per record, signature version and signature key, keyed on
+  `(experience_id, signature_version, signature_key)` with a foreign key to `experience_records` (`ON DELETE CASCADE`).
+  Each row carries the `tool_name`, the `error_class` (the class's first token, as a call's `[failed: …]` marker shows
+  it), the `fingerprint` (32 lowercase hexadecimal characters: the first 16 bytes of the SHA-256 of the error's
+  normalized excerpt: the first line, or the last one after a bare header), `signature_key` (the three joined by U+001F; a check constraint holds them equal),
+  `resolved` (a later call in the same verified record succeeded after the failure's last occurrence),
+  `signature_version` (`1`), and the record's six scope columns. **It holds no error text.** Check constraints bound
+  the tool name to 1-256 characters and the class to 1-64, and the fingerprint's shape.
+- Two lookups, both leading with the tenant: `experience_failure_signatures_key_idx` on `(tenant_id, signature_key)` for
+  an exact match and `experience_failure_signatures_tool_class_idx` on `(tenant_id, tool_name, error_class)` for a
+  coarse one.
+- **Written with the record.** `CreateAsync` derives the signatures in .NET (`ExperienceFailureSignatures.Of`) and
+  inserts them in the record's own transaction with one `INSERT … SELECT … ON CONFLICT DO NOTHING`, copying the scope
+  columns from the live record it locks `FOR KEY SHARE`. The insert runs under a savepoint: while the table is missing
+  or the application role is not yet granted it, the record is created without its signatures.
+- **In encrypted mode** the rows are written in the clear, like the derived search vector and the authorship flag: a
+  tool name, a class and a fingerprint, never error text (see [Crypto-shredding](crypto-shredding.md) and KL-2).
+- **Backfill.** `PostgresExperienceRecordStore.BackfillFailureSignaturesAsync` derives and writes the signatures of
+  live **plaintext** records written before `0030` (or while the role lacked the table), a bounded, resumable batch at
+  a time, in ID order after a cursor. It skips sealed records, which the database cannot read: a record sealed before
+  `0030` gains signatures only when it is finalized again. Run it after migrating, normally as the owner.
+- A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes the record's rows when it is
+  tombstoned, so every erasure path removes them, as `0026`'s trigger does for the injection row.
+- Its row-level security policies (`rls_failure_signatures_select`, `_insert`): a row is read exactly as its record is
+  (inside the declared bounds, or shared by a live grant, the read policy's own admission over the row's columns), and
+  inserted only inside the bounds for a live record with that ID in exactly that scope.
+- The application role gets `SELECT` and `INSERT`, and no `UPDATE` or `DELETE`, once the table exists. **Re-run
+  `ApplyApplicationRolePrivilegesAsync` after migrating**, then run the backfill. The table is .NET-only: the Python and
+  Go ports neither write nor read it, and no contract privileges file grants it.
+- No existing table is rewritten; creating the foreign key and the trigger takes a brief lock on `experience_records`.
 
 ## Script comments that were written before the work they point at shipped
 
