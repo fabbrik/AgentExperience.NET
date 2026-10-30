@@ -54,7 +54,14 @@ from .embedding import (
 )
 from .encoding import Duration, Instant
 from .error_class import error_class
-from .finalize import FinalizedExperience, InitialLifecycleEvent, finalize
+from .export import (
+    ExportedLesson,
+    LessonExportResult,
+    LessonSink,
+    LessonSyncResult,
+    MarkdownLessonFileSink,
+)
+from .finalize import FinalizedExperience, InitialLifecycleEvent, finalize, finalize_async
 from .holdout import (
     DEFAULT_HOLDOUT_SALT,
     HoldoutArm,
@@ -77,6 +84,7 @@ from .lessons import (
     LessonsPage,
     LessonsQuery,
 )
+from .lessons_html import LessonsHtmlResponse, lessons_html_response, lessons_html_response_async, render_lessons_html
 from .limits import CaptureLimits, SanitizationLimits
 from .model import MODEL_METADATA_KEY, normalize_model_id
 from .records import (
@@ -92,6 +100,15 @@ from .records import (
     ToolCall,
     from_stored,
     to_stored,
+)
+from .reflection_prompt import ChatReflectorOptions, ReflectionFailed, ReflectionFailureKind
+from .reflector import (
+    DeterministicReflector,
+    ExperienceReflector,
+    ReflectionBindingError,
+    ReflectionRequest,
+    ScreeningRefusal,
+    ScreeningRefused,
 )
 from .retrieval import (
     ConfidenceDecayPolicy,
@@ -162,8 +179,10 @@ __all__ = [
     "CapabilityGate",
     "CaptureLimits",
     "CapturedRun",
+    "ChatReflectorOptions",
     "ClosedVerificationRound",
     "ConfidenceDecayPolicy",
+    "DeterministicReflector",
     "Duration",
     "Embedder",
     "EmbeddingWrite",
@@ -174,6 +193,8 @@ __all__ = [
     "ExclusionReason",
     "ExperienceLessons",
     "ExperienceRecord",
+    "ExperienceReflector",
+    "ExportedLesson",
     "FallbackReason",
     "FinalizedExperience",
     "HoldoutArm",
@@ -186,8 +207,13 @@ __all__ = [
     "Lesson",
     "LessonBenefit",
     "LessonCheck",
+    "LessonExportResult",
+    "LessonSink",
+    "LessonSyncResult",
+    "LessonsHtmlResponse",
     "LessonsPage",
     "LessonsQuery",
+    "MarkdownLessonFileSink",
     "Message",
     "MessagePart",
     "ModelAuthoredLessonPolicy",
@@ -207,6 +233,10 @@ __all__ = [
     "RawToolCall",
     "ReceivingAgent",
     "Reflection",
+    "ReflectionBindingError",
+    "ReflectionFailed",
+    "ReflectionFailureKind",
+    "ReflectionRequest",
     "RequiredCheck",
     "RetrievalOutcome",
     "RetrievalPolicy",
@@ -218,6 +248,8 @@ __all__ = [
     "SanitizationPolicy",
     "SanitizationRejected",
     "Scope",
+    "ScreeningRefusal",
+    "ScreeningRefused",
     "SearchParameters",
     "SearchRow",
     "SearchSafetyError",
@@ -240,17 +272,21 @@ __all__ = [
     "estimate_provider_benefit",
     "experience_id_for",
     "finalize",
+    "finalize_async",
     "from_stored",
     "gated_window",
     "holdout_fraction",
     "initial_event_id_for",
     "is_valid_provider_key",
+    "lessons_html_response",
+    "lessons_html_response_async",
     "merge_channels",
     "normalize_model_id",
     "provider_salt",
     "rank",
     "reflection_id_for",
     "render_block",
+    "render_lessons_html",
     "retrieval_summary",
     "select_block",
     "to_stored",

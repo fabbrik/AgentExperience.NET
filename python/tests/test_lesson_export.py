@@ -216,6 +216,6 @@ def test_a_sink_returning_none_is_an_error() -> None:
 
     view = ExperienceLessons(memory_store(read_json(case / "seed.json")), clock=lambda: now)
     with pytest.raises(RuntimeError):
-        view.export_measured(Nothing(), ExperienceIdentity("p", scope_of(options["scope"])), BenefitOptions(3))  # type: ignore[arg-type]
+        view.export_measured(Nothing(), ExperienceIdentity("p", scope_of(options["scope"])), BenefitOptions(3))
     with pytest.raises(ValueError):
         BenefitOptions(0)
