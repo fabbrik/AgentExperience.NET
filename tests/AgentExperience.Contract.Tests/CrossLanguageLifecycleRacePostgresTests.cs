@@ -208,6 +208,10 @@ public sealed class CrossLanguageLifecycleRacePostgresTests(ContractPostgresData
         finally
         {
             directory.Delete(recursive: true);
+
+            // Idle pooled connections left behind would exhaust the shared server's slots for the tests after this one.
+            application.Clear();
+            owner.Clear();
         }
     }
 
