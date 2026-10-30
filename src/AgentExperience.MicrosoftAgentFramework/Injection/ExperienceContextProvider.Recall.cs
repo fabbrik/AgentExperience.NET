@@ -536,9 +536,6 @@ internal sealed class RecallRun(
     /// <summary>The captured run.</summary>
     public Guid RunId { get; } = runId;
 
-    /// <summary>The hints delivered so far, in order. For tests.</summary>
-    public List<string> Delivered { get; } = [];
-
     /// <summary>Answers one failed call; never throws.</summary>
     public Task OnFailureAsync(CaptureScope capture, FunctionInvocationContext context, string toolName, string error, CancellationToken cancellationToken)
     {
@@ -592,7 +589,6 @@ internal sealed class RecallRun(
         {
             options.Instructions = string.IsNullOrEmpty(options.Instructions) ? hint : options.Instructions + "\n\n" + hint;
             _held.UnionWith(experienceIds);
-            Delivered.Add(hint);
         }
     }
 }
