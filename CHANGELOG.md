@@ -430,6 +430,12 @@ the six Go modules at one version.
   `ExperienceInjectionDecisionContext.GrantRecipeExcerpts`. PostgreSQL migration `0031_grant_recipe_excerpts.sql` adds
   the immutable `experience_grants.recipe_excerpts` column; reads use `to_jsonb`, so they keep working on a schema not
   yet migrated, and only issuing a grant that names recipe excerpts needs it.
+- **Contract 1.19** ([what it adds](contract/README-1.19.md)), add-only: a tool call's optional `recipeExcerpt`
+  payload member, `schema/experience-record.v1-1.19.json` (the 1.0 schema plus that member, which a 1.19 port validates
+  against), the inject option `recipeExcerpts` and three `inject` cases (`recipe-excerpt`, `-verbose`,
+  `-not-allowlisted`). Every 1.0-1.18 file is unchanged. **The Python and Go ports** read, keep and write the excerpt
+  back unchanged, and render it under `recipe_excerpts` / `RecipeExcerpts` exactly as .NET does; they do not capture or
+  sign one, and grants stay .NET-only.
 - **Experiment.** `experiments/AgentExperience.LiveReuse/recipe-amendment.md` proposes (not registered, not run) a
   recipe arm for the real-task experiment.
 
