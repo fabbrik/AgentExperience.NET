@@ -229,42 +229,42 @@ internal static class InjectOptionsContract
         [.. records.Select((record, index) => (record, InjectContract.Ranking(1.0 - (0.05 * index), 0.9)))];
 
     /// <summary>A verified lesson whose attempts call <paramref name="attempts"/>' tools in order, the last the approach.</summary>
-    private static ExperienceRecord Lesson(int n, string taskId, string lesson, string[][] attempts, bool modelAuthored = false, bool failFirst = false)
+    internal static ExperienceRecord Lesson(int n, string taskId, string lesson, string[][] attempts, bool modelAuthored = false, bool failFirst = false, int family = F, Scope? scope = null)
     {
-        var record = SearchContract.Seed(F, n, taskId, "Refund ticket handling", lesson, modelAuthored: modelAuthored);
+        var record = SearchContract.Seed(family, n, taskId, "Refund ticket handling", lesson, modelAuthored: modelAuthored, scope: scope);
         var at = record.CreatedAt.AddMinutes(-10);
         var list = new List<Attempt>();
         for (var a = 0; a < attempts.Length; a++)
         {
             var error = failFirst && a == 0 ? "System.InvalidOperationException: the ledger is locked" : null;
             var calls = attempts[a]
-                .Select((tool, c) => Call(n, (a * 16) + c, c, tool, at.AddMinutes(a).AddSeconds(c), new(), error))
+                .Select((tool, c) => Call(family, n, (a * 16) + c, c, tool, at.AddMinutes(a).AddSeconds(c), new(), error))
                 .ToList();
-            list.Add(new Attempt(Fixed.Id(F, 0x300 + (n * 16) + a), a, at.AddMinutes(a), TimeSpan.FromSeconds(3), calls, error is null ? "ok" : null, error));
+            list.Add(new Attempt(Fixed.Id(family, 0x300 + (n * 16) + a), a, at.AddMinutes(a), TimeSpan.FromSeconds(3), calls, error is null ? "ok" : null, error));
         }
 
         return record with { Attempts = list };
     }
 
     /// <summary>The retry lesson: a first attempt that timed out retrying at once, and a second that waited for the lock.</summary>
-    private static ExperienceRecord Retried(int n)
+    internal static ExperienceRecord Retried(int n, int family = F, Scope? scope = null)
     {
-        var record = SearchContract.Seed(F, n, "retry-refund", "Refund ticket handling", "Wait for the refund lock before retrying.");
+        var record = SearchContract.Seed(family, n, "retry-refund", "Refund ticket handling", "Wait for the refund lock before retrying.", scope: scope);
         var at = record.CreatedAt.AddMinutes(-10);
         const string Timeout = "System.TimeoutException: the refund lock was held by worker 7 (exit 2)\n   at Refunds.Retry()";
         Attempt[] attempts =
         [
-            new(Fixed.Id(F, 0x300 + (n * 16)), 0, at, TimeSpan.FromSeconds(4),
+            new(Fixed.Id(family, 0x300 + (n * 16)), 0, at, TimeSpan.FromSeconds(4),
             [
-                Call(n, 0, 0, "read_ledger", at, new(), error: null),
-                Call(n, 1, 1, "retry_refund", at.AddSeconds(1), new() { ["delay"] = 0, ["ticket"] = "T-46" }, Timeout),
+                Call(family, n, 0, 0, "read_ledger", at, new(), error: null),
+                Call(family, n, 1, 1, "retry_refund", at.AddSeconds(1), new() { ["delay"] = 0, ["ticket"] = "T-46" }, Timeout),
             ],
             Result: null,
             Error: Timeout),
-            new(Fixed.Id(F, 0x300 + (n * 16) + 1), 1, at.AddMinutes(1), TimeSpan.FromSeconds(4),
+            new(Fixed.Id(family, 0x300 + (n * 16) + 1), 1, at.AddMinutes(1), TimeSpan.FromSeconds(4),
             [
-                Call(n, 16, 0, "wait_for_lock", at.AddMinutes(1), new(), error: null),
-                Call(n, 17, 1, "retry_refund", at.AddMinutes(1).AddSeconds(1), new() { ["delay"] = 30, ["ticket"] = "T-46" }, error: null),
+                Call(family, n, 16, 0, "wait_for_lock", at.AddMinutes(1), new(), error: null),
+                Call(family, n, 17, 1, "retry_refund", at.AddMinutes(1).AddSeconds(1), new() { ["delay"] = 30, ["ticket"] = "T-46" }, error: null),
             ],
             Result: "Refund issued.",
             Error: null),
@@ -273,8 +273,8 @@ internal static class InjectOptionsContract
         return record with { Attempts = attempts };
     }
 
-    private static ToolCallRecord Call(int n, int id, int sequence, string name, DateTimeOffset at, Dictionary<string, object?> arguments, string? error) =>
-        new(Fixed.Id(F, 0x1000 + (n * 64) + id), sequence, name, arguments, at, TimeSpan.FromMilliseconds(500), error is null ? "ok" : null, error);
+    private static ToolCallRecord Call(int family, int n, int id, int sequence, string name, DateTimeOffset at, Dictionary<string, object?> arguments, string? error) =>
+        new(Fixed.Id(family, 0x1000 + (n * 64) + id), sequence, name, arguments, at, TimeSpan.FromMilliseconds(500), error is null ? "ok" : null, error);
 
     /// <summary>
     /// What the .NET context provider does with a case: the provider is built with the case's options (a host resolver
