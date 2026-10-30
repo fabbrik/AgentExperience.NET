@@ -45,6 +45,7 @@ public sealed record RawToolCall(
     /// exactly as <see cref="Result"/> does, and is then cut to <see cref="CaptureLimits.MaxRecipeExcerptLength"/>
     /// characters, never between a surrogate pair. On a failed call it is dropped.
     /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? RecipeExcerpt { get; init; }
 }
 

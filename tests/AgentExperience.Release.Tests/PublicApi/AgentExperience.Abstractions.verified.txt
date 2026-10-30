@@ -1228,6 +1228,7 @@
         public System.Collections.Generic.IReadOnlyDictionary<string, object?> Arguments { get; init; }
         public System.TimeSpan Duration { get; init; }
         public string? Error { get; init; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
         public string? RecipeExcerpt { get; init; }
         public string? Result { get; init; }
         public int SequenceNumber { get; init; }

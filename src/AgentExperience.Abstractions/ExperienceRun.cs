@@ -51,8 +51,9 @@ public sealed record ToolCallRecord(
     /// </summary>
     /// <remarks>
     /// Stored in a record's payload only when set, so a record without one is byte for byte what it was before
-    /// this property existed. Claims version 4 of a provenance signature covers it; an earlier version does not.
+    /// this property existed (and System.Text.Json leaves it out when it is null). Claims version 4 of a provenance signature covers it; an earlier version does not.
     /// </remarks>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? RecipeExcerpt { get; init; }
 }
 
