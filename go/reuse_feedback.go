@@ -112,8 +112,9 @@ type ComparativeEvaluationResult struct {
 const MaxExposedRecords = 64
 
 // ExperienceReuseFeedback is one submission about a run stored experience was injected into (.NET's
-// ExperienceReuseFeedback). FeedbackID is its idempotency key. ClaimedBenefit "" is Unknown (.NET's default); it is
-// recorded and never acted on. Measure nil and ExposedExperienceIDs nil are .NET's null, refused as such.
+// ExperienceReuseFeedback). FeedbackID is its idempotency key. An enum left "" is read as .NET reads an unset one,
+// its first member: RunOutcome and ClaimedBenefit "" are Unknown (and so is an attribution's Benefit, which degrades
+// the attribution as .NET's default does). ClaimedBenefit is recorded and never acted on. Measure nil and ExposedExperienceIDs nil are .NET's null, refused as such.
 type ExperienceReuseFeedback struct {
 	FeedbackID            UUID
 	RunID                 UUID
@@ -397,11 +398,31 @@ func isCancellation(ctx context.Context, err error) bool {
 	return ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-func (s *ReuseFeedbackService) record(ctx context.Context, authorization AuthorizationContext,
-	feedback ExperienceReuseFeedback) (ExperienceReuseFeedbackResult, error) {
+// withEnumDefaults reads an enum left "" as .NET reads an unset one, its zero value, the first member: RunOutcome,
+// ClaimedBenefit and an attribution's Benefit are Unknown. The caller's attributions are copied, never changed.
+func withEnumDefaults(feedback ExperienceReuseFeedback) ExperienceReuseFeedback {
+	if feedback.RunOutcome == "" {
+		feedback.RunOutcome = VerificationUnknown
+	}
 	if feedback.ClaimedBenefit == "" {
 		feedback.ClaimedBenefit = BenefitUnknown
 	}
+	if human := feedback.HumanAssessment; human != nil && human.Benefit == "" {
+		copied := *human
+		copied.Benefit = BenefitUnknown
+		feedback.HumanAssessment = &copied
+	}
+	if comparative := feedback.ComparativeEvaluation; comparative != nil && comparative.Benefit == "" {
+		copied := *comparative
+		copied.Benefit = BenefitUnknown
+		feedback.ComparativeEvaluation = &copied
+	}
+	return feedback
+}
+
+func (s *ReuseFeedbackService) record(ctx context.Context, authorization AuthorizationContext,
+	feedback ExperienceReuseFeedback) (ExperienceReuseFeedbackResult, error) {
+	feedback = withEnumDefaults(feedback)
 	fatal, degrading := validateReuseFeedbackSubmission(feedback, authorization)
 	if len(fatal) > 0 {
 		return endedFeedback(FeedbackInvalid, feedback.FeedbackID, fatal, nil), nil

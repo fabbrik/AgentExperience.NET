@@ -263,9 +263,9 @@ func cloneScope(scope Scope) Scope {
 
 // ReuseFeedbackMatches reports whether a stored submission is the one in hand, every stored field compared as the
 // .NET ledgers compare them: the instants against the submitted ones truncated to whole microseconds, the measure's
-// value exactly (NaN equal to NaN), the evidence IDs and the exposures in order. rationaleUnrecoverable compares only
-// the rationale's presence (a .NET ledger's sealed copy no key can open).
-func ReuseFeedbackMatches(stored, submitted RecordedExperienceReuseFeedback, rationaleUnrecoverable bool) bool {
+// value exactly (NaN equal to NaN), the evidence IDs and the exposures in order. A port holds no key store, so a
+// rationale is always compared as stored (a .NET-sealed one, the placeholder, never equals a submitted text).
+func ReuseFeedbackMatches(stored, submitted RecordedExperienceReuseFeedback) bool {
 	if stored.RunID != submitted.RunID || !equalScopePointer(stored.Scope, submitted.Scope) ||
 		stored.RunOutcome != submitted.RunOutcome || stored.ClaimedBenefit != submitted.ClaimedBenefit ||
 		stored.Benefit != submitted.Benefit || stored.AttributionSource != submitted.AttributionSource ||
@@ -276,11 +276,7 @@ func ReuseFeedbackMatches(stored, submitted RecordedExperienceReuseFeedback, rat
 		!equalPointer(stored.TrialLabel, submitted.TrialLabel) {
 		return false
 	}
-	if rationaleUnrecoverable {
-		if submitted.Rationale == nil {
-			return false
-		}
-	} else if !equalPointer(stored.Rationale, submitted.Rationale) {
+	if !equalPointer(stored.Rationale, submitted.Rationale) {
 		return false
 	}
 	if len(stored.EvidenceIDs) != len(submitted.EvidenceIDs) {

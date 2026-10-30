@@ -212,3 +212,83 @@ func TestTheReuseEvidenceStepStopsWhenCancelled(t *testing.T) {
 		t.Fatalf("%+v %v %v", results, truncated, err)
 	}
 }
+
+// Exposures are stored and handed back in .NET's Guid order, which is the lowercase text's: unsigned, group by group.
+func TestExposuresAreOrderedAsDotnetOrdersGuids(t *testing.T) {
+	scrambled := []string{
+		"7fffffff-0000-4000-8000-000000000001", "00001170-0001-4000-8000-ffffffffffff",
+		"ffffffff-0000-4000-8000-000000000001", "00001170-ffff-4000-8000-000000000001",
+		"80000000-0000-4000-8000-000000000001", "00001170-0001-4000-ffff-000000000001",
+		"00001170-0001-ffff-8000-000000000001", "00001170-0001-4000-8000-000000000001",
+	}
+	want := []string{
+		"00001170-0001-4000-8000-000000000001", "00001170-0001-4000-8000-ffffffffffff",
+		"00001170-0001-4000-ffff-000000000001", "00001170-0001-ffff-8000-000000000001",
+		"00001170-ffff-4000-8000-000000000001", "7fffffff-0000-4000-8000-000000000001",
+		"80000000-0000-4000-8000-000000000001", "ffffffff-0000-4000-8000-000000000001",
+	}
+	exposures := make([]*ae.ExperienceReuseExposure, len(scrambled))
+	for i, text := range scrambled {
+		exposures[i] = &ae.ExperienceReuseExposure{ExperienceID: ae.MustParseUUID(text)}
+	}
+	scope := testScope
+	feedback := ae.RecordedExperienceReuseFeedback{FeedbackID: ae.UUID{0: 0x77, 6: 0x40, 8: 0x80},
+		RunID: ae.UUID{0: 0x55, 6: 0x40, 8: 0x80}, Scope: &scope, RunOutcome: ae.VerificationVerified,
+		ClaimedBenefit: ae.BenefitUnknown, Benefit: ae.BenefitUnknown, AttributionSource: ae.AttributionNone,
+		Measure: &ae.ReuseMeasure{Kind: "k", Value: 1}, ObservedAt: ae.MustParseInstant("2026-03-02T10:00:00+00:00"),
+		Exposures: exposures}
+	order := func(f ae.RecordedExperienceReuseFeedback) []string {
+		ids := make([]string, len(f.Exposures))
+		for i, exposure := range f.Exposures {
+			ids[i] = exposure.ExperienceID.String()
+		}
+		return ids
+	}
+	if got := order(ae.NormalizeReuseFeedback(feedback)); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("normalized %v", got)
+	}
+	ledger := NewReuseFeedbackLedger()
+	recorded, err := ledger.RecordReuseFeedback(context.Background(), testAuthorization, feedback)
+	if err != nil || recorded.Outcome != ae.LedgerRecorded || fmt.Sprint(order(*recorded.Feedback)) != fmt.Sprint(want) {
+		t.Fatalf("recorded %v %v %v", recorded.Outcome, err, recorded.Feedback)
+	}
+	reversed := feedback
+	reversed.Exposures = make([]*ae.ExperienceReuseExposure, len(exposures))
+	for i, exposure := range exposures {
+		reversed.Exposures[len(exposures)-1-i] = exposure
+	}
+	if again, err := ledger.RecordReuseFeedback(context.Background(), testAuthorization, reversed); err != nil ||
+		again.Outcome != ae.LedgerAlreadyRecorded {
+		t.Fatalf("again %v %v", again.Outcome, err)
+	}
+}
+
+// An enum left "" reads as .NET's unset one, its first member: RunOutcome and ClaimedBenefit Unknown are recorded, and
+// an attribution whose Benefit is "" degrades as .NET's default Unknown does, not as an undefined value.
+func TestEnumsLeftUnsetReadAsTheirFirstMember(t *testing.T) {
+	ledger := NewReuseFeedbackLedger()
+	a := testRecord(9)
+	store, _ := New(a)
+	lifecycle, _ := ae.NewLifecycleService(store, ae.LifecycleOptions{})
+	service, _ := ae.NewReuseFeedbackService(ledger, lifecycle)
+	feedback := testFeedback(a)
+	feedback.RunOutcome, feedback.ClaimedBenefit = "", ""
+	comparative := *feedback.ComparativeEvaluation
+	comparative.Benefit = ""
+	feedback.ComparativeEvaluation = &comparative
+	result, err := service.Record(context.Background(), testAuthorization, feedback)
+	if err != nil || result.Outcome != ae.FeedbackRecorded {
+		t.Fatalf("%v %v %v", result.Outcome, err, result.Errors)
+	}
+	if result.Reason == nil || !strings.Contains(*result.Reason,
+		"ComparativeEvaluation.Benefit must attribute improvement or harm; an attribution of Unknown is not an attribution") {
+		t.Fatalf("reason %v", result.Reason)
+	}
+	stored := ledger.Submissions()[0]
+	if stored.RunOutcome != ae.VerificationUnknown || stored.ClaimedBenefit != ae.BenefitUnknown {
+		t.Fatalf("stored %s %s", stored.RunOutcome, stored.ClaimedBenefit)
+	}
+	if comparative.Benefit != "" {
+		t.Fatal("the caller's attribution was changed")
+	}
+}

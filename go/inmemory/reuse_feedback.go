@@ -32,8 +32,8 @@ var _ ae.ReuseFeedbackStore = (*ReuseFeedbackLedger)(nil)
 // differing one Conflict, with the stored one only when the authorization permits its scope.
 func (l *ReuseFeedbackLedger) RecordReuseFeedback(ctx context.Context, authorization ae.AuthorizationContext,
 	feedback ae.RecordedExperienceReuseFeedback) (ae.ReuseFeedbackStoreResult, error) {
-	if errors := ae.ValidateReuseFeedback(feedback); len(errors) > 0 {
-		return ae.ReuseFeedbackStoreResult{Outcome: ae.LedgerInvalid, Errors: errors}, nil
+	if invalid := ae.ValidateReuseFeedback(feedback); len(invalid) > 0 {
+		return ae.ReuseFeedbackStoreResult{Outcome: ae.LedgerInvalid, Errors: invalid}, nil
 	}
 	if !authorization.Permits(*feedback.Scope) {
 		return ae.ReuseFeedbackStoreResult{Outcome: ae.LedgerDenied, Errors: []ae.StoreValidationError{}}, nil
@@ -46,7 +46,7 @@ func (l *ReuseFeedbackLedger) RecordReuseFeedback(ctx context.Context, authoriza
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if stored, ok := l.submissions[submitted.FeedbackID]; ok {
-		if ae.ReuseFeedbackMatches(stored, submitted, false) {
+		if ae.ReuseFeedbackMatches(stored, submitted) {
 			copied := ae.CloneReuseFeedback(stored)
 			return ae.ReuseFeedbackStoreResult{Outcome: ae.LedgerAlreadyRecorded, Feedback: &copied,
 				Errors: []ae.StoreValidationError{}}, nil

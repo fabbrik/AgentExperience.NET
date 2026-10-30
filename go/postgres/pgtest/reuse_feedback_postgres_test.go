@@ -13,10 +13,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	ae "github.com/fabbrik/AgentExperience.NET/go"
 	ct "github.com/fabbrik/AgentExperience.NET/go/internal/contracttest"
+	"github.com/fabbrik/AgentExperience.NET/go/postgres"
 )
 
 var reuseFeedbackTables = []struct {
@@ -172,5 +174,63 @@ func TestTheReuseFeedbackWriterSpeaksItsProtocol(t *testing.T) {
 	reviewer, _ := events.([]any)[0].(*ae.Object).Get("confidence_reviewer_identity")
 	if reviewer != "go-writer" {
 		t.Fatalf("reviewer %v", reviewer)
+	}
+}
+
+// Writers racing on one feedback ID, each on its own pool: the primary key is the arbiter, so exactly one records it,
+// every other one finds its own submission stored (AlreadyRecorded), and the ledger holds one row.
+func TestWritersRacingOnOneFeedbackIDRecordItExactlyOnce(t *testing.T) {
+	admin := requireServer(t)
+	ctx := context.Background()
+	get := func(o *ae.Object, key string) any { value, _ := o.Get(key); return value }
+	steps := get(ct.MustReadJSON(fixture("reuse-feedback-sql", "record-replay-and-conflict", "steps.json")).(*ae.Object),
+		"steps").([]any)
+	first := get(steps[0].(*ae.Object), "record").(*ae.Object)
+	authorization := ct.AuthorizationOf(get(first, "authorization"))
+	database := createDatabase(t, admin, "feedback_race")
+	owner := ownerConn(t, admin, database)
+
+	const writers = 8
+	stores := make([]*postgres.Store, writers)
+	for i := range stores {
+		stores[i] = newStore(t, admin, database)
+	}
+	start := make(chan struct{})
+	outcomes := make([]ae.ReuseFeedbackStoreOutcome, writers)
+	failures := make([]error, writers)
+	var wg sync.WaitGroup
+	for i := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			result, err := stores[i].RecordReuseFeedback(ctx, authorization, ct.RecordedFeedbackOf(get(first, "feedback")))
+			outcomes[i], failures[i] = result.Outcome, err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	recorded := 0
+	for i, outcome := range outcomes {
+		if failures[i] != nil {
+			t.Fatalf("writer %d: %v", i, failures[i])
+		}
+		switch outcome {
+		case ae.LedgerRecorded:
+			recorded++
+		case ae.LedgerAlreadyRecorded:
+		default:
+			t.Fatalf("writer %d: %s", i, outcome)
+		}
+	}
+	if recorded != 1 {
+		t.Fatalf("%d writers recorded it: %v", recorded, outcomes)
+	}
+	if rows := tableAsText(t, owner, "agent_experience.reuse_feedback", []string{"feedback_id"}, "feedback_id"); len(rows) != 1 {
+		t.Fatalf("%d submission rows", len(rows))
+	}
+	exposures := tableAsText(t, owner, "agent_experience.reuse_feedback_exposures", []string{"experience_id"}, "ordinal")
+	if len(exposures) != len(ct.RecordedFeedbackOf(get(first, "feedback")).Exposures) {
+		t.Fatalf("%d exposure rows", len(exposures))
 	}
 }

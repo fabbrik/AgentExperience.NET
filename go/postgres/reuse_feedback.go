@@ -65,8 +65,8 @@ func storedTime(instant ae.Instant) time.Time { return instant.TruncateToMicrose
 // submission's scope is Invalid, naming its position as the caller listed it. A database error is returned.
 func (s *Store) RecordReuseFeedback(ctx context.Context, authorization ae.AuthorizationContext,
 	feedback ae.RecordedExperienceReuseFeedback) (ae.ReuseFeedbackStoreResult, error) {
-	if errors := ae.ValidateReuseFeedback(feedback); len(errors) > 0 {
-		return ae.ReuseFeedbackStoreResult{Outcome: ae.LedgerInvalid, Errors: errors}, nil
+	if invalid := ae.ValidateReuseFeedback(feedback); len(invalid) > 0 {
+		return ae.ReuseFeedbackStoreResult{Outcome: ae.LedgerInvalid, Errors: invalid}, nil
 	}
 	if !authorization.Permits(*feedback.Scope) {
 		return ae.ReuseFeedbackStoreResult{Outcome: ae.LedgerDenied, Errors: noErrors()}, nil
@@ -95,7 +95,7 @@ func (s *Store) RecordReuseFeedback(ctx context.Context, authorization ae.Author
 			return ae.ReuseFeedbackStoreResult{}, err
 		}
 		rollback(tx)
-		if stored != nil && ae.ReuseFeedbackMatches(*stored, feedback, false) {
+		if stored != nil && ae.ReuseFeedbackMatches(*stored, feedback) {
 			return ae.ReuseFeedbackStoreResult{Outcome: ae.LedgerAlreadyRecorded, Feedback: stored, Errors: noErrors()}, nil
 		}
 		result := ae.ReuseFeedbackStoreResult{Outcome: ae.LedgerConflict, Errors: noErrors()}
@@ -302,12 +302,12 @@ func (s *Store) erasedExposures(ctx context.Context, tx pgx.Tx,
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	var errors []ae.StoreValidationError
+	var refusals []ae.StoreValidationError
 	for ordinal, exposure := range feedback.Exposures {
 		if erased[exposure.ExperienceID] {
-			errors = append(errors, ae.StoreValidationError{Path: "Exposures[" + strconv.Itoa(ordinal) + "].ExperienceId",
+			refusals = append(refusals, ae.StoreValidationError{Path: "Exposures[" + strconv.Itoa(ordinal) + "].ExperienceId",
 				Message: "names an Experience Record that has been erased; nothing may be recorded against it again."})
 		}
 	}
-	return errors, nil
+	return refusals, nil
 }
