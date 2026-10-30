@@ -62,6 +62,14 @@ from .lifecycle import (
 from .model import model_of_metadata
 from .records import EXPERIENCE_STATUSES, ExperienceRecord, ExperienceStatus, Scope
 from .reflector import is_model_authored
+from .reuse_feedback import (
+    ExperienceReuseExposure,
+    ExperienceReuseFeedbackStoreResult,
+    RecordedExperienceReuseFeedback,
+    normalize_reuse_feedback,
+    same_reuse_feedback,
+    validate_reuse_feedback,
+)
 from .search import ELIGIBLE_STATUSES, AuthorizationBounds, SearchParameters, SearchRow
 
 MAX_INDEXED_LENGTH = 100_000
@@ -1117,4 +1125,65 @@ def _initial_event(event: InitialLifecycleEvent, scope: Scope, recorded_at: Inst
         event.applied_revision,
         recorded_at.truncate_to_microseconds(),
         actor,
+    )
+
+
+# ---- Contract 1.17: the reuse-feedback ledger ----------------------------------------------------------------------
+
+
+class InMemoryExperienceReuseFeedbackStore:
+    """
+    The reuse-feedback ledger in memory, for development and tests (.NET's ``InMemoryExperienceReuseFeedbackStore``):
+    every submission validated with the ledger's own rules, then authorized; the feedback ID the idempotency key, so an
+    identical resubmission is ``AlreadyRecorded`` and one differing in any stored field is ``Conflict``, with nothing
+    written; a conflicting submission handed back only when the caller has authority over its scope. Thread-safe.
+
+    A submission is stored as a snapshot with its exposures in experience-ID order and its instants truncated to whole
+    microseconds, as PostgreSQL stores them, and that snapshot is what every result hands back. Like .NET's, it is
+    independent of the record store and checks nothing about the exposed records.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._submissions: dict[uuid.UUID, RecordedExperienceReuseFeedback] = {}
+
+    def record(
+        self, authorization: AuthorizationContext, feedback: RecordedExperienceReuseFeedback
+    ) -> ExperienceReuseFeedbackStoreResult:
+        if authorization is None or feedback is None:
+            raise TypeError("authorization and feedback must not be None.")
+        errors = validate_reuse_feedback(feedback)
+        if errors:
+            return ExperienceReuseFeedbackStoreResult("Invalid", None, errors)
+        if not authorization.permits(feedback.scope):
+            return ExperienceReuseFeedbackStoreResult("Denied", None)
+        submitted = _feedback_snapshot(normalize_reuse_feedback(feedback))
+        with self._lock:
+            stored = self._submissions.get(submitted.feedback_id)
+            if stored is not None:
+                if same_reuse_feedback(stored, submitted):
+                    return ExperienceReuseFeedbackStoreResult("AlreadyRecorded", stored)
+                return ExperienceReuseFeedbackStoreResult(
+                    "Conflict", stored if authorization.permits(stored.scope) else None
+                )
+            self._submissions[submitted.feedback_id] = submitted
+            return ExperienceReuseFeedbackStoreResult("Recorded", submitted)
+
+    def submissions(self) -> list[RecordedExperienceReuseFeedback]:
+        """Every stored submission, by feedback ID, for inspection in tests."""
+        with self._lock:
+            return [self._submissions[key] for key in sorted(self._submissions)]
+
+
+def _feedback_snapshot(feedback: RecordedExperienceReuseFeedback) -> RecordedExperienceReuseFeedback:
+    return dataclasses.replace(
+        feedback,
+        evidence_ids=tuple(feedback.evidence_ids or ()),
+        attributed_at=None if feedback.attributed_at is None else feedback.attributed_at.truncate_to_microseconds(),
+        observed_at=feedback.observed_at.truncate_to_microseconds(),
+        exposures=tuple(
+            ExperienceReuseExposure(exposure.experience_id, exposure.attributed, exposure.evidence_id)
+            for exposure in feedback.exposures or ()
+            if exposure is not None
+        ),
     )

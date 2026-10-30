@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import hashlib
 import hmac
 import math
@@ -33,7 +34,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from decimal import Decimal
-from typing import ClassVar, Literal, Protocol, runtime_checkable
+from typing import ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 
 from ._text import is_null_or_whitespace, is_whitespace, utf8_bytes, utf16_len
 from .encoding import Instant
@@ -134,6 +135,28 @@ class ConfidenceEngineError(RuntimeError):
 
     def __str__(self) -> str:
         return self.message
+
+
+_ENGINE_FAILURE = "_agentexperience_engine_failure"
+
+_E = TypeVar("_E", bound=BaseException)
+
+
+def _mark_engine_failure(error: _E) -> _E:
+    """Marks ``error`` as a confidence engine failure (.NET's ``ConfidenceEngineRule`` marks it in ``Exception.Data``).
+    An error whose attributes cannot be set propagates unmarked."""
+    with contextlib.suppress(Exception):
+        setattr(error, _ENGINE_FAILURE, True)
+    return error
+
+
+def is_engine_failure(error: BaseException) -> bool:
+    """
+    Whether ``error`` is a confidence engine failure :meth:`ConfidenceEngineRule.score` marked (.NET's
+    ``ConfidenceEngineRule.IsEngineFailure``): an exception the engine raised, or a value that is not a score
+    (:class:`ConfidenceEngineError`).
+    """
+    return getattr(error, _ENGINE_FAILURE, False) is True
 
 
 def _out_of_range(parameter: str, message: str) -> ConfidenceArgumentError:
@@ -468,15 +491,19 @@ class ConfidenceEngineRule:
         The engine's score for ``record`` with these counters. An exception the engine raises propagates unchanged; a
         value that is NaN, infinite or outside [0, 1] raises :class:`ConfidenceEngineError`, never clamped.
         """
-        value = self._engine.score(ExperienceConfidenceInput(record, supporting_validations, contradictions))
+        try:
+            value = self._engine.score(ExperienceConfidenceInput(record, supporting_validations, contradictions))
+        except Exception as error:
+            _mark_engine_failure(error)
+            raise
         if isinstance(value, bool) or not isinstance(value, (numbers.Real, Decimal)):
-            raise TypeError("A confidence engine's score must be a real number.")
+            raise _mark_engine_failure(TypeError("A confidence engine's score must be a real number."))
         try:
             value = float(value)
         except OverflowError:  # an integer past every double: as .NET would see it, infinite
             value = math.inf if value > 0 else -math.inf
         if not math.isfinite(value) or value < 0.0 or value > 1.0:
-            raise ConfidenceEngineError(self.recorded, value)
+            raise _mark_engine_failure(ConfidenceEngineError(self.recorded, value))
         return value
 
     def apply(

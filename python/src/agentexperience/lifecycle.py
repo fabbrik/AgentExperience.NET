@@ -333,6 +333,9 @@ class ApplyConfidenceEvidenceResult:
     errors: tuple[StoreValidationError, ...] = ()
     reason: str | None = None
     refusal: IndependenceRefusal | None = None
+    recorded_on_event: bool = False
+    """Whether an uncounted, applied update was stored on a lifecycle event (host-trusted evidence recorded only)
+    rather than as a duplicate with no event (.NET's internal ``RecordedOnEvent``, contract 1.17)."""
 
     @property
     def counted(self) -> bool:
@@ -971,6 +974,11 @@ class ExperienceLifecycleService:
     def host_trusted_evidence(self) -> HostTrustedEvidenceEffect:
         return self._host_trusted_evidence
 
+    @property
+    def store(self) -> LifecycleStore:
+        """The store this service reads and commits through (contract 1.17's reuse-evidence step reads with it)."""
+        return self._store
+
     @staticmethod
     def is_transition_allowed(prior_status: str, current_status: str) -> bool:
         """See :func:`is_transition_allowed`."""
@@ -1215,7 +1223,16 @@ class ExperienceLifecycleService:
         settled_status = result.current_status if result.current_status is not None else current_status
         stored = result.applied_confidence if result.applied_confidence is not None else update.as_recorded_only()
         return ApplyConfidenceEvidenceResult(
-            "Applied", event, stored, result.revision, settled_status, tuple(result.errors), None
+            "Applied",
+            event,
+            stored,
+            result.revision,
+            settled_status,
+            tuple(result.errors),
+            None,
+            # A store reports no status exactly when an event moved the record (this call's, or the one an event-ID
+            # replay reports); an uncounted update on such an event is evidence recorded only, not a duplicate.
+            recorded_on_event=not stored.counted and result.current_status is None,
         )
 
     # ---- read_confidence -------------------------------------------------------------------------------------------
