@@ -248,11 +248,11 @@ def apply(
     supporting = record.supporting_validations
     contradictions = record.contradictions
     if kind == "Supporting":
-        if supporting == MAX_COUNTER:
+        if supporting >= MAX_COUNTER:
             raise _out_of_range("record", "The record's supporting validations cannot take one more.")
         supporting += 1
     else:
-        if contradictions == MAX_COUNTER:
+        if contradictions >= MAX_COUNTER:
             raise _out_of_range("record", "The record's contradictions cannot take one more.")
         contradictions += 1
     return ConfidenceUpdate(
