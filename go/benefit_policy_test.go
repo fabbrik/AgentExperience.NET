@@ -126,3 +126,29 @@ func TestTheWindowedEstimateCountsOnlyRecentAssignments(t *testing.T) {
 		t.Fatalf("%v %+v", err, recent.Overall)
 	}
 }
+
+// Contract 1.13: the inject-options fixtures.
+func TestInjectOptions(t *testing.T) {
+	names := ct.Cases(ct.InjectOptionsFamily)
+	if len(names) == 0 {
+		t.Fatal("no cases")
+	}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			c, err := ct.LoadInjectOptionsCase(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, block, err := c.Run()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d := ct.Difference(c.Expected, ct.AsWritten(actual), "$", ct.Options{}); d != "" {
+				t.Fatal(d)
+			}
+			if block != c.ExpectedBlock {
+				t.Fatalf("expected:\n%s\nactual:\n%s", c.ExpectedBlock, block)
+			}
+		})
+	}
+}
