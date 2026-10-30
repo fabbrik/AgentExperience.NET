@@ -398,7 +398,8 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	// record_injection and record_holdout are reported.
 	// Contract 1.10: the benefit policy on, so its background refresh (benefit_refresh) is reported too.
 	// Contract 1.11: another memory provider measured too, so record_provider_holdout is reported.
-	seen := drive(t, newStore(t), maf.Options{Embedder: embedder{}, Holdout: maf.HoldoutOptions{Rate: 0.5},
+	store := newStore(t)
+	seen := drive(t, store, maf.Options{Embedder: embedder{}, Holdout: maf.HoldoutOptions{Rate: 0.5},
 		NewID: treatedIDs, Benefit: ae.BenefitPolicy{Enabled: true}}, ticket, nextTicket, func(config *agent.Config) {
 		if _, err := maf.UseMeasuredMemory(config, instructionMemory{}, "stub-memory", maf.MeasuredMemoryOptions{
 			Holdout: &maf.HoldoutOptions{Rate: 0.5}}); err != nil {
@@ -408,10 +409,11 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	if len(seen.recorded) != 1 || seen.recorded[0] != maf.InjectionRecorded {
 		t.Fatalf("recorded %v", seen.recorded)
 	}
+	lifecycle(t, store)
 
 	spans := s.spans.GetSpans()
 	for _, want := range []string{"inject", "retrieve", "capture.start_run", "capture.append_attempt",
-		"capture.complete_run", "verify", "reflect", "finalize", "index"} {
+		"capture.complete_run", "verify", "reflect", "finalize", "index", "lifecycle.commit", "confidence.apply"} {
 		spanNamed(t, spans, "agentexperience."+want)
 	}
 	for _, span := range spans {
@@ -497,6 +499,52 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	}
 	if attributes(finalize)["agentexperience.stage"] != "CreateRecord" {
 		t.Errorf("stage %v", attributes(finalize)["agentexperience.stage"])
+	}
+	apply := attributes(spanNamed(t, spans, "agentexperience.confidence.apply"))
+	commit := attributes(spanNamed(t, spans, "agentexperience.lifecycle.commit"))
+	if apply[ae.AttributeConfidenceAdmission] != "HostTrusted" || apply[ae.AttributeEventID] == nil ||
+		apply[ae.AttributeExperienceID] == nil || apply[telemetry.AttributeOutcome] != "Applied" ||
+		commit[telemetry.AttributeOutcome] != "Committed" || commit[ae.AttributeEventID] == nil {
+		t.Errorf("confidence.apply %v, lifecycle.commit %v", apply, commit)
+	}
+}
+
+// lifecycle applies a piece of evidence to a record and then commits a transition, through the core's lifecycle
+// service over the store (contract 1.16): confidence.apply and lifecycle.commit.
+func lifecycle(t *testing.T, store *inmemory.Store) {
+	t.Helper()
+	ctx := context.Background()
+	records := store.Records()
+	if len(records) == 0 {
+		t.Fatal("nothing was finalized")
+	}
+	record := records[0]
+	record.ExperienceID, record.SourceRunID = ae.NewRandomUUID(), ae.NewRandomUUID()
+	record.Status, record.Revision, record.SupportingValidations, record.Contradictions = ae.StatusValidated, 1, 1, 0
+	record.ReuseConfidence = 2.0 / 3
+	if err := store.InsertRecord(ctx, ae.BoundsOf(record.Scope), &record); err != nil {
+		t.Fatal(err)
+	}
+	service, err := ae.NewLifecycleService(store, ae.LifecycleOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization := ae.AuthorizationContext{PrincipalID: "telemetry-test", Bounds: ae.BoundsOf(record.Scope)}
+	round := ae.NewRandomUUID()
+	applied, err := service.ApplyEvidence(ctx, authorization, ae.ApplyConfidenceEvidenceRequest{
+		EventID: ae.NewRandomUUID(), ExperienceID: record.ExperienceID, Scope: record.Scope, EvidenceID: ae.NewRandomUUID(),
+		Kind: ae.EvidenceSupporting, Source: ae.EvidenceMachine, RunID: ae.NewRandomUUID(), VerificationRoundID: &round,
+		Reason: "reused, and the checks passed", Producer: "telemetry-test", OccurredAt: ae.Now()})
+	if err != nil || applied.Outcome != ae.ConfidenceApplied {
+		t.Fatalf("%+v %v", applied, err)
+	}
+	prior := ae.StatusValidated
+	committed, err := service.Commit(ctx, authorization, ae.CommitLifecycleTransitionRequest{
+		EventID: ae.NewRandomUUID(), ExperienceID: record.ExperienceID, Scope: record.Scope, PriorStatus: &prior,
+		CurrentStatus: ae.StatusReinforced, Reason: "reinforced by review", Producer: "telemetry-test",
+		OccurredAt: ae.Now(), ExpectedRevision: applied.Revision})
+	if err != nil || committed.Outcome != ae.TransitionCommitted {
+		t.Fatalf("%+v %v", committed, err)
 	}
 }
 

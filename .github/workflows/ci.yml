@@ -643,3 +643,83 @@ jobs:
           for module in ${{ matrix.modules }}; do
             (cd "$module" && go test -race -tags postgres ./...)
           done
+
+  # Story 27.6b (contract 1.16): the cross-language lifecycle race. A .NET, a Python and a Go writer commit a transition
+  # on the same record at the same revision, in one PostgreSQL database, all released together behind an advisory lock;
+  # exactly one commits per revision, the others are StaleRevision, and all three read the same history. It needs all
+  # three toolchains, so it is a job of its own; AgentExperience.Contract.Tests' CrossLanguageLifecycleRacePostgresTests
+  # runs only when AGENTEXPERIENCE_CROSS_LANGUAGE_RACE is 1, and passes without doing anything elsewhere.
+  cross-language-lifecycle:
+    runs-on: ubuntu-24.04
+    env:
+      AGENTEXPERIENCE_CROSS_LANGUAGE_RACE: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Local development may roll forward (global.json: latestFeature). CI may not: the runner image ships
+      # newer SDK bands, which would otherwise win. Disabling roll-forward here makes setup-dotnet install,
+      # and the host select, exactly the pinned SDK. The working copy is the runner's; nothing is committed.
+      - name: Pin the SDK exactly (CI only)
+        run: |
+          sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
+          grep -q '"rollForward": "disable"' global.json
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      # Belt and braces after the pin above: a different SDK fails here instead of silently winning.
+      - name: Assert the exact pinned SDK
+        run: |
+          pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
+          actual="$(dotnet --version)"
+          test "$actual" = "$pinned" || { echo "::error::SDK $actual is in use, but global.json pins $pinned"; exit 1; }
+          echo "SDK $actual, as pinned"
+
+      - name: Setup uv and Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+
+      - name: Install the Python package (locked)
+        working-directory: python
+        run: uv sync --locked --extra postgres
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+          cache-dependency-path: go/postgres/go.sum
+
+      - name: Build the Go writer
+        working-directory: go/postgres
+        run: go build ./internal/lifecyclerace
+
+      - name: Restore
+        run: dotnet restore tests/AgentExperience.Contract.Tests --locked-mode
+
+      - name: Build
+        run: dotnet build tests/AgentExperience.Contract.Tests --no-restore --configuration Release
+
+      - name: Race .NET, Python and Go writers on one revision
+        run: >-
+          dotnet test tests/AgentExperience.Contract.Tests --no-build --configuration Release
+          --filter "FullyQualifiedName~CrossLanguageLifecycleRace"
+          --logger "trx;LogFileName=race.trx" --results-directory race-results
+
+      # A filter that matches nothing exits 0, so the race must be seen to have run and passed.
+      - name: Assert the race ran and passed
+        run: |
+          set -euo pipefail
+          trx="race-results/race.trx"
+          test -f "$trx" || { echo "::error::no test results at $trx"; exit 1; }
+          passed="$(grep -o '<Counters [^>]*' "$trx" | grep -o ' passed="[0-9]*"' | grep -o '[0-9]\+')"
+          test "${passed:-0}" -ge 1 || { echo "::error::the cross-language race did not run"; exit 1; }
+          echo "cross-language race: $passed passed"

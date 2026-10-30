@@ -117,6 +117,7 @@ func (s *Store) Erase(id ae.UUID) bool {
 	s.order = slices.DeleteFunc(s.order, func(other ae.UUID) bool { return other == id })
 	delete(s.injections, id)
 	delete(s.embeddings, id)
+	s.eraseLifecycleLocked(id)
 	s.tombstones[id] = tombstone{tenant: record.Scope.TenantID, run: record.SourceRunID}
 	runLive := false
 	for _, other := range s.records {

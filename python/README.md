@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.15, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.15 (and so every 1.0 to 1.14 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.16, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.16 (and so every 1.0 to 1.15 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -482,6 +482,64 @@ rule = ConfidenceEngineRule.for_engine(BayesianEngine())   # records "bayes/2.1"
   `ExperienceIdentity` is built (`ValueError`), before the issuer sees it.
   Checking a token is internal, as in .NET.
 
+### Moving a stored lesson through its lifecycle (contract 1.16)
+
+`ExperienceLifecycleService` is .NET's lifecycle service over either store (`InMemoryExperienceStore`,
+`PostgresExperienceStore`, both `LifecycleStore`s): it commits a transition, applies one piece of reuse evidence, and
+reads the confidence back with some evidence left out.
+
+> **By default, evidence moves nothing.** `host_trusted_evidence` defaults to `"RecordedOnly"`: until story 27.7 brings
+> independence verification to the ports, every piece of evidence a port applies is unverified, so it is recorded (on its
+> lifecycle event and in the evidence ledger, admitted `HostTrusted`) without moving the record's counters, score or
+> status. That keeps unverified evidence from steering ranking or contesting a lesson. To count it, opt in explicitly
+> with `ExperienceLifecycleService(store, host_trusted_evidence="Counted")`, which is .NET's
+> `IndependenceVerification.TrustHostSuppliedIdentifiers` with `HostTrustedEvidenceEffect.Counted`.
+
+```python
+from agentexperience import (
+    ApplyConfidenceEvidenceRequest, AuthorizationBounds, AuthorizationContext, CommitLifecycleTransitionRequest,
+    ExperienceLifecycleService,
+)
+
+service = ExperienceLifecycleService(store, host_trusted_evidence="Counted")   # opt in: evidence moves the record
+authorization = AuthorizationContext("host-principal", AuthorizationBounds.of(scope))
+
+committed = service.commit(authorization, CommitLifecycleTransitionRequest(
+    event_id=uuid.uuid4(), experience_id=record.experience_id, scope=scope, prior_status="Validated",
+    current_status="Reinforced", reason="Reviewed and confirmed.", producer="governance/1.0",
+    occurred_at=Instant.now(), expected_revision=record.revision))
+committed.outcome   # "Committed" (revision + 1), or "StaleRevision" with the revision to re-decide against
+
+applied = service.apply_evidence(authorization, ApplyConfidenceEvidenceRequest(
+    event_id=uuid.uuid4(), experience_id=record.experience_id, scope=scope, evidence_id=uuid.uuid4(),
+    kind="Contradicting", source="Machine", run_id=reusing_run_id, verification_round_id=round_id,
+    reason="Reused, and its checks failed.", producer="verifier/1.0", occurred_at=Instant.now()))
+applied.outcome, applied.counted, applied.status   # ("Applied", True, "Contested")
+
+report = service.read_confidence(authorization, scope, record.experience_id, "ExcludeHostTrusted").report
+```
+
+- **The transition table, the refusals and the store's semantics are .NET's**, outcome for outcome and message for
+  message: validation, then authorization, then the store; the revision compare-and-set (`StaleRevision`), the prior
+  status (`StatusMismatch`), idempotency by event ID and by evidence ID (a replay reports the original), the
+  independence key (a second observation under a new evidence ID is recorded, not counted), and supersession decided
+  inside the commit. Every write is a compare-and-set in the database, so a Python, a Go and a .NET writer racing at
+  one revision commit exactly once. The history pages with `store.get_history(authorization, HistoryQuery(...))`, and
+  `store.check_supersession` asks before trying.
+- **Independence is not verified** (story 27.7 brings the verifier): the service runs as .NET's does under
+  `IndependenceVerification.TrustHostSuppliedIdentifiers`. Only the own-run rule is checked (`Unverified`, `OwnRun`);
+  every other identifier is taken as given, an assessment token is neither checked nor spent, and every update is
+  admitted `HostTrusted`, which is stored with it, so a .NET reader's `ExcludeHostTrusted` or `VerifiedOnly` leaves it
+  out. Under the default, `host_trusted_evidence="RecordedOnly"`, such evidence is recorded without moving the record
+  (the event moves only the revision), as .NET does with that effect; `"Counted"` is the opt-in above.
+- **No provenance signing** (27.7): a record's initial counters count as verified exactly when it was finalized.
+- **No de-indexing** (27.6d): a commit that takes a record out of eligibility removes no embedding; a vector search
+  already excludes it by status. **No reuse feedback** (27.6c), and finalization submits no reuse evidence.
+- **A sealed record** (`payload_version` 2) is `NotFound` for a commit, a history and a read: a port holds no key store.
+  The commit checks it only once it holds the record's row lock, so a seal that lands mid-commit still refuses it.
+- `reuse_evidence_id_for` and `reuse_event_id_for` derive the IDs .NET's finalization gives a run's reuse evidence.
+- Telemetry reports `lifecycle.commit` and `confidence.apply` as .NET does.
+
 ### Measuring benefit: the injection holdout
 
 Off by default. With `holdout=HoldoutOptions(rate=0.1)` (contract 1.8), about one in ten captured runs that have a
@@ -720,8 +778,8 @@ which shares lessons with .NET agents on the same database.
 - **The task text.** `derive_task_text` derives the text retrieval searches with from an invocation's messages.
 - **The error class.** `error_class` reduces a captured error to its short class.
 - **PostgreSQL** (the `postgres` extra, psycopg 3). `PostgresExperienceStore` writes a finalized record and its
-  initial event as the application role, reads records back, runs the contract's text search, and records injections
-  (`record_injection`, contract 1.4). It ships the contract's SQL files and runs them as written. `rank` applies the
+  initial event as the application role, reads records back, runs the contract's text search, records injections
+  (`record_injection`, contract 1.4), and commits lifecycle events (`sql/lifecycle.sql`, contract 1.16). It ships the contract's SQL files and runs them as written. `rank` applies the
   contract's safety checks, truncation, eligibility and ranking to the rows the search returns, under the retrieval
   policy (contract 1.12) when one is given. The store needs a schema the .NET
   migrator applied, with row-level security on; it never creates or alters a schema object. The application role's
@@ -729,10 +787,9 @@ which shares lessons with .NET agents on the same database.
   `sql/application-role-privileges.sql`, then `sql/application-role-privileges-1.4.sql` (without the second, every
   injection is still made and its record is reported `NotRecorded`).
 
-It does nothing outside contract 1.x: no grants, crypto-shredding or provenance signing, and no lifecycle
-after finalization (reuse evidence, reinforcement, contest, revocation) beyond computing how confidence would move
-(contract 1.15). It writes no logs at all, so no record
-content is ever logged.
+It does nothing outside contract 1.x: no grants, crypto-shredding or provenance signing, no reuse feedback, and no
+verified independence (the lifecycle, contract 1.16, admits evidence as host-trusted). It writes no logs at all, so no
+record content is ever logged.
 
 The pieces that need no run or database:
 
@@ -851,19 +908,20 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.15: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.16: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and every
 injection option that needs no session (the receiving agent's gate, the model-authored policy, the request resolver
 and the host's decision),
 injection recording, the lessons view with its HTML page and the export of measured lessons, the model-backed
 reflector and the content guard for model-authored lessons, computing confidence (the default rule, a host engine and
-assessment tokens), the injection holdout, its benefit estimate and the benefit policy that acts on
+assessment tokens), a stored lesson's lifecycle (transitions, reuse evidence and the confidence read, with host-trusted
+evidence), the injection holdout, its benefit estimate and the benefit policy that acts on
 it, measuring another memory provider, and telemetry. These .NET features have no counterpart
 here, so a mixed .NET and Python deployment should keep them on the .NET side:
 
-- **Lifecycle after finalization:** applying evidence to a stored record (the port computes the update, contract 1.15,
-  but nothing stores it: no lifecycle event, evidence ledger or independence index), reuse feedback, reinforcement,
-  contest and revocation.
+- **Reuse feedback** (story 27.6c) and **de-indexing on leaving eligibility** (story 27.6d).
+- **Verified independence** (story 27.7): the lifecycle admits every piece of evidence `HostTrusted`; it verifies no
+  run, round or assessment token.
 - **Session tracking and withdrawal notices** (`SessionLimits`, `SessionStateKey`; story 27.6): the port keeps no
   per-session account of what it injected, so it never deduplicates, budgets a session or retracts a record; a held-out
   invocation is always `Withheld`, never a notices-only `Retracted` block.

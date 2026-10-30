@@ -196,8 +196,6 @@ def test_the_port_reports_no_operation_it_does_not_perform() -> None:
         "grant.access.purge",
         "record.seal",
         "record.authorship.backfill",
-        "lifecycle.commit",
-        "confidence.apply",
         "reuse_feedback",
         "deindex",
         "reindex",
@@ -212,6 +210,8 @@ def test_the_port_reports_no_operation_it_does_not_perform() -> None:
         "finalize",
         "retrieve",
         "index",
+        "lifecycle.commit",
+        "confidence.apply",
         "inject",
         "record_injection",
         "record_holdout",
@@ -302,7 +302,8 @@ def test_an_agent_that_injects_captures_and_records_an_injection_emits_exactly_t
         assert attributes["outcome"] in OPERATIONS[operation]["outcomes"]
         assert isinstance(attributes["nested"], bool)
         seen.add(operation)
-    assert seen == set(observer.OPERATIONS)
+    # An agent never moves a stored lesson's lifecycle (contract 1.16): the host calls the lifecycle service.
+    assert seen == set(observer.OPERATIONS) - {"lifecycle.commit", "confidence.apply"}
     assert {name for _, name, _, _, _ in points} == {
         "agentexperience.operation.count",
         "agentexperience.operation.duration",

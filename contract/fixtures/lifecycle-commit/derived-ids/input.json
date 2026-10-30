@@ -1,0 +1,90 @@
+{
+  "description": "The evidence and event IDs finalization derives for the reuse evidence it submits (tags 4 and 5): SHA-256 over the namespace, the run, the tag, the scope's six fields, then the record's 16 bytes (RFC 4122 order) and the kind's byte (0 supporting, 1 contradicting), as UUIDv8. A different kind, record, run or scope derives a different ID.",
+  "service": {
+    "engine": null,
+    "hostTrustedEvidence": "Counted"
+  },
+  "records": [],
+  "steps": [
+    {
+      "derive": {
+        "runId": "00001160-0000-4000-8000-000000003d00",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceId": "00001160-0000-4000-8000-000000003d01",
+        "kind": "Supporting"
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    },
+    {
+      "derive": {
+        "runId": "00001160-0000-4000-8000-000000003d00",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceId": "00001160-0000-4000-8000-000000003d01",
+        "kind": "Contradicting"
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    },
+    {
+      "derive": {
+        "runId": "00001160-0000-4000-8000-000000003d00",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": "team-ü",
+          "agentId": "refund-agent",
+          "userId": "user-7"
+        },
+        "experienceId": "00001160-0000-4000-8000-000000003d01",
+        "kind": "Supporting"
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    },
+    {
+      "derive": {
+        "runId": "00001160-0000-4000-8000-000000003d00",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceId": "00001160-0000-4000-8000-000000003d02",
+        "kind": "Supporting"
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    },
+    {
+      "derive": {
+        "runId": "00001160-0000-4000-8000-000000003d03",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "experienceId": "00001160-0000-4000-8000-000000003d01",
+        "kind": "Supporting"
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    }
+  ]
+}

@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.15, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.15 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13 and 1.14 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.16, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.16 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14 and 1.15 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -270,7 +270,8 @@ model-authored reflection is refused as text that cannot be normalized.
 ### Computing confidence
 
 Contract 1.15. The core computes how a record's reuse confidence moves when evidence about reusing it arrives, exactly
-as .NET's confidence engine does. It only computes: nothing here reads or writes a store.
+as .NET's confidence engine does. It only computes: nothing here reads or writes a store (the lifecycle service below
+computes the same update and commits it).
 
 ```go
 rule := ae.DefaultConfidenceEngineRule() // (1 + S) / (2 + S + F), recorded as "1.0.0"
@@ -311,6 +312,67 @@ hosted, err := ae.NewConfidenceEngineRule(bayes{}, ae.ConfidenceEngineParameter)
   the key out of `encoding/json` (`json:"-"`); other verbs and your own copies are yours to keep private. The
   reviewer's authorization is `Identity.Authorization()`: with nil `Bounds` it is the identity's own scope, so a
   reviewer issuing for another scope needs `Bounds` that permit it. Checking a token is unexported, as in .NET.
+
+### Moving a stored lesson through its lifecycle
+
+Contract 1.16. `ae.LifecycleService` is .NET's `ExperienceLifecycleService` over either store (both are an
+`ae.LifecycleStore`): it reinforces, contests, marks stale, supersedes and revokes a stored lesson, applies reuse
+evidence to it, and reads its confidence back, writing the same events, evidence rows, counters and revisions .NET
+writes, so a .NET, a Python and a Go writer can share one database.
+
+> **By default the Go port records evidence without counting it.** Until it verifies independence (story 27.7),
+> everything it admits is host-trusted, so the zero `LifecycleOptions` is `HostTrustedEvidence: ae.HostTrustedRecordedOnly`:
+> each piece of evidence is committed on an event that moves the record's revision and nothing else (no counter, score,
+> status or `updated_at`). Counting it, as .NET does under `TrustHostSuppliedIdentifiers` by default, is an explicit
+> opt-in: `ae.LifecycleOptions{HostTrustedEvidence: ae.HostTrustedCounted}`.
+
+```go
+lifecycle, err := ae.NewLifecycleService(store, ae.LifecycleOptions{}) // the default engine, evidence recorded only
+authorization := ae.AuthorizationContext{PrincipalID: "governance-review", Bounds: ae.BoundsOf(scope)}
+
+validated := ae.StatusValidated
+moved, err := lifecycle.Commit(ctx, authorization, ae.CommitLifecycleTransitionRequest{
+	EventID: eventID, ExperienceID: record.ExperienceID, Scope: scope,
+	PriorStatus: &validated, CurrentStatus: ae.StatusReinforced,
+	Reason: "Confirmed by the weekly review.", Producer: "governance-review/1.0",
+	OccurredAt: ae.Now(), ExpectedRevision: record.Revision,
+}) // Committed at record.Revision+1, or StaleRevision with the revision to re-decide against, TransitionNotAllowed, ...
+
+applied, err := lifecycle.ApplyEvidence(ctx, authorization, ae.ApplyConfidenceEvidenceRequest{
+	EventID: evidenceEventID, ExperienceID: record.ExperienceID, Scope: scope, EvidenceID: evidenceID,
+	Kind: ae.EvidenceContradicting, Source: ae.EvidenceMachine, RunID: runID, VerificationRoundID: &roundID,
+	Reason: "The lesson was reused and the checks failed.", Producer: "verification-aggregator/1.0",
+	OccurredAt: ae.Now(),
+}) // Applied (applied.Counted() false when recorded only, or for an observation already counted), Ineligible, ...
+
+report, err := lifecycle.ReadConfidence(ctx, authorization, scope, record.ExperienceID, ae.FilterAll)
+```
+
+- **Every write is a revision compare-and-set** in the store: writers deciding against one revision race, exactly one
+  commits, and the others are `StaleRevision`. A resubmitted event ID or evidence ID with the same content replays the
+  original outcome; with other content it is `Conflict`. Refusals are outcomes, with .NET's errors and reasons; an
+  error is an infrastructure failure (or `ae.ErrStoreContract` for a store that broke its contract), and an engine's
+  failure is returned as it is in `rule.Apply` (above), with nothing written. `Commit` and `ApplyEvidence` are the
+  `lifecycle.commit` and `confidence.apply` operations to the observer hook.
+- **Independence is not verified** (story 27.7 brings the verifier): the service runs as .NET's does under
+  `IndependenceVerification.TrustHostSuppliedIdentifiers`. Only the own-run rule is checked (`Unverified`, `OwnRun`);
+  every other identifier is taken as given, an assessment token is neither checked nor spent, and every update is
+  admitted **`HostTrusted`** and stored so. A .NET reader therefore sees Go evidence for what it is: `ReadConfidence`
+  with `FilterExcludeHostTrusted` or `FilterVerifiedOnly` leaves it out, and `FilterAll` adds recorded-only evidence
+  back, once per independence key.
+- **What it does not do yet:** no embedding is removed when a commit takes a record out of eligibility (story 27.6d;
+  a vector search already excludes it by status), no reuse feedback (27.6c), no provenance signing or verification
+  (27.7). A sealed record (`payload_version` 2), which a port cannot open, is `NotFound` to the read, the history and
+  the commit.
+- **The stores.** The in-memory store (`inmemory.New`) keeps a full event log per record (a finalized record's initial
+  event first, at revision 1), the evidence ledger and its key sets, and stamps its `Clock` (`SetClock`) on each
+  commit. The PostgreSQL store runs [`contract/sql/lifecycle.sql`](../contract/sql/lifecycle.sql) as written, each
+  commit in one `READ COMMITTED` transaction, with the 1.0 privileges only. On a pool or a connection the level is
+  pinned; given your own transaction (a `pgx.Tx`), the commit runs in a savepoint inside it and refuses
+  (`postgres.ErrHostIsolation`) unless that transaction is `READ COMMITTED`, because under a snapshot isolation a lost
+  race would re-read your stale snapshot and never see the revision move. A record sealed while a commit waits for its
+  row is still `NotFound`: the seal is checked only once the commit holds the row lock; `SetClock` sets the clock it stamps. `GetHistory` pages a history by
+  applied revision, and `CheckSupersession` asks the supersession rules before a commit decides them again.
 
 ### What the one call wires
 
@@ -728,8 +790,8 @@ defer disable()
 ```
 
 It emits `inject`, `retrieve`, `record_injection`, `record_holdout`, `benefit_refresh`, `capture.start_run`, `capture.append_attempt`, `capture.complete_run`,
-`verify`, `reflect`, `finalize` and `index` (the background embedding write): the operations this port performs, and no
-other. The core and the integration import no OpenTelemetry: they call the observer hook (`ae.SetObserver`, one atomic
+`verify`, `reflect`, `finalize`, `index` (the background embedding write), `lifecycle.commit` and `confidence.apply`:
+the operations this port performs, and no other. The core and the integration import no OpenTelemetry: they call the observer hook (`ae.SetObserver`, one atomic
 load when nothing is registered), and `go/telemetry` is the adapter. A provider, exporter or observer that fails or
 panics is recovered and never reaches the agent. Spans parent under the context you pass: `ae.StartRunContext`,
 `(*RunCapture).AppendAttemptContext`, `CompleteContext` and `FinalizeContext` take the context (the integration passes
@@ -781,7 +843,8 @@ Python agents on the same database.
 - **PostgreSQL** (the `postgres` package). `Store` writes a finalized record and its initial event as the application
   role, reads records back, runs the contract's text search, records injections (`RecordInjection`, contract
   1.4) and holdout assignments (`RecordHoldoutAssignment`, contract 1.8), writes and searches embeddings (`WriteEmbedding` and `SearchVectors`, contract 1.6) and reads the lessons view's
-  page (`ListLessonRecords`, contract 1.7) and the holdout's outcome rows (`QueryHoldoutOutcomes`, contract 1.9), every transaction first declaring its bounds. The contract's statement files are embedded and run as
+  page (`ListLessonRecords`, contract 1.7) and the holdout's outcome rows (`QueryHoldoutOutcomes`, contract 1.9),
+  and commits lifecycle events and reads their history (contract 1.16), every transaction first declaring its bounds. The contract's statement files are embedded and run as
   written (a test keeps the copies in `postgres/sql/` identical to `contract/sql/`); only their `@name` placeholders are
   numbered for the driver. The store needs a schema the .NET migrator applied, with row-level security on; it never
   creates or alters a schema object. The application role's privileges are the .NET privileges call's, or the
@@ -805,8 +868,7 @@ Python agents on the same database.
   an invocation runs under and `DevelopmentIdentity` (see [the quick start](#quick-start-with-microsoft-agent-framework)),
   in the core, so they need no Agent Framework type.
 
-It does nothing outside contract 1.x: no grants, crypto-shredding or provenance signing, and no lifecycle
-after finalization. It writes no logs at all, so no record content is ever logged.
+It does nothing outside contract 1.x: no grants, crypto-shredding or provenance signing. It writes no logs at all, so no record content is ever logged.
 
 [`example_test.go`](example_test.go) captures a run, finalizes it and renders the block; `go test` runs it and checks
 its output. In short:
@@ -871,18 +933,18 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.15: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.16: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and the injection
 options (the receiving agent, the model-authored policy, the request resolver and the injection decision),
 injection recording, the lessons view and its HTML page, exporting measured lessons, the model-backed reflector and its
-content guard, computing confidence (the default rule, a host engine and assessment tokens), the injection holdout,
+content guard, computing confidence (the default rule, a host engine and assessment tokens), the lifecycle of a
+stored lesson (transitions, applying evidence and reading confidence back), the injection holdout,
 the benefit estimate, the benefit policy, measuring another memory provider and
 telemetry. These .NET features have no counterpart here, so a mixed
 .NET and Go deployment should keep them on the .NET side:
 
-- **Lifecycle after finalization:** applying evidence to a stored record (the port computes the update, contract 1.15,
-  but nothing stores it: no lifecycle event, evidence ledger or independence index), reuse feedback, reinforcement,
-  contest and revocation.
+- **The rest of the lifecycle:** reuse feedback and the reuse evidence finalization submits (story 27.6c), removing
+  an ineligible record's embedding (27.6d), and verifying independence (the port admits evidence `HostTrusted`; 27.7).
 - **Session tracking and withdrawal notices** (.NET's `SessionLimits`, `SessionStateKey`; story 27.6), and the final
   eligibility re-read before injection, with its `Limits.EligibilityCheckTimeout` and `Limits.MaxAbandonedReads`
   (story 27.6): the port injects the records as retrieval ranked them, and `DecisionContext.Current` is the ranked
@@ -908,7 +970,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.15 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.16 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The

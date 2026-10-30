@@ -265,23 +265,12 @@ internal static class ConfidenceEngineContract
         ConfidenceUpdate update;
         try
         {
-            update = ReuseConfidenceHeuristic.Apply(
-                record,
-                Guid.Parse(evidence["evidenceId"]!.GetValue<string>()),
-                kind,
-                source,
-                Guid.Parse(evidence["runId"]!.GetValue<string>()),
-                evidence["verificationRoundId"] is { } round ? Guid.Parse(round.GetValue<string>()) : null,
-                evidence["reviewerIdentity"]?.GetValue<string>(),
-                evidence["detail"]?.GetValue<string>());
-
-            // Exactly as ExperienceLifecycleService composes them: the heuristic settles the counters, the engine scores
-            // them, and the rule string is the engine rule's.
-            update = update with
-            {
-                NewReuseConfidence = rule.Score(record, update.NewSupportingValidations, update.NewContradictions),
-                RuleVersion = rule.Recorded,
-            };
+            // Contract 1.16: from the production path wherever it can express the case -- ExperienceLifecycleService's
+            // ApplyEvidenceAsync over the .NET in-memory store, as a port runs it -- and composed from the same classes
+            // only where it cannot (a status that refuses evidence, a submission whose shape the service refuses before it
+            // computes anything, a reviewer on machine evidence, a stored record the store would not hold).
+            update = ThroughService(record, evidence, kind, source, input["engine"])
+                ?? Composed(record, evidence, kind, source, rule);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or HostEngineException)
         {
@@ -315,6 +304,90 @@ internal static class ConfidenceEngineContract
         result["refusal"] = null;
         return result;
     }
+
+    /// <summary>The update composed exactly as <see cref="Core.Lifecycle.ExperienceLifecycleService"/> composes it.</summary>
+    private static ConfidenceUpdate Composed(ExperienceRecord record, JsonObject evidence, ConfidenceEvidenceKind kind, ConfidenceEvidenceSource source, ConfidenceEngineRule rule)
+    {
+        var update = ReuseConfidenceHeuristic.Apply(
+            record,
+            Guid.Parse(evidence["evidenceId"]!.GetValue<string>()),
+            kind,
+            source,
+            Guid.Parse(evidence["runId"]!.GetValue<string>()),
+            evidence["verificationRoundId"] is { } round ? Guid.Parse(round.GetValue<string>()) : null,
+            evidence["reviewerIdentity"]?.GetValue<string>(),
+            evidence["detail"]?.GetValue<string>());
+
+        // The heuristic settles the counters, the engine scores them, and the rule string is the engine rule's.
+        return update with
+        {
+            NewReuseConfidence = rule.Score(record, update.NewSupportingValidations, update.NewContradictions),
+            RuleVersion = rule.Recorded,
+        };
+    }
+
+    /// <summary>
+    /// The update <see cref="Core.Lifecycle.ExperienceLifecycleService.ApplyEvidenceAsync"/> stores for the case, over the
+    /// .NET in-memory store holding the record, as a contract 1.16 port runs it (no independence verification), with its
+    /// admission, which 1.15's fixtures do not carry, cleared. <see langword="null"/> when the service cannot express the
+    /// case. An exception the engine throws propagates, as it does from the service.
+    /// </summary>
+    private static ConfidenceUpdate? ThroughService(ExperienceRecord record, JsonObject evidence, ConfidenceEvidenceKind kind, ConfidenceEvidenceSource source, JsonNode? engine)
+    {
+        var round = evidence["verificationRoundId"] is { } r ? Guid.Parse(r.GetValue<string>()) : (Guid?)null;
+        var reviewer = evidence["reviewerIdentity"]?.GetValue<string>();
+        var run = Guid.Parse(evidence["runId"]!.GetValue<string>());
+        var expressible = ReuseConfidenceHeuristic.AcceptsEvidenceIn(record.Status)
+            && record.SupportingValidations is >= 0 and < int.MaxValue
+            && record.Contradictions is >= 0 and < int.MaxValue
+            && run != record.SourceRunId
+            && (source == ConfidenceEvidenceSource.Machine
+                ? round is { } given && given != Guid.Empty && reviewer is null
+                : round is null && !string.IsNullOrWhiteSpace(reviewer) && reviewer == reviewer.Trim());
+        if (!expressible)
+        {
+            return null;
+        }
+
+        var store = new Storage.InMemory.InMemoryExperienceRecordStore();
+        var owner = LifecycleContract.AuthorizationFor(record.Scope);
+        if (store.CreateAsync(owner, record, CancellationToken.None).GetAwaiter().GetResult().Outcome != ExperienceStoreOutcome.Created)
+        {
+            return null;
+        }
+
+        var service = LifecycleContract.Service(store, new JsonObject { ["engine"] = engine?.DeepClone(), ["hostTrustedEvidence"] = "Counted" });
+        var authorization = owner with { PrincipalId = reviewer ?? owner.PrincipalId };
+        var result = service.ApplyEvidenceAsync(
+            authorization,
+            new Core.Lifecycle.ApplyConfidenceEvidenceRequest(
+                Fixed.Id(F, 0x500),
+                record.ExperienceId,
+                record.Scope,
+                Guid.Parse(evidence["evidenceId"]!.GetValue<string>()),
+                kind,
+                source,
+                run,
+                round,
+                "contract 1.15 apply case",
+                "contract-fixture",
+                Fixed.T0,
+                evidence["detail"]?.GetValue<string>()),
+            CancellationToken.None).GetAwaiter().GetResult();
+
+        if (result.Outcome != Core.Lifecycle.ConfidenceUpdateOutcome.Applied || result.Update is not { } stored)
+        {
+            throw new InvalidOperationException($"The service answered {result.Outcome} for an expressible 1.15 apply case: {result.Reason}");
+        }
+
+        ServedByTheService.Add(string.Create(
+            CultureInfo.InvariantCulture,
+            $"{record.Status}/{record.ReuseConfidence:R}/{record.SupportingValidations}/{record.Contradictions}/{evidence.ToJsonString()}/{engine?.ToJsonString()}"));
+        return stored with { Admission = null };
+    }
+
+    /// <summary>Every apply case the service computed, for the test that proves the production path is the one taken.</summary>
+    internal static readonly System.Collections.Concurrent.ConcurrentBag<string> ServedByTheService = [];
 
     private static ExperienceRecord Record(ExperienceStatus status, double confidence, int supporting, int contradictions) =>
         SearchContract.Seed(F, 1, "rotate-keys", "Rotate the signing keys", "Verified after 1 attempt.", status, confidence) with
@@ -683,7 +756,7 @@ internal static class ConfidenceEngineContract
     /// <c>(Parameter '...')</c> suffix .NET appends), which a port reproduces byte for byte. A guard clause's message is
     /// the runtime's wording, not the library's, so it is <see langword="null"/>, as is a host engine's own exception's.
     /// </summary>
-    private static JsonObject Refusal(Exception ex, bool libraryMessage = true)
+    internal static JsonObject Refusal(Exception ex, bool libraryMessage = true)
     {
         var parameter = (ex as ArgumentException)?.ParamName;
         var message = ex.Message;
@@ -701,14 +774,14 @@ internal static class ConfidenceEngineContract
         };
     }
 
-    private static JsonObject Engine(string? ruleId, string? ruleVersion, JsonNode? score = null) => new()
+    internal static JsonObject Engine(string? ruleId, string? ruleVersion, JsonNode? score = null) => new()
     {
         ["ruleId"] = ruleId,
         ["ruleVersion"] = ruleVersion,
         ["score"] = score ?? "bayes",
     };
 
-    private static IExperienceConfidenceEngine? ReadEngine(JsonNode? engine) => engine switch
+    internal static IExperienceConfidenceEngine? ReadEngine(JsonNode? engine) => engine switch
     {
         null => null,
         JsonValue value when value.GetValue<string>() == "default" => ReuseConfidenceHeuristicEngine.Instance,

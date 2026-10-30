@@ -221,6 +221,38 @@ cannot abort on a pre-`0006` `Superseded` event that has no replacement — one 
 store never applied Core's table. New and updated rows are checked from that moment on. The script's header carries
 the reconciliation query and the `VALIDATE CONSTRAINT` statements to run once it comes back empty.
 
+## In Python and Go
+
+Since contract 1.16 ([what it adds](../../contract/README-1.16.md)) both ports move a stored record through this
+lifecycle exactly as .NET does: the same transition table and supersession rules, the same refusals with the same
+reasons, and stores (in-memory and PostgreSQL) that commit, replay, conflict, page and check supersession as described
+above. Their PostgreSQL stores run the .NET store's own statements ([`contract/sql/lifecycle.sql`](../../contract/sql/lifecycle.sql),
+generated from it), so the revision compare-and-set, the event-ID replay and the in-transaction supersession gate are
+the database's, whoever writes. That is what keeps a mixed fleet safe: a .NET, a Python and a Go writer that decide a
+transition against the same revision race on it, one commits and the others get `StaleRevision` with the revision to
+re-decide against; a cross-language test races all three on PostgreSQL in CI.
+
+| .NET | Python (`agentexperience`) | Go (core module) |
+| --- | --- | --- |
+| `ExperienceLifecycleService.CommitAsync` | `ExperienceLifecycleService(store).commit(authorization, CommitLifecycleTransitionRequest(...))` | `NewLifecycleService(store, LifecycleOptions{})`, `.Commit(ctx, authorization, CommitLifecycleTransitionRequest{...})` |
+| `IsTransitionAllowed`, `IsEligible`, `FirstEventStatus` | `is_transition_allowed`, `is_eligible`, `FIRST_EVENT_STATUS` | `IsTransitionAllowed`, `IsEligible`, `FirstEventStatus` |
+| `IExperienceRecordStore.CommitLifecycleEventAsync`, `GetHistoryAsync`, `CheckSupersessionAsync` | `commit_lifecycle_event`, `get_history`, `check_supersession` on `InMemoryExperienceStore` and `PostgresExperienceStore` | `CommitLifecycleEvent`, `GetHistory`, `CheckSupersession` on the `inmemory` and `postgres` stores |
+| `AuthorizationContext` | `AuthorizationContext(principal_id, bounds)` | `AuthorizationContext{PrincipalID, Bounds}` |
+
+What a port does not do yet:
+
+- **De-indexing**: a port's commit that takes a record out of eligibility removes no stored vector and
+  reports no `Deindexing` result. As above, that is hygiene, not a boundary: a vector search already excludes the
+  record by its status.
+- **Sealed records**: a port holds no key store, so it neither reads a record .NET sealed in crypto-shredding mode nor
+  writes its events: a port's commit, history read and record read of one answer `NotFound`.
+- **Verified evidence**: a port's confidence evidence is admitted `HostTrusted`, and by default recorded without moving
+  the record (see [Confidence](confidence.md#in-python-and-go)).
+- **A host transaction at another isolation level** (Go's `pgx.Tx`): refused unless it is `READ COMMITTED`, the level
+  .NET pins a commit to.
+
+Both ports report `lifecycle.commit` (and `confidence.apply`) through their telemetry exactly as .NET does.
+
 ## For implementers of the ports
 
 If you implement `IExperienceRecordStore` or `IExperienceEmbeddingIndex` yourself, several obligations cannot be

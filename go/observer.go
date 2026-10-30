@@ -71,11 +71,18 @@ var observedOperations = map[string]OperationSpec{
 	"record_provider_holdout": {SourceMAF, false,
 		[]string{"Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"}},
 	"benefit_refresh": {SourceMAF, false, []string{"Refreshed", "NotRefreshed", "OutcomeUnknown"}},
+	// Contract 1.16's lifecycle: LifecycleService.Commit and ApplyEvidence.
+	"lifecycle.commit": {SourceCore, true,
+		[]string{"Committed", "TransitionNotAllowed", "ReplacementNotAllowed", "StaleRevision", "StatusMismatch",
+			"Conflict", "NotFound", "Denied", "Invalid", "Deleted"}},
+	"confidence.apply": {SourceCore, true,
+		[]string{"Applied", "Ineligible", "StaleRevision", "StatusMismatch", "Conflict", "NotFound", "Denied",
+			"Invalid", "Deleted", "Unverified"}},
 }
 
 // ObservedOperations is every operation this port reports, by its operation value. The port reports no other: not
-// retention.sweep, delete, grants, seal, backfill, lifecycle, confidence, reuse-feedback, deindex or reindex. A
-// new map is returned each time.
+// retention.sweep, delete, grants, seal, backfill, reuse-feedback, deindex or reindex. A new map is returned each
+// time.
 func ObservedOperations() map[string]OperationSpec {
 	result := make(map[string]OperationSpec, len(observedOperations))
 	for name, spec := range observedOperations {
@@ -106,12 +113,20 @@ const (
 	AttributeCorrelationID = "agentexperience.correlation_id"
 	// AttributeScreeningRefusal is why screening refused a reflection, on the finalize operation (contract 1.14).
 	AttributeScreeningRefusal = "agentexperience.reflection.screening_refusal"
+	// AttributeEventID is the lifecycle event's ID, on lifecycle.commit and confidence.apply (contract 1.16).
+	AttributeEventID = "agentexperience.event_id"
+	// AttributeConfidenceAdmission is the admission applied evidence was stored with, on confidence.apply when it
+	// was Applied and the update carries one.
+	AttributeConfidenceAdmission = "agentexperience.confidence.admission"
+	// AttributeIndependenceRefusal is why confidence.apply refused the evidence's identifiers (Unverified).
+	AttributeIndependenceRefusal = "agentexperience.independence.refusal"
 )
 
 // ObservedAttributes are the span attributes this port sets beyond the common ones, sorted.
 func ObservedAttributes() []string {
 	attributes := []string{AttributeAttemptID, AttributeCorrelationID, AttributeExperienceID, AttributeOmittedCount,
-		AttributeReflectionID, AttributeScreeningRefusal, AttributeRunID, AttributeStage}
+		AttributeReflectionID, AttributeScreeningRefusal, AttributeRunID, AttributeStage, AttributeEventID,
+		AttributeConfidenceAdmission, AttributeIndependenceRefusal}
 	sort.Strings(attributes)
 	return attributes
 }

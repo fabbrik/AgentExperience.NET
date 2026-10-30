@@ -8,6 +8,7 @@ minimum number of query terms (fewer for a shorter query). Nothing survives the 
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import threading
 import unicodedata
@@ -16,6 +17,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from .confidence import ConfidenceUpdate
 from .embedding import (
     EmbeddingWrite,
     EmbeddingWriteResult,
@@ -39,10 +41,28 @@ from .holdout import (
     check_provider_key,
     holdout_records,
 )
+from .lifecycle import (
+    AuthorizationContext,
+    HistoryQuery,
+    HistoryResult,
+    LifecycleCommitResult,
+    LifecycleEvent,
+    RecordReadResult,
+    StoredLifecycleEvent,
+    SupersessionCheckResult,
+    as_replay_of,
+    assessment_spent_error,
+    is_same_evidence,
+    stored_independence_key,
+    validate_get,
+    validate_history_query,
+    validate_lifecycle_event,
+    validate_supersession_check,
+)
 from .model import model_of_metadata
-from .records import EXPERIENCE_STATUSES, ExperienceRecord, Scope
+from .records import EXPERIENCE_STATUSES, ExperienceRecord, ExperienceStatus, Scope
 from .reflector import is_model_authored
-from .search import AuthorizationBounds, SearchParameters, SearchRow
+from .search import ELIGIBLE_STATUSES, AuthorizationBounds, SearchParameters, SearchRow
 
 MAX_INDEXED_LENGTH = 100_000
 
@@ -316,15 +336,52 @@ def _index(record: ExperienceRecord) -> _Indexed:
     return _Indexed(record, fields[0], fields[1], fields[2])
 
 
+@dataclass(frozen=True)
+class _StoredEvent:
+    """One committed lifecycle event, with what only the store knows about it."""
+
+    event: LifecycleEvent
+    scope: Scope
+    applied_revision: int
+    recorded_at: Instant
+    actor: str | None
+
+    def public(self) -> StoredLifecycleEvent:
+        return StoredLifecycleEvent(self.event, self.recorded_at, self.applied_revision, self.actor)
+
+
+@dataclass(frozen=True)
+class _StoredEvidence:
+    """One piece of confidence evidence in the ledger, counted or recorded only."""
+
+    experience_id: uuid.UUID
+    event_id: uuid.UUID | None
+    update: ConfidenceUpdate
+    applied_revision: int
+    applied_status: ExperienceStatus
+
+
 class InMemoryExperienceStore:
     """Records in memory, for development and tests. Thread-safe. ``clock`` is the store's own clock, which an
-    injection's instant is clamped to, as PostgreSQL clamps it to its own."""
+    injection's instant is clamped to, as PostgreSQL clamps it to its own, and which a lifecycle commit stamps on the
+    event and the record (contract 1.16).
+
+    It moves a record through its lifecycle exactly as .NET's ``InMemoryExperienceRecordStore`` does
+    (:class:`~agentexperience.lifecycle.LifecycleStore`): every operation atomic under one lock, so concurrent commits
+    from one revision have exactly one winner. A record seeded through the constructor has no history; one written by
+    :meth:`insert_finalized` has its initial event at revision 1."""
 
     def __init__(self, records: Iterable[ExperienceRecord] = (), *, clock: Callable[[], Instant] = Instant.now) -> None:
         self._lock = threading.Lock()
         self._clock = clock
         self._records: dict[uuid.UUID, _Indexed] = {}
-        self._events: dict[uuid.UUID, tuple[InitialLifecycleEvent, str]] = {}
+        # Contract 1.16: the event log, by event and by record, the evidence ledger, and the keys it holds.
+        self._events: dict[uuid.UUID, _StoredEvent] = {}
+        self._history: dict[uuid.UUID, list[_StoredEvent]] = {}
+        self._evidence: dict[uuid.UUID, _StoredEvidence] = {}
+        self._counted_keys: set[tuple[uuid.UUID, str]] = set()
+        self._recorded_only_keys: set[tuple[uuid.UUID, str]] = set()
+        self._spent_assessments: set[tuple[uuid.UUID, uuid.UUID]] = set()
         self._injections: dict[uuid.UUID, InjectionSummary] = {}
         self._embeddings: dict[uuid.UUID, _Embedding] = {}
         self._holdout: dict[tuple[uuid.UUID, uuid.UUID], HoldoutRow] = {}
@@ -348,8 +405,11 @@ class InMemoryExperienceStore:
         with self._lock:
             if record.experience_id in self._records or record.experience_id in self._tombstones:
                 raise ValueError("A record with this experience ID is already stored.")
+            if finalized.event.event_id in self._events:
+                # As PostgreSQL's primary key on lifecycle_events refuses it.
+                raise ValueError("A lifecycle event with this event ID is already stored.")
             self._records[record.experience_id] = _index(record)
-            self._events[record.experience_id] = (finalized.event, actor)
+            self._append(_initial_event(finalized.event, record.scope, self._clock(), actor))
 
     def get(self, bounds: AuthorizationBounds, scope: Scope, experience_id: uuid.UUID) -> ExperienceRecord | None:
         """One record in exactly ``scope``; ``None`` when there is none, or the bounds do not permit it."""
@@ -611,6 +671,16 @@ class InMemoryExperienceStore:
             self._tombstones[experience_id] = (record.scope, record.source_run_id)
             self._injections.pop(experience_id, None)
             self._embeddings.pop(experience_id, None)
+            # Its events and evidence go with it, as an erasure removes them in PostgreSQL.
+            for stored in self._history.pop(experience_id, []):
+                self._events.pop(stored.event.event_id, None)
+            for evidence_id in [key for key, row in self._evidence.items() if row.experience_id == experience_id]:
+                del self._evidence[evidence_id]
+            for keys in (self._counted_keys, self._recorded_only_keys):
+                keys.difference_update({key for key in keys if key[0] == experience_id})
+            self._spent_assessments.difference_update(
+                {key for key in self._spent_assessments if key[0] == experience_id}
+            )
             run_live = any(
                 other.record.source_run_id == record.source_run_id
                 and other.record.scope.tenant_id == record.scope.tenant_id
@@ -761,3 +831,290 @@ class InMemoryExperienceStore:
         if not any(embedding.model_id == query.model_id for _, embedding in eligible):
             return VectorSearchResult("ModelMismatch")
         return VectorSearchResult("DimensionMismatch")
+
+    # ---- Contract 1.16: the lifecycle (.NET's InMemoryExperienceRecordStore) ---------------------------------------
+
+    def read_record(
+        self, authorization: AuthorizationContext, scope: Scope, experience_id: uuid.UUID
+    ) -> RecordReadResult:
+        """One record in exactly ``scope``, as the lifecycle reads it: validated, then authorized."""
+        errors = validate_get(scope, experience_id)
+        if errors:
+            return RecordReadResult("Invalid", None, errors)
+        if not authorization.permits(scope):
+            return RecordReadResult("Denied", None)
+        with self._lock:
+            record = self._in_scope(scope, experience_id)
+        return RecordReadResult("NotFound", None) if record is None else RecordReadResult("Found", record)
+
+    def commit_lifecycle_event(
+        self, authorization: AuthorizationContext, scope: Scope, event: LifecycleEvent
+    ) -> LifecycleCommitResult:
+        """
+        Commits one lifecycle event (.NET's ``CommitLifecycleEventAsync``): validated, then authorized, then under the
+        lock in .NET's in-memory store's order: a resubmitted evidence ID, a spent assessment and a taken independence
+        key; a resubmitted event ID; the supersession gate; the revision and prior-status guards; then the write,
+        stamped with the store's clock (truncated to whole microseconds).
+        """
+        errors = validate_lifecycle_event(scope, event, authorization)
+        if errors:
+            return LifecycleCommitResult("Invalid", 0, None, errors)
+        if not authorization.permits(scope):
+            return LifecycleCommitResult("Denied", 0, None)
+        stored = dataclasses.replace(event, occurred_at=event.occurred_at.truncate_to_microseconds())
+        with self._lock:
+            return self._commit(authorization, scope, stored)
+
+    def get_history(self, authorization: AuthorizationContext, query: HistoryQuery) -> HistoryResult:
+        """One page of a record's history (.NET's ``GetHistoryAsync``): its events after the cursor, oldest first."""
+        errors = validate_history_query(query)
+        if errors:
+            return HistoryResult("Invalid", 0, (), errors)
+        if not authorization.permits(query.scope):
+            return HistoryResult("Denied", 0, ())
+        with self._lock:
+            record = self._in_scope(query.scope, query.experience_id)
+            if record is None:
+                return HistoryResult("NotFound", 0, ())
+            cursor = query.start_after_revision
+            events = tuple(
+                stored.public()
+                for stored in self._history.get(record.experience_id, [])
+                if cursor is None or stored.applied_revision > cursor
+            )[: query.limit]
+        return HistoryResult("Found", record.revision, events, (), events[-1].applied_revision if events else None)
+
+    def check_supersession(
+        self,
+        authorization: AuthorizationContext,
+        scope: Scope,
+        experience_id: uuid.UUID,
+        replacement_experience_id: uuid.UUID,
+    ) -> SupersessionCheckResult:
+        """Whether the replacement may replace the record (.NET's ``CheckSupersessionAsync``)."""
+        errors = validate_supersession_check(scope, experience_id, replacement_experience_id)
+        if errors:
+            return SupersessionCheckResult("Invalid", None, errors)
+        if not authorization.permits(scope):
+            return SupersessionCheckResult("Denied", None)
+        with self._lock:
+            return self._check_supersession(scope, experience_id, replacement_experience_id)
+
+    def _in_scope(self, scope: Scope, experience_id: uuid.UUID) -> ExperienceRecord | None:
+        indexed = self._records.get(experience_id)
+        return indexed.record if indexed is not None and indexed.record.scope == scope else None
+
+    def _append(self, stored: _StoredEvent) -> None:
+        self._events[stored.event.event_id] = stored
+        self._history.setdefault(stored.event.experience_record_id, []).append(stored)
+
+    def _commit(
+        self, authorization: AuthorizationContext, scope: Scope, event: LifecycleEvent
+    ) -> LifecycleCommitResult:
+        record_id = event.experience_record_id
+        submitted = event.confidence
+        if submitted is not None:
+            stored_evidence = self._evidence.get(submitted.evidence_id)
+            if stored_evidence is not None:
+                return self._compare_stored_evidence(scope, event, submitted, stored_evidence)
+            if submitted.assessment_id is not None and (record_id, submitted.assessment_id) in self._spent_assessments:
+                return LifecycleCommitResult("Conflict", 0, None, (assessment_spent_error(),))
+            key = (record_id, stored_independence_key(submitted))
+            if key in self._counted_keys or (not submitted.counted and key in self._recorded_only_keys):
+                return self._record_duplicate(scope, event, submitted)
+
+        stored_event = self._events.get(event.event_id)
+        if stored_event is not None:
+            return _compare_stored_event(scope, event, stored_event)
+
+        record = self._in_scope(scope, record_id)
+        if record is None:
+            return LifecycleCommitResult("NotFound", 0, None)
+
+        if event.replacement_experience_id is not None:
+            check = self._check_supersession(scope, record_id, event.replacement_experience_id)
+            if (
+                check.outcome != "Allowed"
+                or check.replacement_status is None
+                or check.replacement_status not in ELIGIBLE_STATUSES
+            ):
+                return LifecycleCommitResult("ReplacementNotAllowed", 0, check.replacement_status)
+
+        if record.revision != event.expected_revision:
+            return LifecycleCommitResult("StaleRevision", record.revision, None)
+        if record.status != (event.prior_status if event.prior_status is not None else event.current_status):
+            return LifecycleCommitResult("StatusMismatch", record.revision, record.status)
+
+        # Everything is decided and built before anything is changed, so a failure here leaves the store untouched.
+        now = self._clock().truncate_to_microseconds()
+        applied_revision = event.expected_revision + 1
+        confidence = event.confidence
+        recorded_only = confidence is not None and not confidence.counted
+        moved = dataclasses.replace(
+            record,
+            status=event.current_status,
+            revision=applied_revision,
+            updated_at=record.updated_at if recorded_only else now,
+        )
+        if confidence is not None and confidence.counted:
+            moved = dataclasses.replace(
+                moved,
+                reuse_confidence=confidence.new_reuse_confidence,
+                supporting_validations=confidence.new_supporting_validations,
+                contradictions=confidence.new_contradictions,
+            )
+        indexed = dataclasses.replace(self._records[record_id], record=moved)
+        stored = _StoredEvent(event, scope, applied_revision, now, authorization.actor)
+        evidence = (
+            None
+            if confidence is None
+            else self._evidence_entry(record_id, event.event_id, confidence, applied_revision, event.current_status)
+        )
+        self._records[record_id] = indexed
+        self._append(stored)
+        if evidence is not None:
+            self._apply_evidence(*evidence)
+        return LifecycleCommitResult("Committed", applied_revision, None, (), confidence)
+
+    def _record_duplicate(
+        self, scope: Scope, event: LifecycleEvent, submitted: ConfidenceUpdate
+    ) -> LifecycleCommitResult:
+        """A submission whose key was taken: recorded for audit with nothing moved, and nothing else written."""
+        record = self._in_scope(scope, event.experience_record_id)
+        if record is None:
+            return LifecycleCommitResult("NotFound", 0, None)
+        if record.revision != event.expected_revision:
+            return LifecycleCommitResult("StaleRevision", record.revision, None)
+        if event.prior_status is not None and record.status != event.prior_status:
+            return LifecycleCommitResult("StatusMismatch", record.revision, record.status)
+        recorded_only = submitted.as_recorded_only()
+        self._add_evidence(record.experience_id, None, recorded_only, record.revision, record.status)
+        return LifecycleCommitResult("Committed", record.revision, record.status, (), recorded_only)
+
+    def _add_evidence(
+        self,
+        record_id: uuid.UUID,
+        event_id: uuid.UUID | None,
+        update: ConfidenceUpdate,
+        applied_revision: int,
+        applied_status: ExperienceStatus,
+    ) -> None:
+        self._apply_evidence(*self._evidence_entry(record_id, event_id, update, applied_revision, applied_status))
+
+    @staticmethod
+    def _evidence_entry(
+        record_id: uuid.UUID,
+        event_id: uuid.UUID | None,
+        update: ConfidenceUpdate,
+        applied_revision: int,
+        applied_status: ExperienceStatus,
+    ) -> tuple[
+        _StoredEvidence, tuple[uuid.UUID, str] | None, tuple[uuid.UUID, str] | None, tuple[uuid.UUID, uuid.UUID] | None
+    ]:
+        """The ledger row and the keys it claims, built without changing anything."""
+        key = (record_id, stored_independence_key(update))
+        return (
+            _StoredEvidence(record_id, event_id, update, applied_revision, applied_status),
+            key if update.counted else None,
+            key if not update.counted and event_id is not None else None,
+            None if update.assessment_id is None else (record_id, update.assessment_id),
+        )
+
+    def _apply_evidence(
+        self,
+        row: _StoredEvidence,
+        counted_key: tuple[uuid.UUID, str] | None,
+        recorded_only_key: tuple[uuid.UUID, str] | None,
+        assessment: tuple[uuid.UUID, uuid.UUID] | None,
+    ) -> None:
+        self._evidence[row.update.evidence_id] = row
+        if counted_key is not None:
+            self._counted_keys.add(counted_key)
+        if recorded_only_key is not None:
+            self._recorded_only_keys.add(recorded_only_key)
+        if assessment is not None:
+            self._spent_assessments.add(assessment)
+
+    def _compare_stored_evidence(
+        self, scope: Scope, event: LifecycleEvent, submitted: ConfidenceUpdate, stored: _StoredEvidence
+    ) -> LifecycleCommitResult:
+        same_content = (
+            stored.experience_id == event.experience_record_id
+            and self._in_scope(scope, stored.experience_id) is not None
+            and (stored.event_id is None or stored.event_id == event.event_id)
+            and stored.update.kind == submitted.kind
+            and stored.update.source == submitted.source
+            and stored.update.run_id == submitted.run_id
+            and stored.update.verification_round_id == submitted.verification_round_id
+            and stored.update.reviewer_identity == submitted.reviewer_identity
+            and stored.update.rule_version == submitted.rule_version
+            and stored.update.detail == submitted.detail
+            and stored.update.assessment_id == submitted.assessment_id
+        )
+        if not same_content:
+            return LifecycleCommitResult("Conflict", 0, None)
+        replayed = dataclasses.replace(
+            submitted,
+            prior_reuse_confidence=stored.update.prior_reuse_confidence,
+            new_reuse_confidence=stored.update.new_reuse_confidence,
+            prior_supporting_validations=stored.update.prior_supporting_validations,
+            new_supporting_validations=stored.update.new_supporting_validations,
+            prior_contradictions=stored.update.prior_contradictions,
+            new_contradictions=stored.update.new_contradictions,
+            admission=stored.update.admission,
+        )
+        return LifecycleCommitResult("Committed", stored.applied_revision, stored.applied_status, (), replayed)
+
+    def _check_supersession(
+        self, scope: Scope, experience_id: uuid.UUID, replacement_id: uuid.UUID
+    ) -> SupersessionCheckResult:
+        if self._in_scope(scope, experience_id) is None:
+            return SupersessionCheckResult("RecordNotFound", None)
+        replacement = self._in_scope(scope, replacement_id)
+        if replacement is None:
+            return SupersessionCheckResult("ReplacementNotFound", None)
+        reached = {replacement_id}
+        pending = [replacement_id]
+        while pending:
+            current = pending.pop(0)
+            for stored in self._history.get(current, []):
+                following = stored.event.replacement_experience_id
+                if stored.scope == scope and following is not None and following not in reached:
+                    reached.add(following)
+                    pending.append(following)
+        return SupersessionCheckResult("Cycle" if experience_id in reached else "Allowed", replacement.status)
+
+
+def _compare_stored_event(scope: Scope, event: LifecycleEvent, stored: _StoredEvent) -> LifecycleCommitResult:
+    """A resubmitted event ID: the same event, every field and the scope included, is the original replayed."""
+    if stored.event.experience_record_id != event.experience_record_id or stored.scope != scope:
+        return LifecycleCommitResult("Conflict", 0, None)
+    resubmitted = dataclasses.replace(
+        event,
+        confidence=None if event.confidence is None else as_replay_of(event.confidence, stored.event.confidence),
+    )
+    if is_same_evidence(event.confidence, stored.event.confidence):
+        resubmitted = dataclasses.replace(resubmitted, current_status=stored.event.current_status)
+    if stored.event == resubmitted:
+        return LifecycleCommitResult("Committed", stored.applied_revision, None, (), stored.event.confidence)
+    return LifecycleCommitResult("Conflict", 0, None)
+
+
+def _initial_event(event: InitialLifecycleEvent, scope: Scope, recorded_at: Instant, actor: str) -> _StoredEvent:
+    """A finalized record's initial event, as the store holds it in the record's history."""
+    return _StoredEvent(
+        LifecycleEvent(
+            event_id=event.event_id,
+            experience_record_id=event.experience_id,
+            prior_status=event.prior_status,
+            current_status=event.current_status,
+            reason=event.reason,
+            producer=event.producer,
+            occurred_at=event.occurred_at.truncate_to_microseconds(),
+            expected_revision=event.expected_revision,
+        ),
+        scope,
+        event.applied_revision,
+        recorded_at.truncate_to_microseconds(),
+        actor,
+    )
