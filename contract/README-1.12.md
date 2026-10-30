@@ -24,7 +24,9 @@ ranking is this page's ranking with the defaults. A port that does not implement
 
 ## What 1.12 adds
 
-- **Fixtures:** `retrieval-policy` (no database): twelve cases and `policy-validation.json`.
+- **Fixtures:** `retrieval-policy` (no database): sixteen cases, four of them hybrid, and `policy-validation.json`; and
+  one `lessons-view` case (PostgreSQL), `retrieval-policy`, whose `query.json` carries a confidence floor and a
+  `MaxAge`.
 - **Rules:** the options below, the order retrieval applies them in, the exclusions it reports and its outcomes.
 
 Nothing else changes: no SQL, no schema object, no privilege. The confidence floor, the minimum of matched terms and the
@@ -46,7 +48,7 @@ fixtures write one as a whole number of .NET ticks (100 ns), every one of them a
 | `CandidateLimit` | 50 | 1 to 199 | the search's `limit` is this plus one; ranking considers this many |
 | `MaxAbandonedSearches` | 16 | more than zero | the abandoned-search cap (below) |
 | `MinimumMatchedTerms` | 3 | at least 1 | the search's `minimum_matched_terms` |
-| `MinimumVectorRelevance` | none | 0 to 1 when set | 1.6's vector floor |
+| `MinimumVectorRelevance` | none | 0 to 1 when set | 1.6's vector floor; a floor the host sets on the agent integration itself (.NET's `MinimumSemanticSimilarity`, a port's own vector floor option) replaces it, as .NET's one-call setup does |
 
 **`ConfidenceDecayPolicy`** (optional; none is the default and decays nothing)
 
@@ -79,14 +81,15 @@ As [`ExperienceRetrievalService`](../src/AgentExperience.Core/Retrieval/Experien
    vector channel alongside it, floored at `MinimumVectorRelevance`. The whole of it is bounded by `Timeout` (below).
 4. **Each channel's checks and truncation**, as 1.0 and 1.6 state them, with `CandidateLimit` in place of 50: over each
    channel's first `CandidateLimit` candidates, one outside the scope or a repeated ID fails the result; keep the first
-   `CandidateLimit` of each; the result is truncated when either channel returned more. Then 1.6's merge.
+   `CandidateLimit` of each; the result is truncated when either channel returned more. The vector floor is applied
+   first, so a vector candidate it drops is not counted. Then 1.6's merge.
 5. **Eligibility**, for each merged candidate in order, the first rule that applies excluding it, with the reason .NET
    names:
 
    | Reason | When |
    | --- | --- |
    | `IneligibleStatus` | its status is not `Validated` or `Reinforced` |
-   | `ModelAuthored` | the request excludes model-authored lessons and the record's reflection is one |
+   | `ModelAuthored` | the request excludes model-authored lessons and the record's reflection counts as model-authored (its authorship is not `Deterministic`, or its producer starts with `AgentExperience.ChatClientExperienceReflector/`, as 1.0's statement decides) |
    | `Expired` | `MaxAge` is set and now − `updated_at` is **more than** `MaxAge` (exactly `MaxAge` old is kept) |
 
    (.NET also has `EnvironmentMismatch`, for a required environment attribute, and `UnconfirmedContent`, under
@@ -106,14 +109,21 @@ As [`ExperienceRetrievalService`](../src/AgentExperience.Core/Retrieval/Experien
    component also carries **`undecayedValue`**, the clamped stored confidence; otherwise it has none. Every age and
    half-life is in seconds as a double: the span's ticks divided by 10,000,000. The score, the order and the tie-break
    are 1.0's.
-7. **The outcome** is `Completed`.
+7. **The cut.** The ranked records are cut to `CandidateLimit` (.NET cuts to the request's own limit when it has one,
+   which a port does not have): with both channels the merged list can hold more.
+8. **The outcome** is `Completed`.
 
 ## Timing out
 
-The whole retrieval (the authorization check aside) is bounded by `Timeout`. A search still running when it expires is
-**abandoned**: the call returns `TimedOut` at once, empty and not truncated, never an error and never a partial result;
-the search is asked to stop (its context or task is cancelled) but may keep running against the store in the
-background. A caller's own cancellation is not a timeout: it propagates as the language's cancellation.
+The whole retrieval (the authorization check aside) is bounded by `Timeout`: **both channels together**, the text
+search and the vector channel (embedding the task text, then the vector search). When `Timeout` expires before both have
+answered, the call returns `TimedOut` at once, empty and not truncated, never an error and never a partial result, even
+when the text search had already answered and only the vector channel was still running: .NET waits for the two
+together. A search still running is **abandoned**: it is asked to stop (its context or task is cancelled) but may keep
+running against the store in the background. A port's own bound on the vector channel (Python's `vector_timeout`, Go's
+`VectorTimeout`; .NET has none) is a vector fallback only when it expires strictly before `Timeout`; when it is not
+shorter, `Timeout` decides, and a vector channel still running then times the call out. A caller's own cancellation is
+not a timeout: it propagates as the language's cancellation.
 
 **The abandoned-search cap.** One retriever counts the searches it abandoned that are still running; each is counted
 until it actually ends. While the count is at `MaxAbandonedSearches`, a call returns `TimedOut` at once without
@@ -131,7 +141,7 @@ reports them as `RetrievalTimedOut`, `RetrievalDenied` and `RetrievalFailed`, th
 ## The fixtures
 
 ```
-fixtures/retrieval-policy/<case>/            candidates.json + policy.json -> expected.json
+fixtures/retrieval-policy/<case>/            candidates.json [+ vector-candidates.json] + policy.json -> expected.json
 fixtures/retrieval-policy/policy-validation.json   policy + confidenceDecay -> refusal
 ```
 
@@ -140,10 +150,14 @@ hold one) and its `relevance`, already widened. `policy.json` holds the `scope` 
 `preferredEnvironment`, `excludeModelAuthored`, the `policy` (each option above, camelCase; durations as `…Ticks`, none
 as `null`) and `confidenceDecay` (`domainKey`, `halfLivesTicks`, `defaultHalfLifeTicks`; `null` for none). Build the
 policy and decay, retrieve at `now` against a store that answers with the candidates (at most the `limit` it is asked
-for), and compare with `expected.json`:
+for), and, when the case has `vector-candidates.json`, an embedder and an index that answers the vector search with
+those candidates (at most the `limit` it is asked for) in the same shape, so retrieval is hybrid. Compare with
+`expected.json`:
 
 - `outcome`, exactly;
 - `query`, what the store was asked for: `minConfidence`, `limit`, `minimumMatchedTerms`, `excludeModelAuthored`;
+- in a hybrid case, `vectorQuery`, what the index was asked for: `minConfidence`, `limit`, `excludeModelAuthored` (the
+  vector floor is applied by retrieval, not sent to the index);
 - `truncated`;
 - `ranked`, in order: each `experienceId`, its `score` and its five `components` (`kind`, `value`, `weight`,
   `undecayedValue`, `null` for none), every number within an absolute tolerance of 1e-12;
@@ -154,6 +168,15 @@ for), and compare with `expected.json`:
 **`policy-validation.json`.** For each entry, build `policy` and `confidenceDecay` (`null`: none). A `refusal` of `null`
 means the port accepts it; otherwise the port refuses it, naming the option .NET names in `parameter`
 (`exception` is .NET's exception type, for the record). A number that is not one is written as the string `"NaN"`.
+
+**lessons-view `retrieval-policy`.** 1.7's lessons view, run with a retrieval policy whose `MinimumConfidence` and
+`MaxAge` are `query.json`'s `minimumConfidence` and `maxAgeTicks` (written only when set). Eligibility applies them as
+.NET's view does, in this order: the status, the floor, the model-authored exclusion, then the age (the byte budget
+last, as in 1.7). `BelowConfidenceFloor` names the policy's
+floor (`confidence 0.65 is below the retrieval floor 0.70`), and a lesson whose `updated_at` is more than `MaxAge`
+before the page's clock is **`Expired`**, with the reason `its last activity is older than the retrieval policy's
+maximum age`. 1.7's remark that a port never answers `Expired` is superseded by this one; `ContentUnconfirmed`
+(provenance signing) is still .NET's alone.
 
 **Not fixtured.** Timing: the timeout, abandoning a search and the cap are each port's own tests, against a store that
 answers slowly or never, as is a `Denied` request.

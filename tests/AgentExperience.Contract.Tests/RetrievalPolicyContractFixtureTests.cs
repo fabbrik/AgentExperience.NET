@@ -19,6 +19,12 @@ public sealed partial class ContractFixtureTests
         {
             var directory = $"fixtures/{RetrievalPolicyContract.Family}/{name}";
             var candidatesJson = ContractJson.Write(RetrievalPolicyContract.CandidatesJson(definition.Candidates));
+            var vectorJson = definition.VectorCandidates is { } vector ? ContractJson.Write(RetrievalPolicyContract.CandidatesJson(vector)) : null;
+            if (vectorJson is not null)
+            {
+                ContractFiles.Verify($"{directory}/vector-candidates.json", vectorJson, drift);
+            }
+
             var policyJson = ContractJson.Write(RetrievalPolicyContract.PolicyJson(definition));
             ContractFiles.Verify($"{directory}/candidates.json", candidatesJson, drift);
             ContractFiles.Verify($"{directory}/policy.json", policyJson, drift);
@@ -33,7 +39,8 @@ public sealed partial class ContractFixtureTests
                 RetrievalPolicyContract.ReadPolicy(input["policy"]!.AsObject()),
                 RetrievalPolicyContract.ReadDecay(input["confidenceDecay"]),
                 preferred,
-                input["excludeModelAuthored"]!.GetValue<bool>());
+                input["excludeModelAuthored"]!.GetValue<bool>(),
+                vectorJson is null ? null : RetrievalPolicyContract.FromCandidatesJson(ContractFiles.Read($"{directory}/vector-candidates.json") ?? vectorJson));
             ContractFiles.Verify($"{directory}/expected.json", ContractJson.Write(RetrievalPolicyContract.ExpectedJson(run)), drift);
         }
 
@@ -45,7 +52,7 @@ public sealed partial class ContractFixtureTests
         ContractFiles.VerifyNoStray(
             RetrievalPolicyContract.Family,
             RetrievalPolicyContract.Cases.Select(entry => entry.Name),
-            ["candidates.json", "policy.json", "expected.json"],
+            ["candidates.json", "vector-candidates.json", "policy.json", "expected.json"],
             drift,
             RetrievalPolicyContract.ValidationFile);
         Relock(drift);
@@ -63,7 +70,8 @@ public sealed partial class ContractFixtureTests
                 RetrievalPolicyContract.ReadPolicy(entry.Case.Policy),
                 RetrievalPolicyContract.ReadDecay(entry.Case.ConfidenceDecay),
                 entry.Case.PreferredEnvironment,
-                entry.Case.ExcludeModelAuthored));
+                entry.Case.ExcludeModelAuthored,
+                entry.Case.VectorCandidates));
 
         Assert.All(runs.Values, run => Assert.Equal(RetrievalOutcome.Completed, run.Result.Outcome));
 
@@ -103,6 +111,23 @@ public sealed partial class ContractFixtureTests
 
         // A custom recency half-life.
         Assert.Contains(runs["recency-half-life"].Result.Records, ranked => ranked.Components.Single(c => c.Kind == RankingComponentKind.Recency).Value == 0.25);
+
+        // Model-authored: each exclusion by the first rule, in .NET's order.
+        Assert.Equal(
+            [RetrievalExclusionReason.ModelAuthored, RetrievalExclusionReason.IneligibleStatus, RetrievalExclusionReason.ModelAuthored, RetrievalExclusionReason.Expired, RetrievalExclusionReason.ModelAuthored],
+            runs["model-authored-excluded"].Result.Excluded.Select(entry => entry.Reason));
+
+        // Hybrid: the policy's floor, per-channel limits, the floor before the count.
+        Assert.All(runs.Where(entry => entry.Key.StartsWith("hybrid-", StringComparison.Ordinal)), entry =>
+        {
+            Assert.False(entry.Value.Result.TextOnly);
+            Assert.NotNull(entry.Value.VectorQuery);
+        });
+        Assert.Equal(3, runs["hybrid-vector-floor-from-the-policy"].Result.Records.Count);
+        Assert.True(runs["hybrid-per-channel-candidate-limit"].Result.Truncated);
+        Assert.Equal(3, runs["hybrid-per-channel-candidate-limit"].VectorQuery!.Limit);
+        Assert.False(runs["hybrid-floor-before-truncation"].Result.Truncated);
+        Assert.Equal(2, runs["hybrid-floor-before-truncation"].Result.Records.Count);
 
         // The cross-language policy: an expiry and decay together.
         Assert.Contains(runs["max-age-and-decay"].Result.Excluded, entry => entry.Reason == RetrievalExclusionReason.Expired);

@@ -17,10 +17,21 @@ internal sealed record RetrievalPolicyCase(
     JsonObject Policy,
     JsonObject? ConfidenceDecay,
     IReadOnlyDictionary<string, string> PreferredEnvironment,
-    bool ExcludeModelAuthored = false);
+    bool ExcludeModelAuthored = false)
+{
+    /// <summary>
+    /// The vector channel's candidates, in the index's order (<c>vector-candidates.json</c>), or <see langword="null"/>
+    /// for a text-only case (no file).
+    /// </summary>
+    public IReadOnlyList<(ExperienceRecord Record, double Relevance)>? VectorCandidates { get; init; }
+}
 
 /// <summary>What retrieval asked the store for and what it answered, for one case.</summary>
-internal sealed record RetrievalPolicyRun(ExperienceCandidateQuery? Query, ExperienceRetrievalResult Result);
+internal sealed record RetrievalPolicyRun(ExperienceCandidateQuery? Query, ExperienceRetrievalResult Result)
+{
+    /// <summary>What the embedding index was asked for, in a hybrid case.</summary>
+    public ExperienceVectorQuery? VectorQuery { get; init; }
+}
 
 /// <summary>
 /// Contract 1.12's <c>retrieval-policy</c> family (no database): the whole retrieval policy. The candidates a store
@@ -75,7 +86,108 @@ internal static class RetrievalPolicyContract
         ("candidate-limit-truncates", CandidateLimitTruncates()),
         ("candidate-limit-exactly-reached", CandidateLimitExactlyReached()),
         ("max-age-and-decay", MaxAgeAndDecay()),
+        ("model-authored-excluded", ModelAuthoredExcluded()),
+        ("hybrid-vector-floor-from-the-policy", HybridVectorFloor()),
+        ("hybrid-per-channel-candidate-limit", HybridPerChannelCandidateLimit()),
+        ("hybrid-floor-before-truncation", HybridFloorBeforeTruncation()),
     ];
+
+    private static RetrievalPolicyCase ModelAuthoredExcluded() => new(
+        "Model-authored lessons excluded, under MaxAge 90 days. Each candidate is excluded by the first rule that applies, " +
+        "in .NET's order: a model-authored Candidate is IneligibleStatus; a model-authored record, expired or not, is " +
+        "ModelAuthored; an expired deterministic one is Expired. A record whose producer is the library's own model-backed " +
+        "reflector counts as model-authored whatever authorship it declares. The exclusions are listed in the store's order.",
+        [
+            (Lesson(1, created: Now.AddDays(-10), updated: Now.AddDays(-1)), 1),
+            (Lesson(2, created: Now.AddDays(-10), updated: Now.AddDays(-1), modelAuthored: true), 1),
+            (Lesson(3, created: Now.AddDays(-10), updated: Now.AddDays(-1), status: ExperienceStatus.Candidate, modelAuthored: true), 1),
+            (Lesson(4, created: Now.AddDays(-200), updated: Now.AddDays(-100), modelAuthored: true), 1),
+            (Lesson(5, created: Now.AddDays(-200), updated: Now.AddDays(-100)), 1),
+            (LibraryReflected(Lesson(6, created: Now.AddDays(-10), updated: Now.AddDays(-1))), 1),
+            (Lesson(7, created: Now.AddDays(-10), updated: Now.AddDays(-2), status: ExperienceStatus.Reinforced), 0.75),
+        ],
+        Now,
+        Policy(Default(), p => p["maxAgeTicks"] = TimeSpan.FromDays(90).Ticks),
+        ConfidenceDecay: null,
+        NoPreference,
+        ExcludeModelAuthored: true);
+
+    private static RetrievalPolicyCase HybridVectorFloor() => new(
+        "Hybrid, with the policy's minimum vector relevance (0.75): the vector candidates below it are dropped before the " +
+        "merge (one exactly at it is kept), text candidates are never floored, a record both channels found keeps its text " +
+        "position and the higher relevance, and the index is asked for the policy's floor, confidence and limit plus one.",
+        [
+            (Lesson(1, created: Now.AddDays(-10), updated: Now.AddDays(-1)), 0.5),
+            (Lesson(2, created: Now.AddDays(-10), updated: Now.AddDays(-1)), 0.25),
+        ],
+        Now,
+        Policy(Default(), p => p["minimumVectorRelevance"] = 0.75),
+        ConfidenceDecay: null,
+        NoPreference)
+    {
+        VectorCandidates =
+        [
+            (Lesson(1, created: Now.AddDays(-10), updated: Now.AddDays(-1)), 0.9),
+            (Lesson(3, created: Now.AddDays(-10), updated: Now.AddDays(-1)), 0.75),
+            (Lesson(4, created: Now.AddDays(-10), updated: Now.AddDays(-1)), 0.7),
+            (Lesson(2, created: Now.AddDays(-10), updated: Now.AddDays(-1)), 0.74),
+        ],
+    };
+
+    private static RetrievalPolicyCase HybridPerChannelCandidateLimit() => new(
+        "Hybrid, with a candidate limit of 2: each channel is asked for 3 and considered to its first 2. The text channel " +
+        "returned 3, so the result is truncated; the vector channel's two are merged after the text channel's, one of them " +
+        "already found by text. MaxAge and decay apply to the merged list as to text candidates.",
+        [
+            (Lesson(1, created: Now.AddDays(-40), updated: Now.AddDays(-1), domain: "framework-api"), 1),
+            (Lesson(2, created: Now.AddDays(-40), updated: Now.AddDays(-200)), 0.75),
+            (Lesson(3, created: Now.AddDays(-40), updated: Now.AddDays(-1)), 0.5),
+        ],
+        Now,
+        Policy(Default(), p =>
+        {
+            p["candidateLimit"] = 2;
+            p["maxAgeTicks"] = TimeSpan.FromDays(90).Ticks;
+        }),
+        Decay(("framework-api", TimeSpan.FromDays(30))),
+        NoPreference)
+    {
+        VectorCandidates =
+        [
+            (Lesson(4, created: Now.AddDays(-40), updated: Now.AddDays(-3)), 0.8),
+            (Lesson(1, created: Now.AddDays(-40), updated: Now.AddDays(-1), domain: "framework-api"), 0.6),
+        ],
+    };
+
+    private static RetrievalPolicyCase HybridFloorBeforeTruncation() => new(
+        "Hybrid, with a candidate limit of 2 and a vector floor of 0.6: the index, asked for 3, returns 3, but the floor " +
+        "drops one before the channel is counted, so the vector channel is not truncated, and neither is the result. The " +
+        "merged list holds three eligible records, and the ranked result is cut to the candidate limit: the best two.",
+        [
+            (Lesson(1, created: Now.AddDays(-10), updated: Now.AddDays(-1)), 1),
+        ],
+        Now,
+        Policy(Default(), p =>
+        {
+            p["candidateLimit"] = 2;
+            p["minimumVectorRelevance"] = 0.6;
+        }),
+        ConfidenceDecay: null,
+        NoPreference)
+    {
+        VectorCandidates =
+        [
+            (Lesson(2, created: Now.AddDays(-10), updated: Now.AddDays(-2)), 0.9),
+            (Lesson(3, created: Now.AddDays(-10), updated: Now.AddDays(-3)), 0.5),
+            (Lesson(4, created: Now.AddDays(-10), updated: Now.AddDays(-4)), 0.7),
+        ],
+    };
+
+    /// <summary><paramref name="record"/> with its reflection produced by the library's own model-backed reflector, declared deterministic.</summary>
+    private static ExperienceRecord LibraryReflected(ExperienceRecord record) => record with
+    {
+        Reflection = record.Reflection! with { Producer = ReflectionAuthorshipConventions.LibraryModelReflectorProducerPrefix + "1.0" },
+    };
 
     private static RetrievalPolicyCase DefaultPolicy() => new(
         "The default policy: a 500 ms timeout, a 0.5 confidence floor, no expiry, a 30-day recency half-life, 50 candidates " +
@@ -267,7 +379,8 @@ internal static class RetrievalPolicyContract
         Dictionary<string, string>? metadata = null,
         string region = "eu-west",
         int family = F,
-        Scope? scope = null)
+        Scope? scope = null,
+        bool modelAuthored = false)
     {
         var tags = new Dictionary<string, string>(StringComparer.Ordinal) { ["region"] = region };
         if (domain is not null)
@@ -280,7 +393,7 @@ internal static class RetrievalPolicyContract
             tags[key] = value;
         }
 
-        var record = SearchContract.Seed(family, n, "rotate-keys", "Rotate the signing keys", $"Lesson {n}: verified after 1 attempt.", status, confidence, scope, metadata: tags);
+        var record = SearchContract.Seed(family, n, "rotate-keys", "Rotate the signing keys", $"Lesson {n}: verified after 1 attempt.", status, confidence, scope, modelAuthored: modelAuthored, metadata: tags);
         return record with { CreatedAt = created, UpdatedAt = updated };
     }
 
@@ -415,16 +528,18 @@ internal static class RetrievalPolicyContract
         RetrievalPolicy policy,
         ConfidenceDecayPolicy? decay,
         IReadOnlyDictionary<string, string> preferred,
-        bool excludeModelAuthored)
+        bool excludeModelAuthored,
+        IReadOnlyList<(ExperienceRecord Record, double Relevance)>? vectorCandidates = null)
     {
         var source = new FixtureSource(candidates);
+        var index = vectorCandidates is null ? null : new FixtureIndex(vectorCandidates);
         var service = new ExperienceRetrievalService(
             source,
             policy,
             RankingWeights.Default,
             new FixedTimeProvider(now),
-            embeddingIndex: null,
-            embeddingGenerator: null,
+            embeddingIndex: index,
+            embeddingGenerator: index is null ? null : new FixtureGenerator(),
             environmentScorer: null,
             confidenceDecay: decay);
         var request = new RetrieveExperienceRequest(Fixed.Authorization, Fixed.Scope, TaskText)
@@ -433,11 +548,41 @@ internal static class RetrievalPolicyContract
             ExcludeModelAuthored = excludeModelAuthored,
         };
         var result = service.RetrieveAsync(request, CancellationToken.None).GetAwaiter().GetResult();
-        return new RetrievalPolicyRun(source.Query, result);
+        return new RetrievalPolicyRun(source.Query, result) { VectorQuery = index?.Query };
     }
 
-    /// <summary><c>expected.json</c>.</summary>
-    public static JsonObject ExpectedJson(RetrievalPolicyRun run) => new()
+    /// <summary>
+    /// <c>expected.json</c>. A hybrid case also has <c>vectorQuery</c>, what the index was asked for, written after
+    /// <c>query</c>; a text-only case has none.
+    /// </summary>
+    public static JsonObject ExpectedJson(RetrievalPolicyRun run)
+    {
+        var expected = TextExpectedJson(run);
+        if (run.VectorQuery is { } vector)
+        {
+            var ordered = new JsonObject();
+            foreach (var (key, value) in expected.ToList())
+            {
+                expected.Remove(key);
+                ordered[key] = value;
+                if (key == "query")
+                {
+                    ordered["vectorQuery"] = new JsonObject
+                    {
+                        ["minConfidence"] = vector.MinimumConfidence,
+                        ["limit"] = vector.Limit,
+                        ["excludeModelAuthored"] = vector.ExcludeModelAuthored,
+                    };
+                }
+            }
+
+            return ordered;
+        }
+
+        return expected;
+    }
+
+    private static JsonObject TextExpectedJson(RetrievalPolicyRun run) => new()
     {
         ["outcome"] = run.Result.Outcome.ToString(),
         ["query"] = run.Query is { } query
@@ -560,6 +705,39 @@ internal static class RetrievalPolicyContract
         }
 
         return cases;
+    }
+
+    /// <summary>An index that answers every search with the case's vector candidates, cut at the limit it was asked for, and keeps the query.</summary>
+    private sealed class FixtureIndex(IReadOnlyList<(ExperienceRecord Record, double Relevance)> candidates) : IExperienceEmbeddingIndex
+    {
+        public ExperienceVectorQuery? Query { get; private set; }
+
+        public Task<ExperienceIndexWriteResult> WriteAsync(AuthorizationContext authorization, ExperienceIndexWrite write, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExperienceIndexScanResult> ScanAsync(AuthorizationContext authorization, ExperienceIndexScan scan, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExperienceIndexRemoveResult> RemoveAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExperienceVectorSearchResult> SearchAsync(AuthorizationContext authorization, ExperienceVectorQuery query, CancellationToken cancellationToken)
+        {
+            Query = query;
+            IReadOnlyList<ExperienceCandidate> answer = [.. candidates.Take(query.Limit).Select(entry => new ExperienceCandidate(entry.Record, entry.Relevance))];
+            return Task.FromResult(new ExperienceVectorSearchResult(ExperienceVectorSearchOutcome.Found, answer, []));
+        }
+    }
+
+    /// <summary>A generator with a fixed model and a fixed two-component vector: the index is a fixture, so the vector only has to be valid.</summary>
+    private sealed class FixtureGenerator : IExperienceEmbeddingGenerator
+    {
+        public string ModelId => "fixture-model";
+
+        public int Dimension => 2;
+
+        public Task<ReadOnlyMemory<float>> GenerateAsync(string text, CancellationToken cancellationToken) =>
+            Task.FromResult<ReadOnlyMemory<float>>(new float[] { 0.6f, 0.8f });
     }
 
     /// <summary>A store that answers every search with the case's candidates, cut at the limit it was asked for, and keeps the query.</summary>
