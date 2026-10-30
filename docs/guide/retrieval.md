@@ -151,6 +151,12 @@ finds anything.
 var policy = RetrievalPolicy.Default with { MinimumMatchedTerms = ExperienceCandidateQuery.AllTerms };
 ```
 
+Each candidate also reports its plain coverage, the share of the request's distinct terms it contains whatever fields
+hold them (`ExperienceCandidate.TermCoverage`), which retrieval carries to `RankedExperience.TextCoverage` beside the
+vector channel's `VectorRelevance`. Neither changes ranking; the injection provider's optional match floor reads them
+to keep weak matches out of the block without changing which candidates retrieval returns (see
+[Keeping weak matches out](injection.md#keeping-weak-matches-out)).
+
 ## Ranking is explainable
 
 Every returned record carries all five normalized components (each in 0–1) and the effective weight applied to it,

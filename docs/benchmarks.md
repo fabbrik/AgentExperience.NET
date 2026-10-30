@@ -287,3 +287,32 @@ compound cannot meet the minimum alone. **Today's numbers** (recorded 2026-10-10
 - **This is the source's order, not Core's final ranking.** The benchmark calls the candidate source directly; Core
   then re-scores candidates with confidence, recency, status and environment, and on PostgreSQL sees every full match
   at the same text relevance, so what an agent is finally shown can be ordered differently.
+
+### The injection floor (story 28.5)
+
+Story 28.5 added an injection-time match floor (`ExperienceInjectionOptions.MinimumMatch`, see
+[Keeping weak matches out](guide/injection.md#keeping-weak-matches-out)) and extended both goldens with an
+`INJECTION FLOOR` section: what would reach an 8-record block if only candidates covering at least a share `f` of the
+query's distinct terms were injected (the candidates in the source's order, cut to 8; text only). The rule was fixed
+before any run: sweep `f` over 0, 0.3, 0.4, 0.5 and 0.6, keep the floors whose FP@8 is at most 0.15 on both adapters and
+whose `distractor-overlap` queries inject nothing unexpected, and take the one with the highest PostgreSQL R@8 (ties to
+the higher floor); if one is chosen it becomes the default, otherwise the floor stays off.
+
+| Floor | In-memory R@8 | In-memory FP@8 | In-memory distractor FP@8 | PostgreSQL R@8 | PostgreSQL FP@8 | PostgreSQL distractor FP@8 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 (off) | 0.700 | 0.417 | 0.667 | 0.844 | 0.521 | 0.667 |
+| 0.3 | 0.611 | 0.250 | 0.667 | 0.733 | 0.313 | 0.667 |
+| 0.4 | 0.533 | 0.250 | 0.667 | 0.656 | 0.313 | 0.667 |
+| 0.5 | 0.533 | 0.250 | 0.667 | 0.622 | 0.313 | 0.667 |
+| 0.6 | 0.467 | 0.250 | 0.667 | 0.578 | 0.313 | 0.667 |
+
+**No floor qualifies, so the default stays off.** A floor of 0.3 removes about two in five unexpected records, and above
+it the noise does not move at all: what is left are distractors that contain *every* word of a short query
+(`distractor-03`'s "reduce image size" and `dis-07`), which no coverage floor can tell from the right lesson. What a floor
+removes first is the right lesson for long, realistic requests, where three matched words are a small share of the
+request: at 0.3, 5 realistic queries lose their record on PostgreSQL and 4 in memory. `ExperienceMatchFloor`'s
+`DefaultMinimumTextCoverage` is 0.3, the lowest floor at which the noise stops falling, for hosts that turn it on.
+
+The hybrid column needs a real embedding provider, so the sweep was not run with vectors; its harness counts a record
+the vector channel found above the policy's floor as passing (the semantic leg). The real-task question, whether
+injecting fewer, stronger lessons helps an agent, is the holdout's to answer per deployment.

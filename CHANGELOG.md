@@ -316,6 +316,26 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   others `AlreadyRecorded`, a changed resubmission `Conflict` from all three), all three read the same history and
   confidence, and each agent alone leaves the same ledger, evidence, event and record rows in its own database.
 
+### Precision before recall: an injection-time match floor (story 28.5)
+
+- **`ExperienceInjectionOptions.MinimumMatch`** (type `ExperienceMatchFloor`, off by default): a record is injected only
+  when an exact failure-signature match on the current run (a recall hint), its text coverage (the share of the
+  request's distinct terms it contains, at least `MinimumTextCoverage`, 0.3 by default) or its semantic similarity (at
+  least `MinimumSemanticSimilarity`, by default the retrieval policy's `MinimumVectorRelevance`) is strong enough. A
+  weaker record is omitted as the new `InjectionOmissionReason.WeakMatch`, with a content-free detail, before the
+  capability gate and the record limit, so it takes no slot and a stronger one backfills; a host-limited request is
+  widened like the capability gate's. A block the floor empties ends `NothingToInject`, and its `inject` span carries
+  `agentexperience.nothing_reason = weak_match`. The holdout splits after the floor. Under a floor a coarse recall match
+  is a weak match. Which candidates retrieval returns is unchanged, and with the floor off everything is byte for byte
+  what it was.
+- **Each channel's strength travels with the record.** `ExperienceCandidate.TermCoverage` (both shipped text sources set
+  it), `RankedExperience.TextCoverage` and `RankedExperience.VectorRelevance` (set by retrieval). Ranking is unchanged.
+- **Chosen by a rule fixed before measuring, and the rule said off.** The retrieval benchmark's goldens gain an
+  `INJECTION FLOOR` sweep (0 to 0.6). No floor kept unexpected records at or below 0.15 in the first 8 on both stores, and
+  none removed the distractor-overlap noise (distractors containing every word of a short query), while every floor
+  cost long, realistic requests their lesson; so the default stays off ([the table](docs/benchmarks.md#the-injection-floor-story-285)).
+- The Python and Go ports and the contract are unchanged; the ports do not apply a floor yet.
+
 ## 0.1.0-preview.17
 
 This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of
