@@ -138,6 +138,9 @@ public sealed class CrossLanguageReuseFeedbackPostgresTests(ContractPostgresData
 
         // The submissions' lifecycle effects: harm contested the two lessons it named; improvement left the first Validated.
         Assert.Equal(["Validated", "Contested", "Contested"], Lessons.Select((_, n) => read["dotnet"][n]!["confidence"]!["report"]!["status"]!.GetValue<string>()));
+
+        // Every case gets a database: idle pooled connections left behind would exhaust the server's slots.
+        application.Clear();
     }
 
     private async Task ThreeDatabasesAsync(string directory)
@@ -157,7 +160,10 @@ public sealed class CrossLanguageReuseFeedbackPostgresTests(ContractPostgresData
             var application = await database.CreateAsync(caseName);
             await SeedAsync(application);
             results[writer] = await RunAsync(writer, application, database.ApplicationUrlOf(caseName), steps.DeepClone().AsArray(), directory, "three");
-            tables[writer] = await TablesAsync(database.OwnerOf(caseName));
+            var owner = database.OwnerOf(caseName);
+            tables[writer] = await TablesAsync(owner);
+            application.Clear();
+            owner.Clear();
         }
 
         Assert.Equal(["Recorded", "Recorded", "Recorded", "Conflict"], results["dotnet"].Select(result => result!["outcome"]!.GetValue<string>()));

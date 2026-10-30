@@ -88,11 +88,16 @@ public sealed class ReuseFeedbackSqlContractPostgresTests(ContractPostgresDataba
             }
         }
 
-        return new JsonObject
+        var expected = new JsonObject
         {
             ["results"] = results,
             ["reuse_feedback"] = await LifecycleSqlContractPostgresTests.TableAsync(owner, "reuse_feedback", ReuseFeedbackSqlContract.SubmissionColumns, "feedback_id"),
             ["reuse_feedback_exposures"] = await LifecycleSqlContractPostgresTests.TableAsync(owner, "reuse_feedback_exposures", ReuseFeedbackSqlContract.ExposureColumns, "feedback_id, ordinal"),
         };
+
+        // Every case gets a database: idle pooled connections left behind would exhaust the server's slots.
+        application.Clear();
+        owner.Clear();
+        return expected;
     }
 }
