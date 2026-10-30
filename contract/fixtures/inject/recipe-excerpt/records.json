@@ -1,0 +1,223 @@
+[
+  {
+    "record": {
+      "columns": {
+        "experience_id": "00000284-0000-4000-8000-000000000000",
+        "source_run_id": "00000284-0000-4000-8000-000000000001",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "upgrade-lib",
+        "status": "Validated",
+        "reuse_confidence": 0.6666666666666666,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-03-07T09:02:00+00:00",
+        "updated_at": "2026-03-07T09:02:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Upgrade lib without breaking the build",
+        "attempts": [
+          {
+            "attemptId": "00000284-0000-4000-8000-0000000000a0",
+            "sequenceNumber": 0,
+            "startedAt": "2026-03-07T09:00:00+00:00",
+            "duration": "00:00:04",
+            "toolCalls": [
+              {
+                "toolCallId": "00000284-0000-4000-8000-000000000c00",
+                "sequenceNumber": 0,
+                "toolName": "pin_dependency",
+                "arguments": {
+                  "package": "lib"
+                },
+                "startedAt": "2026-03-07T09:00:00+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null,
+                "recipeExcerpt": "pinned lib to 3.0.0"
+              },
+              {
+                "toolCallId": "00000284-0000-4000-8000-000000000c01",
+                "sequenceNumber": 1,
+                "toolName": "run_tests",
+                "arguments": {},
+                "startedAt": "2026-03-07T09:00:01+00:00",
+                "duration": "00:00:00.8000000",
+                "result": null,
+                "error": "exit 2",
+                "recipeExcerpt": "planted on a failed call"
+              }
+            ],
+            "result": null,
+            "error": "exit 2"
+          },
+          {
+            "attemptId": "00000284-0000-4000-8000-0000000000a1",
+            "sequenceNumber": 1,
+            "startedAt": "2026-03-07T09:01:00+00:00",
+            "duration": "00:00:06",
+            "toolCalls": [
+              {
+                "toolCallId": "00000284-0000-4000-8000-000000000c10",
+                "sequenceNumber": 0,
+                "toolName": "pin_dependency",
+                "arguments": {
+                  "package": "lib"
+                },
+                "startedAt": "2026-03-07T09:01:00+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null,
+                "recipeExcerpt": "pinned \"lib\" to 2.4.1 -> ok\nlock file updated\u2028done"
+              },
+              {
+                "toolCallId": "00000284-0000-4000-8000-000000000c11",
+                "sequenceNumber": 1,
+                "toolName": "write_config",
+                "arguments": {},
+                "startedAt": "2026-03-07T09:01:01+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null,
+                "recipeExcerpt": "set retries=3; timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 end"
+              },
+              {
+                "toolCallId": "00000284-0000-4000-8000-000000000c12",
+                "sequenceNumber": 2,
+                "toolName": "run_tests",
+                "arguments": {},
+                "startedAt": "2026-03-07T09:01:02+00:00",
+                "duration": "00:00:00.8000000",
+                "result": null,
+                "error": "exit 1",
+                "recipeExcerpt": "never on a failed call"
+              },
+              {
+                "toolCallId": "00000284-0000-4000-8000-000000000c13",
+                "sequenceNumber": 3,
+                "toolName": "run_tests",
+                "arguments": {},
+                "startedAt": "2026-03-07T09:01:03+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null,
+                "recipeExcerpt": "not allowlisted: 6 passed"
+              },
+              {
+                "toolCallId": "00000284-0000-4000-8000-000000000c14",
+                "sequenceNumber": 4,
+                "toolName": "write_config",
+                "arguments": {},
+                "startedAt": "2026-03-07T09:01:04+00:00",
+                "duration": "00:00:00.8000000",
+                "result": "ok",
+                "error": null,
+                "recipeExcerpt": " \t "
+              }
+            ],
+            "result": "Tests pass.",
+            "error": null
+          }
+        ],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "00000284-0000-4000-8000-0000000000e0",
+              "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": "passed",
+              "capturedAt": "2026-03-07T09:02:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-03-07T09:02:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "00000284-0000-4000-8000-00000000002f",
+          "experienceRunId": "00000284-0000-4000-8000-000000000001",
+          "lesson": "Verified after 2 attempts. Failed: attempt 0 — exit 2. Worked: attempt 1. Checks: [tests-pass].",
+          "successfulApproaches": [
+            "The final attempt completed without an error as the final attempt of a verified run."
+          ],
+          "failedApproaches": [
+            "Earlier attempts ended with errors."
+          ],
+          "preconditions": [
+            "Runtime version: runtime-1",
+            "Operating system: linux",
+            "Application version: unknown"
+          ],
+          "warnings": [
+            "Verification covers only the declared required checks."
+          ],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "00000284-0000-4000-8000-0000000000e0"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/2.0",
+          "createdAt": "2026-03-07T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-03-07T09:02:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    "ranking": {
+      "score": 0.855,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 0.8,
+          "weight": 0.35
+        },
+        {
+          "kind": "Confidence",
+          "value": 1,
+          "weight": 0.25
+        },
+        {
+          "kind": "Recency",
+          "value": 1,
+          "weight": 0.15
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1
+        }
+      ]
+    }
+  }
+]

@@ -30,6 +30,14 @@ internal sealed record InjectOptions(
         ExperienceInjectionLimits.DefaultMaxRecords,
         ExperienceInjectionLimits.DefaultMaxBytes,
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal));
+
+    /// <summary>
+    /// Contract 1.19: the tool names whose recipe excerpts the <c>Worked:</c> attempt's line may show
+    /// (<c>ExperienceInjectionOptions.RecipeExcerpts</c>). Absent from <c>options.json</c> when <see langword="null"/>, so
+    /// every earlier case's file is unchanged; absent and empty both show none.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? RecipeExcerpts { get; init; }
 }
 
 /// <summary>An inject case: the ranked records (best first) and the options.</summary>
@@ -158,6 +166,23 @@ internal static class InjectContract
                 "not a label or a delimiter and is left as it is.",
                 [(CaseFolding(), Ranking(0.8, 1.0))],
                 InjectOptions.Default)),
+
+            // Contract 1.19.
+            ("recipe-excerpt", new InjectCase(
+                "The recipe: the attempt the Worked: line names shows each allowlisted tool's stored excerpt in place of its " +
+                "[returned] marker, quoted, neutralized and cut like an argument string (to 200 characters, the cut marked " +
+                "outside the quotes). A failed call, an earlier attempt's call and a tool not in recipeExcerpts show none.",
+                [(Recipe(), Ranking(0.8, 1.0))],
+                RecipeOptions with { RecipeExcerpts = ["pin_dependency", "write_config"] })),
+            ("recipe-excerpt-verbose", new InjectCase(
+                "The same record and options in the verbose layout.",
+                [(Recipe(), Ranking(0.8, 1.0))],
+                RecipeOptions with { Rendering = HistoricalReferenceRendering.Verbose, RecipeExcerpts = ["pin_dependency", "write_config"] })),
+            ("recipe-excerpt-not-allowlisted", new InjectCase(
+                "The same record with no recipeExcerpts option: every excerpt the record carries is read and kept, and none is " +
+                "shown, so the block is exactly the one a record without excerpts renders.",
+                [(Recipe(), Ranking(0.8, 1.0))],
+                RecipeOptions)),
         ];
     }
 
@@ -179,7 +204,12 @@ internal static class InjectContract
             ranked,
             new ExperienceInjectionLimits(options.MaxRecords, options.MaxBytes),
             options.ApproachArguments,
-            new HistoricalReferenceWriteSettings { Rendering = options.Rendering, FailureDetail = options.FailureDetail }).Text;
+            new HistoricalReferenceWriteSettings
+            {
+                Rendering = options.Rendering,
+                FailureDetail = options.FailureDetail,
+                RecipeExcerpts = options.RecipeExcerpts,
+            }).Text;
     }
 
     /// <summary>The UTF-8 size of the block the given records render to on their own.</summary>
@@ -295,6 +325,57 @@ internal static class InjectContract
             attempts,
             Lesson(id, t, "Verified after 2 attempts. Failed: attempt 0 — InvalidOperationException. Worked: attempt 1. Checks: [refund-issued]."),
             t.AddSeconds(20));
+    }
+
+    /// <summary>The argument allowlist the recipe cases share.</summary>
+    private static InjectOptions RecipeOptions { get; } = InjectOptions.Default with
+    {
+        ApproachArguments = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        {
+            ["pin_dependency"] = ["package"],
+        },
+    };
+
+    /// <summary>
+    /// A record whose calls carry recipe excerpts (contract 1.19): attempt 0 pinned the wrong version and failed; attempt 1
+    /// pinned the right one, wrote the config, ran the tests (its first run failed, its second passed) and read the log.
+    /// Every call carries an excerpt, so a fixture shows which ones the block may show.
+    /// </summary>
+    private static ExperienceRecord Recipe()
+    {
+        var id = Fixed.Id(0x284, 0);
+        var t = Fixed.T0.AddDays(5);
+        static ToolCallRecord With(ToolCallRecord call, string excerpt) => call with { RecipeExcerpt = excerpt };
+        Attempt[] attempts =
+        [
+            new(Fixed.Id(0x284, 0xa0), 0, t, TimeSpan.FromSeconds(4),
+            [
+                With(Call(Fixed.Id(0x284, 0xc00), 0, "pin_dependency", t, new() { ["package"] = "lib" }, error: null), "pinned lib to 3.0.0"),
+                With(Call(Fixed.Id(0x284, 0xc01), 1, "run_tests", t.AddSeconds(1), new(), "exit 2"), "planted on a failed call"),
+            ],
+            Result: null,
+            Error: "exit 2"),
+            new(Fixed.Id(0x284, 0xa1), 1, t.AddMinutes(1), TimeSpan.FromSeconds(6),
+            [
+                With(Call(Fixed.Id(0x284, 0xc10), 0, "pin_dependency", t.AddMinutes(1), new() { ["package"] = "lib" }, error: null),
+                    "pinned \"lib\" to 2.4.1 -> ok\nlock file updated\u2028done"),
+                With(Call(Fixed.Id(0x284, 0xc11), 1, "write_config", t.AddMinutes(1).AddSeconds(1), new(), error: null),
+                    "set retries=3; " + string.Concat(Enumerable.Repeat("timeout=30 ", 20)) + "end"),
+                With(Call(Fixed.Id(0x284, 0xc12), 2, "run_tests", t.AddMinutes(1).AddSeconds(2), new(), "exit 1"), "never on a failed call"),
+                With(Call(Fixed.Id(0x284, 0xc13), 3, "run_tests", t.AddMinutes(1).AddSeconds(3), new(), error: null), "not allowlisted: 6 passed"),
+                With(Call(Fixed.Id(0x284, 0xc14), 4, "write_config", t.AddMinutes(1).AddSeconds(4), new(), error: null), " \t "),
+            ],
+            Result: "Tests pass.",
+            Error: null),
+        ];
+
+        return Record(
+            id,
+            "upgrade-lib",
+            "Upgrade lib without breaking the build",
+            attempts,
+            Lesson(id, t, "Verified after 2 attempts. Failed: attempt 0 — exit 2. Worked: attempt 1. Checks: [tests-pass]."),
+            t.AddMinutes(2));
     }
 
     private static ExperienceRecord Hostile()
