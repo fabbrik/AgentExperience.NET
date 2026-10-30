@@ -83,7 +83,7 @@ func cfOptionalUUID(o *Object, key string) *UUID {
 	return nil
 }
 
-var cfErrHostEngine = errors.New("the host engine failed")
+var errCfHostEngine = errors.New("the host engine failed")
 
 // cfHostEngine is a host engine as a case declares it (the .NET generator's HostEngine).
 type cfHostEngine struct {
@@ -110,7 +110,7 @@ func (e cfHostEngine) Score(input ExperienceConfidenceInput) (float64, error) {
 	case "stored":
 		return input.Record.ReuseConfidence, nil
 	case "throws":
-		return 0, cfErrHostEngine
+		return 0, errCfHostEngine
 	}
 	panic(fmt.Sprintf("unknown host engine score %v", e.score))
 }
@@ -152,7 +152,7 @@ func cfRefusalOf(err error) cfRefusal {
 	case errors.As(err, &engine):
 		message := engine.Error()
 		return cfRefusal{"InvalidOperationException", nil, &message}
-	case errors.Is(err, cfErrHostEngine):
+	case errors.Is(err, errCfHostEngine):
 		return cfRefusal{"HostEngineException", nil, nil}
 	}
 	return cfRefusal{exception: err.Error()}
