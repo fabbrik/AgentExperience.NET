@@ -33,6 +33,30 @@ public sealed class SqliteStoreBehaviourTests : IDisposable
     }
 
     [Fact]
+    public async Task A_recipe_excerpt_reads_back_from_the_record_store_and_the_run_store()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var full = FullRecord(scope);
+        var attempt = full.Attempts[0];
+        var call = attempt.ToolCalls[0] with { Error = null, Result = "exit=0", RecipeExcerpt = "exit=0 the refund is released" };
+        var record = full with { Attempts = [attempt with { ToolCalls = [call, .. attempt.ToolCalls.Skip(1)] }, .. full.Attempts.Skip(1)] };
+        var store = new SqliteExperienceRecordStore(_database.ConnectionString);
+        var runs = new SqliteExperienceRunStore(_database.ConnectionString);
+        var run = AgentExperience.Storage.Conformance.RunStoreConformanceTests.CompletedRun(scope) with { Attempts = record.Attempts };
+
+        Assert.Equal(ExperienceStoreOutcome.Created, (await store.CreateAsync(Authorize(tenant), record, CancellationToken.None)).Outcome);
+        Assert.Equal(ExperienceRunStoreOutcome.Saved, (await runs.SaveAsync(Authorize(tenant), run, Guid.NewGuid(), CancellationToken.None)).Outcome);
+        var read = await store.GetAsync(Authorize(tenant), scope, record.ExperienceId, CancellationToken.None);
+        var stored = await runs.GetAsync(Authorize(tenant), run.RunId, CancellationToken.None);
+
+        Assert.Equal("exit=0 the refund is released", read.Record!.Attempts[0].ToolCalls[0].RecipeExcerpt);
+        Assert.Equal("exit=0 the refund is released", stored.Run!.Run.Attempts[0].ToolCalls[0].RecipeExcerpt);
+        Assert.Equal(Json(record), Json(read.Record));
+        Assert.Null(read.Record.Attempts[0].ToolCalls.Skip(1).FirstOrDefault()?.RecipeExcerpt);
+    }
+
+    [Fact]
     public async Task Commits_racing_from_one_revision_over_two_connections_have_exactly_one_winner()
     {
         var tenant = NewTenant();
