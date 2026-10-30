@@ -337,16 +337,22 @@ print(result.outcome, len(result.lessons), result.sync)   # Found 3 LessonSyncRe
   what changed, remove what is no longer in `current`. What it raises propagates.
 - **The Markdown file** is rewritten whole on every export, atomically (a temporary file in the same directory, then
   `os.replace`; a failure removes it), UTF-8 without a BOM, LF only. Everything drawn from a record is an indented code
-  block, so no lesson can add a heading or a link. The path must not be blank and is made absolute; like .NET, the sink
-  confines it to nothing, so check a path you take from configuration you do not trust. The directory must exist.
+  block, so no lesson can add a heading or a link. The file gets .NET's mode, read and write for everyone less the
+  umask (`0644` under the usual umask), never owner-only. Reading the file before, a leading byte order mark is dropped
+  and a heading's ID is trimmed of white space, as .NET reads them. The path must not be blank and is made absolute;
+  like .NET, the sink confines it to nothing, so check a path you take from configuration you do not trust. The
+  directory must exist.
 
 ### The lessons page as HTML (contract 1.14)
 
 `render_lessons_html(page)` is .NET's `ExperienceLessonsHtml.Render`, byte for byte: one self-contained document (inline
 CSS, no script, no external request) with every record value encoded as .NET's `WebUtility.HtmlEncode` encodes it.
-`lessons_html_response(lessons, identity)` builds a response any framework can send, ASGI or WSGI: `status`, `headers`
-(`text/html; charset=utf-8`, `Cache-Control: no-store`, `X-Frame-Options: DENY` and a `Content-Security-Policy` that
-allows no script and no framing) and `body`. **The package maps no route and authorizes nothing**: take the identity
+`lessons_html_response(lessons, identity, method=...)` builds a response any framework can send, ASGI or WSGI:
+`status`, `headers` and `body`, as the .NET endpoint of the deployment guide answers. A `GET` gets the page with
+exactly `Content-Type: text/html; charset=utf-8`, `Cache-Control: no-store`, `X-Frame-Options: DENY` and a
+`Content-Security-Policy` that allows no script and no framing; any other method, `HEAD` included, is 405 with
+`Allow: GET`. `identity` is your own (an `ExperienceIdentity`, or a function resolving it from your authentication):
+none is 403, and a resolution or read that raises is 500, neither with a body that says why. **The package maps no route and authorizes nothing**: take the identity
 from your own authentication, never from the request, and serve it only behind your own authorization; the page
 discloses every lesson in the scope.
 
@@ -354,7 +360,9 @@ discloses every lesson in the scope.
 from agentexperience import lessons_html_response
 
 async def lessons_page(scope, receive, send):                  # a bare ASGI app, behind your own auth middleware
-    response = lessons_html_response(agent_experience_lessons(agent), identity_from(scope))
+    response = lessons_html_response(
+        agent_experience_lessons(agent), lambda: identity_from(scope), method=scope["method"]
+    )
     headers = [(name.lower().encode(), value.encode()) for name, value in response.headers]
     await send({"type": "http.response.start", "status": response.status, "headers": headers})
     await send({"type": "http.response.body", "body": response.body})
@@ -416,9 +424,16 @@ Differences from .NET, each forced by Python or agent_framework:
 - A client with function invocation is not refused: agent_framework's function invocation runs only the tools a request
   offers, and the reflector offers none (its `additional_tools` are declaration-only, never run). A response carrying a
   function call or result still fails as `ToolCallAttempted`.
-- The answer's strict JSON reading refuses a duplicated `lesson`, `reuseGuidance` or list member, as .NET's reader does
-  for the members it maps; a duplicated member it ignores is ignored here too. A string holding a lone surrogate
-  escape is `Unparseable`.
+- None in the strict JSON reading, which matches .NET's: a duplicated `lesson`, `reuseGuidance` or list member is
+  `Unparseable`, a duplicated member it does not map (at any depth) is accepted, a lone surrogate escape is
+  `Unparseable`, 64 levels of nesting are read and 65 are not, and a number of any length in a member it does not map
+  is skipped.
+- The content guard bounds its work by size rather than by .NET's one-second match timeout: its patterns run in linear
+  time, and a text over 1,048,576 UTF-16 code units is treated as one .NET could not read in time (a run-content text
+  admits nothing; a field is refused as `text that could not be checked in time`).
+- A binding or screening that raises (a reflector returning something that is not a `Reflection`, a reflection missing
+  a bound field, a guard that fails) stores the record `Quarantined` with `screening_refusal_code` `Unreadable` and
+  `FinalizedExperience.screening_exception_type`, the type name only, as .NET's backstop does.
 - A client that blocks the event loop cannot be timed out (asyncio cannot interrupt it); one that awaits is.
 - The cause type in `ReflectionFailed` is the Python exception's (`RuntimeError`, `asyncio.exceptions.CancelledError`),
   where .NET names its own.

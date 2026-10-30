@@ -105,5 +105,23 @@ def test_the_handler_sends_the_page_with_its_headers() -> None:
     assert "frame-ancestors 'none'" in CONTENT_SECURITY_POLICY
     assert response.body == render_lessons_html(view.list(ExperienceIdentity("principal", scope))).encode("utf-8")
     assert response.body.startswith(b"<!doctype html>\n")
-    with pytest.raises(ValueError):
-        lessons_html_response(view, None)  # type: ignore[arg-type]
+    # GET only, HEAD included in the refusal; no identity is 403; a failure is 500; none says why.
+    for method in ("HEAD", "POST", "get"):
+        refused = lessons_html_response(view, ExperienceIdentity("principal", scope), method=method)
+        assert (refused.status, refused.headers, refused.body) == (405, (("Allow", "GET"),), b"")
+    assert lessons_html_response(view, None).status == 403
+    assert lessons_html_response(view, lambda: None).status == 403
+    assert lessons_html_response(view, lambda: ExperienceIdentity("principal", scope)).body == response.body
+
+    def fails() -> ExperienceIdentity:
+        raise RuntimeError("the identity provider is down")
+
+    class Broken(ExperienceLessons):
+        def list(self, *args: Any, **kwargs: Any) -> Any:
+            raise OSError("the store is down")
+
+    for failed in (
+        lessons_html_response(view, fails),
+        lessons_html_response(Broken(store), ExperienceIdentity("p", scope)),
+    ):
+        assert (failed.status, failed.headers, failed.body) == (500, (), b"")

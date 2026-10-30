@@ -15,6 +15,7 @@ sends it.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from ._text import utf8_bytes
@@ -230,11 +231,12 @@ def _lesson(lesson: Lesson, injections_tracked: bool) -> str:
 @dataclass(frozen=True)
 class LessonsHtmlResponse:
     """
-    A response any web framework can send: the status, the headers (``Content-Type: text/html; charset=utf-8``,
-    ``Cache-Control: no-store``, ``X-Frame-Options: DENY`` and the :data:`CONTENT_SECURITY_POLICY`) and the body, the
-    document in UTF-8. In an ASGI app send ``status`` and ``headers`` (encoded) in ``http.response.start`` and ``body``
-    in ``http.response.body``; in a WSGI app pass ``f"{status} OK"`` and ``headers`` to ``start_response`` and return
-    ``[body]``.
+    A response any web framework can send: the status, the headers (for a page exactly ``Content-Type: text/html;
+    charset=utf-8``, ``Cache-Control: no-store``, ``X-Frame-Options: DENY`` and the :data:`CONTENT_SECURITY_POLICY`;
+    for a 405 only ``Allow: GET``; none for a 403 or a 500) and the body (the document in UTF-8; empty otherwise).
+    In an ASGI app send ``status`` and ``headers`` (encoded) in ``http.response.start`` and ``body`` in
+    ``http.response.body``; in a WSGI app pass the status line (``"200 OK"``, ``"405 Method Not Allowed"``) and
+    ``headers`` to ``start_response`` and return ``[body]``.
     """
 
     status: int
@@ -252,21 +254,44 @@ HEADERS: tuple[tuple[str, str], ...] = (
 
 
 def lessons_html_response(
-    lessons: ExperienceLessons, identity: ExperienceIdentity, query: LessonsQuery | None = None
+    lessons: ExperienceLessons,
+    identity: ExperienceIdentity | Callable[[], ExperienceIdentity | None] | None,
+    query: LessonsQuery | None = None,
+    *,
+    method: str = "GET",
 ) -> LessonsHtmlResponse:
     """
-    Lists ``identity``'s lessons and renders them as a response, independent of ASGI and WSGI. ``identity`` must come
-    from the host's own authentication; this function authorizes nothing, and the page discloses every lesson in the
-    scope. A scope outside the identity's bounds is a page that says so (status 200), as in .NET.
+    The response to one request for the lessons page, independent of ASGI and WSGI, as the .NET endpoint of the
+    deployment guide (``MapGet``) answers:
+
+    - ``GET`` only: any other ``method``, ``HEAD`` included, is 405 with ``Allow: GET``;
+    - ``identity`` is the host's own: an :class:`ExperienceIdentity`, or a function resolving it from the host's
+      authentication. None is 403; a resolution or a read that raises is 500. Neither body says why;
+    - otherwise 200, the page with :data:`HEADERS`, and nothing else. A scope outside the identity's bounds is a page
+      that says so, as in .NET.
+
+    This function authorizes nothing: the page discloses every lesson in the scope, so serve it only behind your own
+    authorization, with the identity from your own authentication, never from the request's query or body.
     """
-    if identity is None:
-        raise ValueError("An identity from the host's own authentication is required.")
-    page = lessons.list(identity, query)
-    return LessonsHtmlResponse(200, HEADERS, utf8_bytes(render_lessons_html(page)))
+    if method != "GET":
+        return LessonsHtmlResponse(405, (("Allow", "GET"),), b"")
+    try:
+        resolved = identity() if callable(identity) else identity
+        if resolved is None:
+            return LessonsHtmlResponse(403, (), b"")
+        page = lessons.list(resolved, query)
+        body = utf8_bytes(render_lessons_html(page))
+    except Exception:
+        return LessonsHtmlResponse(500, (), b"")
+    return LessonsHtmlResponse(200, HEADERS, body)
 
 
 async def lessons_html_response_async(
-    lessons: ExperienceLessons, identity: ExperienceIdentity, query: LessonsQuery | None = None
+    lessons: ExperienceLessons,
+    identity: ExperienceIdentity | Callable[[], ExperienceIdentity | None] | None,
+    query: LessonsQuery | None = None,
+    *,
+    method: str = "GET",
 ) -> LessonsHtmlResponse:
     """:func:`lessons_html_response` on a worker thread, so a PostgreSQL read does not block the event loop."""
-    return await asyncio.to_thread(lessons_html_response, lessons, identity, query)
+    return await asyncio.to_thread(lessons_html_response, lessons, identity, query, method=method)

@@ -163,6 +163,7 @@ def test_every_fixture_family_has_cases() -> None:
         "benefit-select",
         "holdout-outcomes",
         "model-metadata",
+        "content-guard",
         "embedding-summary",
         "embedding-write",
         "encoding",
