@@ -47,7 +47,7 @@ func TestTheContractVersionIsOneThisPackageSupports(t *testing.T) {
 	if version != ae.ContractVersion {
 		t.Fatalf("the lock is contract %s, this package implements %s", version, ae.ContractVersion)
 	}
-	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14" {
+	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15" {
 		t.Fatalf("supported versions: %v", ae.SupportedContractVersions)
 	}
 }
@@ -55,7 +55,7 @@ func TestTheContractVersionIsOneThisPackageSupports(t *testing.T) {
 func TestAnUnsupportedContractVersionFailsWithAClearMessage(t *testing.T) {
 	for _, version := range []any{"2.0", "1.15", nil} {
 		_, err := ct.CheckContractVersion(ae.NewObject(ae.Member{Key: "contractVersion", Value: version}))
-		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14") {
+		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15") {
 			t.Fatalf("version %v: %v", version, err)
 		}
 	}
