@@ -1,0 +1,342 @@
+{
+  "description": "A submission's own shape is checked before the record is read, every error listed: empty IDs, a missing run, an undefined kind or source, machine evidence without a round or with a token, human evidence with a round or under a blank or padded principal, a blank reason or producer, and an unset instant. Nothing is written.",
+  "service": {
+    "engine": null,
+    "hostTrustedEvidence": "Counted"
+  },
+  "records": [
+    {
+      "columns": {
+        "experience_id": "00001161-0000-4000-8000-000000000080",
+        "source_run_id": "00001161-0000-4000-8000-000000000180",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.6666666666666666,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-02-20T09:00:00+00:00",
+        "updated_at": "2026-02-20T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "00001161-0000-4000-8000-000000000e80",
+              "verificationRoundId": "00001161-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "00001161-0000-4000-8000-000000000280",
+          "experienceRunId": "00001161-0000-4000-8000-000000000180",
+          "lesson": "Verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "00001161-0000-4000-8000-000000000e80"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "apply": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "request": {
+          "eventId": "00000000-0000-0000-0000-000000000000",
+          "experienceId": "00000000-0000-0000-0000-000000000000",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "evidenceId": "00000000-0000-0000-0000-000000000000",
+          "kind": "Sideways",
+          "source": "Oracle",
+          "runId": "00000000-0000-0000-0000-000000000000",
+          "verificationRoundId": null,
+          "reason": "",
+          "producer": " ",
+          "occurredAt": "0001-01-01T00:00:00+00:00",
+          "detail": null,
+          "assessmentToken": null
+        }
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    },
+    {
+      "apply": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "request": {
+          "eventId": "00001161-0000-4000-8000-000000008002",
+          "experienceId": "00001161-0000-4000-8000-000000000080",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "evidenceId": "00001161-0000-4000-8000-000000008102",
+          "kind": "Supporting",
+          "source": "Machine",
+          "runId": "00001161-0000-4000-8000-000000005100",
+          "verificationRoundId": null,
+          "reason": "the lesson was reused and the checks passed",
+          "producer": "verification-aggregator/1.0.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "detail": null,
+          "assessmentToken": "aexat1.x"
+        }
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    },
+    {
+      "apply": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "request": {
+          "eventId": "00001161-0000-4000-8000-000000008003",
+          "experienceId": "00001161-0000-4000-8000-000000000080",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "evidenceId": "00001161-0000-4000-8000-000000008103",
+          "kind": "Supporting",
+          "source": "Machine",
+          "runId": "00001161-0000-4000-8000-000000005100",
+          "verificationRoundId": "00000000-0000-0000-0000-000000000000",
+          "reason": "the lesson was reused and the checks passed",
+          "producer": "verification-aggregator/1.0.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "detail": null,
+          "assessmentToken": null
+        }
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    },
+    {
+      "apply": {
+        "authorization": {
+          "principalId": " ",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "request": {
+          "eventId": "00001161-0000-4000-8000-000000008004",
+          "experienceId": "00001161-0000-4000-8000-000000000080",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "evidenceId": "00001161-0000-4000-8000-000000008104",
+          "kind": "Supporting",
+          "source": "Human",
+          "runId": "00001161-0000-4000-8000-000000005100",
+          "verificationRoundId": "00001161-0000-4000-8000-000000005200",
+          "reason": "the lesson was reused and the checks passed",
+          "producer": "verification-aggregator/1.0.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "detail": null,
+          "assessmentToken": null
+        }
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    },
+    {
+      "apply": {
+        "authorization": {
+          "principalId": " reviewer-1",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "request": {
+          "eventId": "00001161-0000-4000-8000-000000008005",
+          "experienceId": "00001161-0000-4000-8000-000000000080",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "evidenceId": "00001161-0000-4000-8000-000000008105",
+          "kind": "Supporting",
+          "source": "Human",
+          "runId": "00001161-0000-4000-8000-000000005100",
+          "verificationRoundId": null,
+          "reason": "the lesson was reused and the checks passed",
+          "producer": "verification-aggregator/1.0.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "detail": null,
+          "assessmentToken": null
+        }
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    },
+    {
+      "apply": {
+        "authorization": {
+          "principalId": "",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "request": {
+          "eventId": "00001161-0000-4000-8000-000000008006",
+          "experienceId": "00001161-0000-4000-8000-000000000080",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "evidenceId": "00001161-0000-4000-8000-000000008106",
+          "kind": "Supporting",
+          "source": "Machine",
+          "runId": "00001161-0000-4000-8000-000000005100",
+          "verificationRoundId": "00001161-0000-4000-8000-000000005200",
+          "reason": "the lesson was reused and the checks passed",
+          "producer": "verification-aggregator/1.0.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "detail": null,
+          "assessmentToken": null
+        }
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    },
+    {
+      "apply": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "request": {
+          "eventId": "00001161-0000-4000-8000-000000008007",
+          "experienceId": "00001161-0000-4000-8000-000000000080",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "evidenceId": "00001161-0000-4000-8000-000000008107",
+          "kind": "Supporting",
+          "source": "Machine",
+          "runId": "00001161-0000-4000-8000-000000005100",
+          "verificationRoundId": "00001161-0000-4000-8000-000000005200",
+          "reason": "aexp-sealed:v1:x",
+          "producer": "verification-aggregator/1.0.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "detail": "aexp-sealed:v1:y",
+          "assessmentToken": null
+        }
+      },
+      "clock": "2026-03-02T10:00:00+00:00"
+    }
+  ]
+}
