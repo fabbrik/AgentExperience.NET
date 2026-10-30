@@ -129,6 +129,12 @@ public sealed partial class ContractFixtureTests
         Assert.False(runs["hybrid-floor-before-truncation"].Result.Truncated);
         Assert.Equal(2, runs["hybrid-floor-before-truncation"].Result.Records.Count);
 
+        // The near tie (contract 1.18): each pair one ulp apart, the higher score on the larger experience ID.
+        var nearTie = runs["ranking-near-tie"].Result.Records;
+        Assert.Equal([2, 1, 4, 3], nearTie.Select(ranked => (int)(ranked.Record.ExperienceId.ToByteArray(bigEndian: true)[15])));
+        Assert.Equal(1, BitConverter.DoubleToInt64Bits(nearTie[0].Score) - BitConverter.DoubleToInt64Bits(nearTie[1].Score));
+        Assert.Equal(1, BitConverter.DoubleToInt64Bits(nearTie[2].Score) - BitConverter.DoubleToInt64Bits(nearTie[3].Score));
+
         // The cross-language policy: an expiry and decay together.
         Assert.Contains(runs["max-age-and-decay"].Result.Excluded, entry => entry.Reason == RetrievalExclusionReason.Expired);
         Assert.Contains(runs["max-age-and-decay"].Result.Records, ranked => Confidence(ranked).UndecayedValue is not null);

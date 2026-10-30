@@ -174,6 +174,56 @@ public sealed class PostgresSupersessionAndAppendOnlyTests
         await AssertUnchangedAsync(auth, otherScope, foreign.ExperienceId, ExperienceStatus.Validated, 1, events: 1);
     }
 
+    [Fact]
+    public async Task A_supersession_naming_another_tenants_record_takes_no_lock_on_it()
+    {
+        var tenantA = NewTenant();
+        var tenantB = NewTenant();
+        var authA = Authorize(tenantA);
+        var authB = Authorize(tenantB);
+        var scopeA = Scope(tenantA);
+        var scopeB = Scope(tenantB);
+        var victim = await ValidatedAsync(authA, scopeA);
+        var record = await ValidatedAsync(authB, scopeB);
+
+        // Tenant A's row is held FOR UPDATE by another transaction for the whole test. Tenant B's store gives up on
+        // any lock it would have to wait for (lock_timeout): a store that locked A's row would fail with 55P03 instead
+        // of answering, so the outcome alone says whether it waited. No clock is read and nothing sleeps.
+        await using var holder = await _fixture.RawDataSource.OpenConnectionAsync();
+        await using var held = await holder.BeginTransactionAsync();
+        await using (var lockRow = new NpgsqlCommand(
+            "SELECT experience_id FROM agent_experience.experience_records WHERE experience_id = @id FOR UPDATE", holder, held))
+        {
+            lockRow.Parameters.Add(new NpgsqlParameter<Guid>("id", victim.ExperienceId));
+            Assert.Equal(victim.ExperienceId, (Guid)(await lockRow.ExecuteScalarAsync())!);
+        }
+
+        await using var impatient = NpgsqlDataSource.Create(
+            new NpgsqlConnectionStringBuilder(_fixture.ConnectionString(PostgresFixture.StoreDatabase, PostgresFixture.ApplicationRoleName))
+            {
+                Options = "-c lock_timeout=10000",
+            }.ConnectionString);
+        var storeB = new PostgresExperienceRecordStore(impatient);
+
+        // The store's own commit, which runs the lock, and the lifecycle service over it.
+        var committed = await storeB.CommitLifecycleEventAsync(
+            authB,
+            scopeB,
+            Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Superseded, 1, Guid.NewGuid(), replacement: victim.ExperienceId),
+            CancellationToken.None);
+        var result = await new ExperienceLifecycleService(storeB).CommitAsync(
+            authB,
+            Transition(scopeB, record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Superseded, 1, victim.ExperienceId),
+            CancellationToken.None);
+
+        // The outcome is unchanged: another tenant's record reads as not found.
+        Assert.Equal(ExperienceStoreOutcome.ReplacementNotAllowed, committed.Outcome);
+        Assert.Equal(LifecycleTransitionOutcome.ReplacementNotAllowed, result.Outcome);
+        await held.RollbackAsync();
+        await AssertUnchangedAsync(authB, scopeB, record.ExperienceId, ExperienceStatus.Validated, 1, events: 1);
+        await AssertUnchangedAsync(authA, scopeA, victim.ExperienceId, ExperienceStatus.Validated, 1, events: 1);
+    }
+
     [Theory]
     [InlineData(ExperienceStatus.Quarantined)]
     [InlineData(ExperienceStatus.Revoked)]

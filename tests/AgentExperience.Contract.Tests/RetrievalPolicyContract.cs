@@ -90,7 +90,33 @@ internal static class RetrievalPolicyContract
         ("hybrid-vector-floor-from-the-policy", HybridVectorFloor()),
         ("hybrid-per-channel-candidate-limit", HybridPerChannelCandidateLimit()),
         ("hybrid-floor-before-truncation", HybridFloorBeforeTruncation()),
+        ("ranking-near-tie", RankingNearTie()),
     ];
+
+    /// <summary>
+    /// Contract 1.18: two pairs of records whose scores differ in the last bit of a double, each pair ranked against its
+    /// experience-ID tie-break. The inputs were chosen so the order catches the two ways a port's arithmetic drifts from
+    /// .NET's: lesson 1's recency is <c>2^(-803580 / 2592000)</c>, whose correctly rounded value (what .NET's
+    /// <see cref="Math.Pow(double, double)"/> gives) is 2 ulps below Go's <c>math.Pow</c>, which would tie lesson 1 with
+    /// lesson 2; and lessons 3 and 4 tie if a compiler fuses each weighted term into the running sum (an FMA) instead of
+    /// rounding the product first. Every recency value here is far from a rounding midpoint, so any correctly rounded
+    /// <c>pow</c> gives it exactly.
+    /// </summary>
+    private static RetrievalPolicyCase RankingNearTie() => new(
+        "Near ties pinned to the bit: lesson 2 outranks lesson 1, and lesson 4 lesson 3, by one ulp of the score, against " +
+        "the experience-ID tie-break. A port reproduces the order only with .NET's arithmetic: recency 2^(-age / halfLife) " +
+        "correctly rounded, each component's value times its weight rounded before it is added, and the five added in " +
+        "component order (relevance, confidence, recency, status, environment) starting from 0.",
+        [
+            (Lesson(1, created: Now.AddDays(-60), updated: Now.AddSeconds(-803_580), confidence: 0.7660227099802732), 1),
+            (Lesson(2, created: Now.AddDays(-60), updated: Now.AddDays(-30), confidence: 0.95), 1),
+            (Lesson(3, created: Now.AddDays(-60), updated: Now.AddSeconds(-970_860), confidence: 0.5220950305647717), 1),
+            (Lesson(4, created: Now.AddDays(-60), updated: Now.AddDays(-30), confidence: 0.6848993455402582), 1),
+        ],
+        Now,
+        Default(),
+        ConfidenceDecay: null,
+        NoPreference);
 
     private static RetrievalPolicyCase ModelAuthoredExcluded() => new(
         "Model-authored lessons excluded, under MaxAge 90 days. Each candidate is excluded by the first rule that applies, " +
