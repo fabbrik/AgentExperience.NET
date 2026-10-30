@@ -1128,7 +1128,9 @@ without markers, as the block does. A coarse match says `hit a failure like this
 maximum age, scope and grants, and the model-authored exclusion when `ModelAuthoredLessons` is `Exclude`) that hold the
 signature as `Resolved`; an exact match first, and a coarse one (same tool and error class) only with
 `AllowCoarseMatch` and no exact one. Then the block's own rules: a record the block or an earlier hint already gave
-this run, or a revision the session holds, is left out (`AlreadyDelivered`); a borrowed record gives a hint only when
+this run, or a revision the session holds, is left out (`AlreadyDelivered`); with
+[acting on the estimate](#acting-on-the-estimate) on, a lesson measured as hurting is left out (`MeasuredHarmful`); a
+borrowed record gives a hint only when
 its grant [shows the approach](#records-shared-by-a-grant) (a `LessonOnly` grant shows none); the
 [capability gate](#gating-on-the-receiving-agents-capabilities) and `DecideInjection` apply; and the
 [final eligibility re-read](#limits-and-the-final-eligibility-check) re-reads each record for delivery. Every record

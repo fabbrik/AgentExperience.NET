@@ -242,12 +242,23 @@ public sealed partial class ExperienceContextProvider
             };
         }
 
-        // The block's own selection rules, before the limit: what the run or the session already holds, a model-authored
-        // record the host excluded, a borrowed record whose grant withholds the approach, and one the capability gate keeps out.
+        // The block's own selection rules, before the limit: what the run or the session already holds, a lesson the
+        // holdout measured as hurting (when acting on measured benefit), a model-authored record the host excluded, a
+        // borrowed record whose grant withholds the approach, and one the capability gate keeps out.
+        var benefit = _benefit?.Current(request.Authorization, request.Scope, _options.Benefit.PerModel ? capture.Model : null);
         var selected = new List<RankedExperience>(recall.MaxRecordsPerHint);
         foreach (var candidate in candidates)
         {
             var record = candidate.Record;
+            if (benefit is not null && benefit.Harmful(record.ExperienceId))
+            {
+                omitted.Add(new OmittedExperience(
+                    record.ExperienceId,
+                    InjectionOmissionReason.MeasuredHarmful,
+                    benefit.ScopeHurts ? ScopeMeasuredHarmfulDetail : MeasuredHarmfulDetail));
+                continue;
+            }
+
             if (run.Holds(record.ExperienceId)
                 || (session?.ActiveFor(record.ExperienceId) is { Confirmed: true } delivered && delivered.Revision >= record.Revision))
             {
