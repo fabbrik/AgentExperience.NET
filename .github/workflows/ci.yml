@@ -22,6 +22,10 @@ permissions:
 # ("toomanyrequests"), which fails every container-backed test at once. The images are the same as on Docker Hub.
 env:
   TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX: mirror.gcr.io
+  # The cross-language contract tests need all three toolchains, so only the cross-language-lifecycle job runs them
+  # (it sets both to 1). Everywhere else they are skipped on purpose: unset in CI, they fail rather than pass unrun.
+  AGENTEXPERIENCE_CROSS_LANGUAGE_RACE: '0'
+  AGENTEXPERIENCE_CROSS_LANGUAGE_REUSE_FEEDBACK: '0'
 
 jobs:
   build-and-test:
@@ -653,6 +657,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       AGENTEXPERIENCE_CROSS_LANGUAGE_RACE: '1'
+      AGENTEXPERIENCE_CROSS_LANGUAGE_REUSE_FEEDBACK: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -698,9 +703,9 @@ jobs:
           check-latest: true
           cache-dependency-path: go/postgres/go.sum
 
-      - name: Build the Go writer
+      - name: Build the Go writers
         working-directory: go/postgres
-        run: go build ./internal/lifecyclerace
+        run: go build ./internal/lifecyclerace ./internal/reusefeedback
 
       - name: Restore
         run: dotnet restore tests/AgentExperience.Contract.Tests --locked-mode
@@ -708,18 +713,19 @@ jobs:
       - name: Build
         run: dotnet build tests/AgentExperience.Contract.Tests --no-restore --configuration Release
 
-      - name: Race .NET, Python and Go writers on one revision
+      # Contract 1.16's race on one revision, and contract 1.17's reuse feedback from all three agents.
+      - name: Race .NET, Python and Go writers on one revision, and record their reuse feedback
         run: >-
           dotnet test tests/AgentExperience.Contract.Tests --no-build --configuration Release
-          --filter "FullyQualifiedName~CrossLanguageLifecycleRace"
+          --filter "FullyQualifiedName~CrossLanguageLifecycleRace|FullyQualifiedName~CrossLanguageReuseFeedback"
           --logger "trx;LogFileName=race.trx" --results-directory race-results
 
-      # A filter that matches nothing exits 0, so the race must be seen to have run and passed.
-      - name: Assert the race ran and passed
+      # A filter that matches nothing exits 0, so both tests must be seen to have run and passed.
+      - name: Assert the race and the reuse feedback ran and passed
         run: |
           set -euo pipefail
           trx="race-results/race.trx"
           test -f "$trx" || { echo "::error::no test results at $trx"; exit 1; }
           passed="$(grep -o '<Counters [^>]*' "$trx" | grep -o ' passed="[0-9]*"' | grep -o '[0-9]\+')"
-          test "${passed:-0}" -ge 1 || { echo "::error::the cross-language race did not run"; exit 1; }
-          echo "cross-language race: $passed passed"
+          test "${passed:-0}" -ge 2 || { echo "::error::the cross-language tests did not both run"; exit 1; }
+          echo "cross-language tests: $passed passed"

@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.16, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.16 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14 and 1.15 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.17, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.17 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15 and 1.16 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -361,7 +361,7 @@ report, err := lifecycle.ReadConfidence(ctx, authorization, scope, record.Experi
   with `FilterExcludeHostTrusted` or `FilterVerifiedOnly` leaves it out, and `FilterAll` adds recorded-only evidence
   back, once per independence key.
 - **What it does not do yet:** no embedding is removed when a commit takes a record out of eligibility (story 27.6d;
-  a vector search already excludes it by status), no reuse feedback (27.6c), no provenance signing or verification
+  a vector search already excludes it by status), no provenance signing or verification
   (27.7). A sealed record (`payload_version` 2), which a port cannot open, is `NotFound` to the read, the history and
   the commit.
 - **The stores.** The in-memory store (`inmemory.New`) keeps a full event log per record (a finalized record's initial
@@ -373,6 +373,64 @@ report, err := lifecycle.ReadConfidence(ctx, authorization, scope, record.Experi
   race would re-read your stale snapshot and never see the revision move. A record sealed while a commit waits for its
   row is still `NotFound`: the seal is checked only once the commit holds the row lock; `SetClock` sets the clock it stamps. `GetHistory` pages a history by
   applied revision, and `CheckSupersession` asks the supersession rules before a commit decides them again.
+
+### Recording what reuse was worth: reuse feedback
+
+Contract 1.17. `ae.ReuseFeedbackService` is .NET's `ExperienceReuseFeedbackService`: after a run that was given stored
+lessons, `Record` writes what the run saw, how it came out and what you measured to the feedback ledger, and, only when
+the submission carries attribution this library accepts (an `ae.HumanReuseAssessment`, whose reviewer is the
+authorization's principal, or an `ae.ComparativeEvaluationResult` with its round and evidence), applies evidence about
+each attributed lesson through the lifecycle service: improvement supports, harm contradicts (and contests).
+
+```go
+ledger := inmemory.NewReuseFeedbackLedger() // or the PostgreSQL store, which is a ledger too
+feedback, err := ae.NewReuseFeedbackService(ledger, lifecycle)
+result, err := feedback.Record(ctx, authorization, ae.ExperienceReuseFeedback{
+	FeedbackID: feedbackID,                       // the whole submission's idempotency key
+	RunID: runID, Scope: scope,                   // the run the lessons were injected into
+	ExposedExperienceIDs: injectedIDs,
+	RunOutcome: ae.VerificationVerified,
+	Measure: &ae.ReuseMeasure{Kind: "tool-calls", Value: 7},
+	ObservedAt: observedAt,                        // part of the evidence's identity: keep it for a retry
+}) // Recorded, benefit Unknown: exposure alone moves nothing
+```
+
+- **Exposure is not attribution.** Without an attribution every exposure is `ExposureOnly`; `ClaimedBenefit` is stored
+  and never acted on. An attribution that fails its evidence requirements is dropped (the exposure is still recorded,
+  with a reason); a structurally incoherent submission is `Invalid` and writes nothing. Every rule, path and message is
+  .NET's, in .NET's order.
+- **The ledger is written first; each record is submitted on its own.** A store failure or a confidence engine's
+  failure (`ae.IsConfidenceEngineFailure`) fails that record (`Failed`, retryable) and the others are still submitted;
+  a cancelled context once the ledger is written marks the rest `Failed`, retryable. Resubmitting the same feedback is
+  `AlreadyRecorded` and converges on the derived IDs (`ae.FeedbackEvidenceIDFor`, `ae.FeedbackEventIDFor`). A ledger
+  failure is returned and nothing is recorded. `Record` is the `reuse_feedback` operation (`feedback_id`, `run_id`),
+  and the `confidence.apply` it runs is nested under it.
+- **The ledgers.** `inmemory.NewReuseFeedbackLedger` is .NET's in-memory ledger: independent of the record store,
+  checking nothing about the exposed records. The PostgreSQL `Store` is also an `ae.ReuseFeedbackStore`, running
+  [`contract/sql/reuse-feedback.sql`](../contract/sql/reuse-feedback.sql) as written in one `READ COMMITTED`
+  transaction, with the 1.0 privileges; it refuses an exposure to a record erased in the submission's scope. Its
+  `recorded_at` is the clock `SetClock` sets.
+- **Not verified, and recorded only by default.** As with `ApplyEvidence`, no attribution's run, round or assessment
+  token is checked (story 27.7), so the evidence is admitted `HostTrusted`, and under the lifecycle's default
+  (`RecordedOnly`) it moves nothing but the revision: the exposure says so. Count it with `ae.HostTrustedCounted` only
+  if you trust the identifiers you pass. The port holds no key store, so the rationale is stored in plaintext; a
+  submission a .NET ledger sealed (`(sealed)`) is a `Conflict` when the port resubmits it.
+
+**Finalization's reuse evidence** (.NET's `ExperienceFinalizationOptions.ReuseEvidence` and `ContradictOnFailure`):
+`Finalize` is a pure function here, so the step is a call of its own. Once the finalized record is stored, and again
+with the stored record when a run turns out to be finalized already:
+
+```go
+results, truncated, err := ae.ApplyReuseEvidence(ctx, lifecycle, authorization, finalized.Record,
+	ae.ReuseEvidenceOptions{Mode: ae.ReuseEvidenceSameTask, ContradictOnFailure: false})
+```
+
+It submits machine evidence, bound to the round finalization closed, about each lesson the run was given on its own
+task (supporting for a verified run, contradicting for a failed one under `ContradictOnFailure`), skips the others with
+.NET's reasons, and reports every refusal and error rather than returning it; a repeat replays the originals and counts
+nothing twice. The zero options are `Off`. Its time budget is your context's deadline (.NET's `ReuseEvidenceTimeout`
+has no counterpart), it is not inside the `finalize` operation (so no `reuse_evidence.submitted`), and the `maf`
+module does not run it for you yet: call it after the record is stored (in `OnFinalized`, for example).
 
 ### What the one call wires
 
@@ -844,7 +902,7 @@ Python agents on the same database.
   role, reads records back, runs the contract's text search, records injections (`RecordInjection`, contract
   1.4) and holdout assignments (`RecordHoldoutAssignment`, contract 1.8), writes and searches embeddings (`WriteEmbedding` and `SearchVectors`, contract 1.6) and reads the lessons view's
   page (`ListLessonRecords`, contract 1.7) and the holdout's outcome rows (`QueryHoldoutOutcomes`, contract 1.9),
-  and commits lifecycle events and reads their history (contract 1.16), every transaction first declaring its bounds. The contract's statement files are embedded and run as
+  commits lifecycle events and reads their history (contract 1.16), and records reuse feedback (contract 1.17), every transaction first declaring its bounds. The contract's statement files are embedded and run as
   written (a test keeps the copies in `postgres/sql/` identical to `contract/sql/`); only their `@name` placeholders are
   numbered for the driver. The store needs a schema the .NET migrator applied, with row-level security on; it never
   creates or alters a schema object. The application role's privileges are the .NET privileges call's, or the
@@ -933,18 +991,21 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.16: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.17: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and the injection
 options (the receiving agent, the model-authored policy, the request resolver and the injection decision),
 injection recording, the lessons view and its HTML page, exporting measured lessons, the model-backed reflector and its
 content guard, computing confidence (the default rule, a host engine and assessment tokens), the lifecycle of a
-stored lesson (transitions, applying evidence and reading confidence back), the injection holdout,
+stored lesson (transitions, applying evidence and reading confidence back), reuse feedback and finalization's reuse
+evidence, the injection holdout,
 the benefit estimate, the benefit policy, measuring another memory provider and
 telemetry. These .NET features have no counterpart here, so a mixed
 .NET and Go deployment should keep them on the .NET side:
 
-- **The rest of the lifecycle:** reuse feedback and the reuse evidence finalization submits (story 27.6c), removing
-  an ineligible record's embedding (27.6d), and verifying independence (the port admits evidence `HostTrusted`; 27.7).
+- **The rest of the lifecycle:** removing an ineligible record's embedding (27.6d), and verifying independence (the
+  port admits evidence `HostTrusted`, and checks no reuse-feedback attribution; 27.7). The `maf` module does not run
+  finalization's reuse evidence on its own (.NET's `AgentExperienceOptions.ReuseEvidence`): call
+  `ae.ApplyReuseEvidence` after the record is stored.
 - **Session tracking and withdrawal notices** (.NET's `SessionLimits`, `SessionStateKey`; story 27.6), and the final
   eligibility re-read before injection, with its `Limits.EligibilityCheckTimeout` and `Limits.MaxAbandonedReads`
   (story 27.6): the port injects the records as retrieval ranked them, and `DecisionContext.Current` is the ranked
@@ -970,7 +1031,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.16 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.17 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The

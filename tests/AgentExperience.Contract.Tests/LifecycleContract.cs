@@ -712,7 +712,7 @@ internal static class LifecycleContract
 
     // ---- case building ------------------------------------------------------------------------------------------
 
-    private static ExperienceRecord Rec(int family, int n, ExperienceStatus status, long revision = 1, int? supporting = null, int contradictions = 0, Scope? scope = null)
+    internal static ExperienceRecord Rec(int family, int n, ExperienceStatus status, long revision = 1, int? supporting = null, int contradictions = 0, Scope? scope = null)
     {
         var record = SearchContract.Seed(family, n, "rotate-keys", "Rotate the signing keys", "Verified after 1 attempt.", status, scope: scope);
         var s = supporting ?? record.SupportingValidations;
@@ -808,7 +808,7 @@ internal static class LifecycleContract
         },
     };
 
-    private static JsonObject ApplyStep(
+    internal static JsonObject ApplyStep(
         JsonObject authorization,
         Guid eventId,
         Guid experienceId,
@@ -955,7 +955,7 @@ internal static class LifecycleContract
         };
     }
 
-    private static JsonObject ApplyResult(ExperienceLifecycleService service, JsonObject body)
+    internal static JsonObject ApplyResult(ExperienceLifecycleService service, JsonObject body)
     {
         ApplyConfidenceEvidenceResult result;
         try
@@ -982,7 +982,7 @@ internal static class LifecycleContract
         };
     }
 
-    private static JsonObject ReadResult(ExperienceLifecycleService service, JsonObject body)
+    internal static JsonObject ReadResult(ExperienceLifecycleService service, JsonObject body)
     {
         var filter = body["filter"]!.GetValue<string>();
         var result = service.ReadConfidenceAsync(
@@ -1020,7 +1020,7 @@ internal static class LifecycleContract
         };
     }
 
-    private static JsonObject HistoryResult(IExperienceRecordStore store, JsonObject body)
+    internal static JsonObject HistoryResult(IExperienceRecordStore store, JsonObject body)
     {
         var query = body["query"]!.AsObject();
         var scope = ReadScope(query["scope"]!);
@@ -1167,13 +1167,13 @@ internal static class LifecycleContract
         };
     }
 
-    private static ExperienceRecord Reread(IExperienceRecordStore store, ExperienceRecord seeded)
+    internal static ExperienceRecord Reread(IExperienceRecordStore store, ExperienceRecord seeded)
     {
         var read = store.GetAsync(AuthorizationFor(seeded.Scope), seeded.Scope, seeded.ExperienceId, CancellationToken.None).GetAwaiter().GetResult();
         return read.Record ?? throw new InvalidOperationException($"{seeded.ExperienceId} is no longer readable: {read.Outcome}.");
     }
 
-    private static JsonArray WholeHistory(IExperienceRecordStore store, ExperienceRecord record)
+    internal static JsonArray WholeHistory(IExperienceRecordStore store, ExperienceRecord record)
     {
         var events = new JsonArray();
         long? after = null;

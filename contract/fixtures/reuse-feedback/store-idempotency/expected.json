@@ -1,0 +1,279 @@
+{
+  "results": [
+    {
+      "outcome": "Recorded",
+      "feedback": {
+        "feedbackId": "00001170-0000-4000-8000-00000000f201",
+        "runId": "00001170-0000-4000-8000-000000005100",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runOutcome": "Verified",
+        "claimedBenefit": "Improved",
+        "benefit": "Harmed",
+        "attributionSource": "HumanAssessment",
+        "reviewerIdentity": "reviewer-ü",
+        "evaluatorId": null,
+        "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+        "assessmentId": "00001170-0000-4000-8000-00000000a201",
+        "rationale": "The lesson sent the run down the wrong path.",
+        "evidenceIds": [],
+        "attributedAt": "2026-03-02T09:30:00.123456+00:00",
+        "measure": {
+          "kind": "tool-calls",
+          "value": 7
+        },
+        "trialLabel": "memory-enabled",
+        "observedAt": "2026-03-02T09:30:00.765432+00:00",
+        "exposures": [
+          {
+            "experienceId": "00001170-0000-4000-8000-000000000130",
+            "attributed": false,
+            "evidenceId": null
+          },
+          {
+            "experienceId": "00001170-0000-4000-8000-000000000131",
+            "attributed": true,
+            "evidenceId": "d1e1c29a-52d6-8836-a3a5-ee0b66f1261c"
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "outcome": "AlreadyRecorded",
+      "feedback": {
+        "feedbackId": "00001170-0000-4000-8000-00000000f201",
+        "runId": "00001170-0000-4000-8000-000000005100",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runOutcome": "Verified",
+        "claimedBenefit": "Improved",
+        "benefit": "Harmed",
+        "attributionSource": "HumanAssessment",
+        "reviewerIdentity": "reviewer-ü",
+        "evaluatorId": null,
+        "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+        "assessmentId": "00001170-0000-4000-8000-00000000a201",
+        "rationale": "The lesson sent the run down the wrong path.",
+        "evidenceIds": [],
+        "attributedAt": "2026-03-02T09:30:00.123456+00:00",
+        "measure": {
+          "kind": "tool-calls",
+          "value": 7
+        },
+        "trialLabel": "memory-enabled",
+        "observedAt": "2026-03-02T09:30:00.765432+00:00",
+        "exposures": [
+          {
+            "experienceId": "00001170-0000-4000-8000-000000000130",
+            "attributed": false,
+            "evidenceId": null
+          },
+          {
+            "experienceId": "00001170-0000-4000-8000-000000000131",
+            "attributed": true,
+            "evidenceId": "d1e1c29a-52d6-8836-a3a5-ee0b66f1261c"
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "outcome": "AlreadyRecorded",
+      "feedback": {
+        "feedbackId": "00001170-0000-4000-8000-00000000f201",
+        "runId": "00001170-0000-4000-8000-000000005100",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runOutcome": "Verified",
+        "claimedBenefit": "Improved",
+        "benefit": "Harmed",
+        "attributionSource": "HumanAssessment",
+        "reviewerIdentity": "reviewer-ü",
+        "evaluatorId": null,
+        "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+        "assessmentId": "00001170-0000-4000-8000-00000000a201",
+        "rationale": "The lesson sent the run down the wrong path.",
+        "evidenceIds": [],
+        "attributedAt": "2026-03-02T09:30:00.123456+00:00",
+        "measure": {
+          "kind": "tool-calls",
+          "value": 7
+        },
+        "trialLabel": "memory-enabled",
+        "observedAt": "2026-03-02T09:30:00.765432+00:00",
+        "exposures": [
+          {
+            "experienceId": "00001170-0000-4000-8000-000000000130",
+            "attributed": false,
+            "evidenceId": null
+          },
+          {
+            "experienceId": "00001170-0000-4000-8000-000000000131",
+            "attributed": true,
+            "evidenceId": "d1e1c29a-52d6-8836-a3a5-ee0b66f1261c"
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "outcome": "Conflict",
+      "feedback": {
+        "feedbackId": "00001170-0000-4000-8000-00000000f201",
+        "runId": "00001170-0000-4000-8000-000000005100",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runOutcome": "Verified",
+        "claimedBenefit": "Improved",
+        "benefit": "Harmed",
+        "attributionSource": "HumanAssessment",
+        "reviewerIdentity": "reviewer-ü",
+        "evaluatorId": null,
+        "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+        "assessmentId": "00001170-0000-4000-8000-00000000a201",
+        "rationale": "The lesson sent the run down the wrong path.",
+        "evidenceIds": [],
+        "attributedAt": "2026-03-02T09:30:00.123456+00:00",
+        "measure": {
+          "kind": "tool-calls",
+          "value": 7
+        },
+        "trialLabel": "memory-enabled",
+        "observedAt": "2026-03-02T09:30:00.765432+00:00",
+        "exposures": [
+          {
+            "experienceId": "00001170-0000-4000-8000-000000000130",
+            "attributed": false,
+            "evidenceId": null
+          },
+          {
+            "experienceId": "00001170-0000-4000-8000-000000000131",
+            "attributed": true,
+            "evidenceId": "d1e1c29a-52d6-8836-a3a5-ee0b66f1261c"
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "outcome": "Conflict",
+      "feedback": {
+        "feedbackId": "00001170-0000-4000-8000-00000000f201",
+        "runId": "00001170-0000-4000-8000-000000005100",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runOutcome": "Verified",
+        "claimedBenefit": "Improved",
+        "benefit": "Harmed",
+        "attributionSource": "HumanAssessment",
+        "reviewerIdentity": "reviewer-ü",
+        "evaluatorId": null,
+        "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+        "assessmentId": "00001170-0000-4000-8000-00000000a201",
+        "rationale": "The lesson sent the run down the wrong path.",
+        "evidenceIds": [],
+        "attributedAt": "2026-03-02T09:30:00.123456+00:00",
+        "measure": {
+          "kind": "tool-calls",
+          "value": 7
+        },
+        "trialLabel": "memory-enabled",
+        "observedAt": "2026-03-02T09:30:00.765432+00:00",
+        "exposures": [
+          {
+            "experienceId": "00001170-0000-4000-8000-000000000130",
+            "attributed": false,
+            "evidenceId": null
+          },
+          {
+            "experienceId": "00001170-0000-4000-8000-000000000131",
+            "attributed": true,
+            "evidenceId": "d1e1c29a-52d6-8836-a3a5-ee0b66f1261c"
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "outcome": "Conflict",
+      "feedback": null,
+      "errors": []
+    }
+  ],
+  "ledger": [
+    {
+      "feedbackId": "00001170-0000-4000-8000-00000000f201",
+      "runId": "00001170-0000-4000-8000-000000005100",
+      "scope": {
+        "tenantId": "contract-tenant",
+        "applicationId": "contract-app",
+        "projectId": "contract-project",
+        "teamId": null,
+        "agentId": "refund-agent",
+        "userId": null
+      },
+      "runOutcome": "Verified",
+      "claimedBenefit": "Improved",
+      "benefit": "Harmed",
+      "attributionSource": "HumanAssessment",
+      "reviewerIdentity": "reviewer-ü",
+      "evaluatorId": null,
+      "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+      "assessmentId": "00001170-0000-4000-8000-00000000a201",
+      "rationale": "The lesson sent the run down the wrong path.",
+      "evidenceIds": [],
+      "attributedAt": "2026-03-02T09:30:00.123456+00:00",
+      "measure": {
+        "kind": "tool-calls",
+        "value": 7
+      },
+      "trialLabel": "memory-enabled",
+      "observedAt": "2026-03-02T09:30:00.765432+00:00",
+      "exposures": [
+        {
+          "experienceId": "00001170-0000-4000-8000-000000000130",
+          "attributed": false,
+          "evidenceId": null
+        },
+        {
+          "experienceId": "00001170-0000-4000-8000-000000000131",
+          "attributed": true,
+          "evidenceId": "d1e1c29a-52d6-8836-a3a5-ee0b66f1261c"
+        }
+      ]
+    }
+  ],
+  "records": [],
+  "histories": []
+}

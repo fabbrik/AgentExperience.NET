@@ -1,0 +1,346 @@
+{
+  "results": [
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "FeedbackId",
+          "message": "must not be an empty GUID."
+        },
+        {
+          "path": "RunId",
+          "message": "must not be an empty GUID."
+        },
+        {
+          "path": "Scope.TenantId",
+          "message": "must not be empty or whitespace."
+        },
+        {
+          "path": "Scope.ApplicationId",
+          "message": "must not be empty or whitespace."
+        },
+        {
+          "path": "Scope.TeamId",
+          "message": "must be null or a non-blank value."
+        },
+        {
+          "path": "RunOutcome",
+          "message": "is not a defined value."
+        },
+        {
+          "path": "ClaimedBenefit",
+          "message": "is not a defined value."
+        },
+        {
+          "path": "Benefit",
+          "message": "is not a defined value."
+        },
+        {
+          "path": "AttributionSource",
+          "message": "is not a defined value."
+        },
+        {
+          "path": "ObservedAt",
+          "message": "must be set to when the feedback was observed."
+        },
+        {
+          "path": "Measure.Kind",
+          "message": "must not be empty or whitespace."
+        },
+        {
+          "path": "Measure.Value",
+          "message": "must be a finite number."
+        },
+        {
+          "path": "TrialLabel",
+          "message": "must be null or a non-blank value."
+        },
+        {
+          "path": "AttributedAt",
+          "message": "must be set when the submission carries an attribution."
+        },
+        {
+          "path": "AttributedAt",
+          "message": "must be null for this attribution source."
+        },
+        {
+          "path": "Exposures",
+          "message": "is required."
+        }
+      ]
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "Scope",
+          "message": "is required."
+        },
+        {
+          "path": "Measure",
+          "message": "is required."
+        },
+        {
+          "path": "Exposures",
+          "message": "must name at least one exposed record."
+        }
+      ]
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "Measure.Kind",
+          "message": "must not contain the NUL character (U+0000)."
+        },
+        {
+          "path": "TrialLabel",
+          "message": "must not contain the NUL character (U+0000)."
+        },
+        {
+          "path": "Rationale",
+          "message": "must not begin with 'aexp-sealed:v1:', which is reserved for sealed values."
+        },
+        {
+          "path": "Rationale",
+          "message": "must be null for this attribution source."
+        }
+      ]
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "Rationale",
+          "message": "must not be exactly '(sealed)', which is reserved for a sealed rationale."
+        }
+      ]
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "Benefit",
+          "message": "must be Unknown exactly when there is no attribution source, and named otherwise."
+        },
+        {
+          "path": "ReviewerIdentity",
+          "message": "must not be empty or whitespace."
+        },
+        {
+          "path": "EvaluatorId",
+          "message": "must be null for this attribution source."
+        },
+        {
+          "path": "Rationale",
+          "message": "must not be empty or whitespace."
+        },
+        {
+          "path": "AttributedAt",
+          "message": "must be set for this attribution source."
+        },
+        {
+          "path": "EvidenceIds",
+          "message": "must be empty for this attribution source."
+        },
+        {
+          "path": "AssessmentId",
+          "message": "must name the host-established review a human assessment came out of."
+        },
+        {
+          "path": "VerificationRoundId",
+          "message": "must name a verification round or be null."
+        }
+      ]
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "ReviewerIdentity",
+          "message": "must not be empty or whitespace."
+        },
+        {
+          "path": "AssessmentId",
+          "message": "must name the host-established review a human assessment came out of."
+        }
+      ]
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "EvaluatorId",
+          "message": "must not be empty or whitespace."
+        },
+        {
+          "path": "ReviewerIdentity",
+          "message": "must be null for this attribution source."
+        },
+        {
+          "path": "AssessmentId",
+          "message": "must be null for this attribution source."
+        },
+        {
+          "path": "Rationale",
+          "message": "must not be empty or whitespace."
+        },
+        {
+          "path": "AttributedAt",
+          "message": "must be set for this attribution source."
+        },
+        {
+          "path": "VerificationRoundId",
+          "message": "must name the verification round the comparison was made in."
+        },
+        {
+          "path": "EvidenceIds",
+          "message": "must carry the evidence the comparison was reached from."
+        }
+      ]
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "VerificationRoundId",
+          "message": "must name the verification round the comparison was made in."
+        },
+        {
+          "path": "EvidenceIds",
+          "message": "must not contain an empty GUID."
+        }
+      ]
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "EvidenceIds",
+          "message": "must not name the same piece of evidence twice."
+        }
+      ]
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "ReviewerIdentity",
+          "message": "must be null for this attribution source."
+        },
+        {
+          "path": "EvaluatorId",
+          "message": "must be null for this attribution source."
+        },
+        {
+          "path": "VerificationRoundId",
+          "message": "must be null for this attribution source."
+        },
+        {
+          "path": "AssessmentId",
+          "message": "must be null for this attribution source."
+        },
+        {
+          "path": "Rationale",
+          "message": "must be null for this attribution source."
+        },
+        {
+          "path": "AttributedAt",
+          "message": "must be null for this attribution source."
+        },
+        {
+          "path": "EvidenceIds",
+          "message": "must be empty for this attribution source."
+        }
+      ]
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "Exposures",
+          "message": "must name at most 64 records."
+        }
+      ]
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "Exposures",
+          "message": "must not contain a null exposure."
+        },
+        {
+          "path": "Exposures.ExperienceId",
+          "message": "must not be an empty GUID."
+        },
+        {
+          "path": "Exposures",
+          "message": "must not name the same record twice."
+        },
+        {
+          "path": "Exposures",
+          "message": "must not mark a record attributed when the submission carries no attribution."
+        },
+        {
+          "path": "Exposures",
+          "message": "must not mark a record attributed when the submission carries no attribution."
+        },
+        {
+          "path": "Exposures.EvidenceId",
+          "message": "is required for an attributed exposure: it is the confidence submission's idempotency key."
+        },
+        {
+          "path": "Exposures.EvidenceId",
+          "message": "must be null for an exposure nothing attributed, which produced no confidence submission."
+        }
+      ]
+    },
+    {
+      "outcome": "Denied",
+      "feedback": null,
+      "errors": []
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "FeedbackId",
+          "message": "must not be an empty GUID."
+        }
+      ]
+    },
+    {
+      "thrown": null,
+      "outcome": "Invalid",
+      "feedbackId": "00001170-0000-4000-8000-00000000f004",
+      "benefit": "Unknown",
+      "attributionSource": "None",
+      "exposures": [],
+      "errors": [
+        {
+          "path": "Measure.Kind",
+          "message": "must not contain the NUL character (U+0000)."
+        }
+      ],
+      "reason": null,
+      "isRetryable": false
+    }
+  ],
+  "ledger": [],
+  "records": [],
+  "histories": []
+}

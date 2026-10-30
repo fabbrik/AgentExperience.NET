@@ -399,19 +399,25 @@ returned error in Go).
 
 Since contract 1.16 both ports emit `lifecycle.commit` and `confidence.apply` (Core source, a span each) from their
 lifecycle services, with .NET's outcomes and attributes: `experience_id` and `event_id`, and on `confidence.apply`
-`confidence.admission` (always `HostTrusted` from a port) and `independence.refusal`. The ports never emit `deindex`,
-`reindex`, `reuse_feedback`, `delete`,
+`confidence.admission` (always `HostTrusted` from a port) and `independence.refusal`. Since contract 1.17 both ports emit
+`reuse_feedback` (Core source, a span) from their reuse-feedback services, with .NET's outcomes (`Recorded`,
+`AlreadyRecorded`, `Conflict`, `Denied`, `Invalid`, or `Faulted` when the ledger write fails) and attributes
+(`feedback_id`, `run_id`), and a `confidence.apply` inside it for each attributed record. Finalization's reuse-evidence
+step is a call of its own in a port, so its `confidence.apply` operations are not nested in a `finalize` span. The ports
+never emit `deindex`, `reindex`, `delete`,
 `retention.sweep`, `grant.purge`, `grant.access.purge`, `record.seal`, `record.authorship.backfill`, `retrieve.signature`,
 `record.signature.backfill` or `record.signature.write`: they do not perform
 them. Differences from .NET that a dashboard should know:
 
-- `nested` is `true` for `verify` and `reflect` inside `finalize`, and `false` for everything else: `inject`,
+- `nested` is `true` for `verify` and `reflect` inside `finalize` and for `confidence.apply` inside `reuse_feedback`, and
+  `false` for everything else: `inject`,
   `record_injection`, `record_holdout` and `index` are never nested, and the `retrieve` inside an `inject` is on the Core meter, so `false`.
   A span's parent is the span that ran it, or the host's current span.
 - The ports set only these span attributes beyond the common ones: `run_id`, `attempt_id`, `experience_id`,
   `reflection_id`, `stage` (on `finalize`: `Load`, `Evaluate`, `Reflect` or `CreateRecord`, the last stage reached),
   `omitted_count` (on `inject`), and `event_id`, `confidence.admission` and `independence.refusal` (on `lifecycle.commit`
-  and `confidence.apply`, contract 1.16), and `reflection.screening_refusal` (on `finalize`). They do not write
+  and `confidence.apply`, contract 1.16), `feedback_id` (on `reuse_feedback`, contract 1.17), and
+  `reflection.screening_refusal` (on `finalize`). They do not write
   `correlation_id`, `retracted_count`, `history_read` or `reuse_evidence.submitted`, because they have no such thing.
 - An `inject` is `Faulted` only when something escapes it (the invocation's own cancellation in Python); every other
   failure is a returned outcome, as in .NET.

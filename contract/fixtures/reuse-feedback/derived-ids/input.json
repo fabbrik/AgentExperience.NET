@@ -1,0 +1,38 @@
+{
+  "description": "The evidence and event IDs feedback derives for an attributed record (ExperienceReuseFeedbackService.EvidenceIdFor and EventIdFor): SHA-256 over the namespace 3f5a1d62-8c04-4b91-a7e3-6d2f0b48c915, the feedback ID and the record ID (each 16 bytes, RFC 4122 order) and a tag (1 for the evidence ID, 2 for the event ID), as UUIDv8. Another feedback or another record derives other IDs.",
+  "service": {
+    "engine": null,
+    "hostTrustedEvidence": "Counted"
+  },
+  "records": [],
+  "steps": [
+    {
+      "derive": {
+        "feedbackId": "00001170-0000-4000-8000-00000000f301",
+        "experienceId": "00001170-0000-4000-8000-000000000140"
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "derive": {
+        "feedbackId": "00001170-0000-4000-8000-00000000f301",
+        "experienceId": "00001170-0000-4000-8000-000000000141"
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "derive": {
+        "feedbackId": "00001170-0000-4000-8000-00000000f302",
+        "experienceId": "00001170-0000-4000-8000-000000000140"
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "derive": {
+        "feedbackId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        "experienceId": "00000000-0000-0000-0000-000000000001"
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    }
+  ]
+}

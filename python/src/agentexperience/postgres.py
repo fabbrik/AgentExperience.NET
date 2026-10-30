@@ -63,6 +63,7 @@ from .lifecycle import (
     LifecycleEvent,
     RecordReadResult,
     StoredLifecycleEvent,
+    StoreValidationError,
     SupersessionCheckResult,
     as_replay_of,
     assessment_spent_error,
@@ -74,6 +75,15 @@ from .lifecycle import (
 )
 from .model import model_of_metadata
 from .records import COLUMN_NAMES, PAYLOAD_VERSION, ExperienceRecord, Scope, from_columns, to_payload
+from .reuse_feedback import (
+    ExperienceReuseExposure,
+    ExperienceReuseFeedbackStoreResult,
+    RecordedExperienceReuseFeedback,
+    ReuseMeasure,
+    normalize_reuse_feedback,
+    same_reuse_feedback,
+    validate_reuse_feedback,
+)
 from .search import AuthorizationBounds, SearchParameters, SearchRow, widen_real
 
 if TYPE_CHECKING:
@@ -193,6 +203,7 @@ QUERY_HOLDOUT_OUTCOMES_SQL = "query-holdout-outcomes.sql"
 RECORD_PROVIDER_HOLDOUT_SQL = "record-provider-holdout-assignment.sql"
 QUERY_PROVIDER_HOLDOUT_OUTCOMES_SQL = "query-provider-holdout-outcomes.sql"
 LIFECYCLE_SQL = "lifecycle.sql"
+REUSE_FEEDBACK_SQL = "reuse-feedback.sql"
 
 _UNIQUE_VIOLATION = "23505"
 _SERIALIZATION_FAILURES = frozenset({"40001", "40P01"})  # serialization_failure, deadlock_detected
@@ -1409,3 +1420,181 @@ class _Commit:
         if current[2] is not None:
             return LifecycleCommitResult("Deleted", revision, None)
         return LifecycleCommitResult("StaleRevision", revision, None)
+
+
+# ---- Contract 1.17: the reuse-feedback ledger (sql/reuse-feedback.sql) ---------------------------------------------
+
+_ERASED_EXPOSURE = "names an Experience Record that has been erased; nothing may be recorded against it again."
+
+
+class PostgresExperienceReuseFeedbackStore:
+    """
+    The reuse-feedback ledger in PostgreSQL (.NET's ``PostgresExperienceReuseFeedbackStore``), running
+    ``sql/reuse-feedback.sql`` as written, as the application role in a transaction that first declared its bounds.
+    ``connect`` is as :class:`PostgresExperienceStore`'s; ``clock`` is the store's own clock, stamped (truncated to
+    whole microseconds) as ``recorded_at``.
+
+    A submission is validated, then authorized, then written with its exposures in one transaction at READ COMMITTED:
+    the feedback ID's primary key is the arbiter, so the same submission from writers in any language lands once. A
+    submission naming a record erased in its own scope is ``Invalid`` and writes nothing. A port holds no key store, so
+    the rationale is written in plaintext (``rationale_sealed`` NULL); a submission a .NET store sealed (rationale
+    ``(sealed)``) therefore never compares equal to one resubmitted here, and is a ``Conflict``. Any database error
+    other than the outcomes the SQL header names raises, with nothing written.
+    """
+
+    def __init__(
+        self, connect: str | Callable[[], psycopg.Connection[Any]], *, clock: Callable[[], Instant] = Instant.now
+    ) -> None:
+        import psycopg
+
+        if isinstance(connect, str):
+            conninfo = connect
+
+            def opener() -> psycopg.Connection[Any]:
+                return psycopg.connect(conninfo)
+
+            self._connect: Callable[[], psycopg.Connection[Any]] = opener
+        else:
+            self._connect = connect
+        self._declare = to_driver_placeholders(contract_sql(DECLARE_BOUNDS_SQL))
+        self._statements = {
+            key: to_driver_placeholders(text) for key, text in contract_statements(REUSE_FEEDBACK_SQL).items()
+        }
+        self._clock = clock
+
+    def record(
+        self, authorization: AuthorizationContext, feedback: RecordedExperienceReuseFeedback
+    ) -> ExperienceReuseFeedbackStoreResult:
+        """Writes one submission and all its exposures, or nothing, as ``sql/reuse-feedback.sql``'s header orders it."""
+        if authorization is None or feedback is None:
+            raise TypeError("authorization and feedback must not be None.")
+        errors = validate_reuse_feedback(feedback)
+        if errors:
+            return ExperienceReuseFeedbackStoreResult("Invalid", None, errors)
+        if not authorization.permits(feedback.scope):
+            return ExperienceReuseFeedbackStoreResult("Denied", None)
+        submitted = feedback
+        feedback = normalize_reuse_feedback(feedback)
+        recorded_at = self._clock().truncate_to_microseconds()
+        with self._connect() as connection:
+            # Explicit transactions: the isolation level is pinned here, never inherited from the connection.
+            connection.autocommit = True
+            with connection.cursor() as cursor:
+                cursor.execute("BEGIN ISOLATION LEVEL READ COMMITTED")
+                try:
+                    cursor.execute(self._declare, authorization.bounds.parameters())
+                    cursor.execute(
+                        self._statements["insert-submission"], self._submission_parameters(feedback, recorded_at)
+                    )
+                    if cursor.fetchone() is None:
+                        stored = self._read_stored(cursor, feedback.feedback_id)
+                        cursor.execute("ROLLBACK")
+                        if stored is not None and same_reuse_feedback(stored, feedback):
+                            return ExperienceReuseFeedbackStoreResult("AlreadyRecorded", stored)
+                        return ExperienceReuseFeedbackStoreResult(
+                            "Conflict", stored if stored is not None and authorization.permits(stored.scope) else None
+                        )
+
+                    exposures = [exposure for exposure in feedback.exposures or () if exposure is not None]
+                    cursor.execute(
+                        self._statements["select-exposed-record-state"],
+                        {
+                            "experience_ids": list(dict.fromkeys(exposure.experience_id for exposure in exposures)),
+                            **_scope_parameters(feedback.scope),
+                        },
+                    )
+                    erased = {_uuid(row[0]) for row in cursor.fetchall() if row[1] is not None}
+                    if erased:
+                        cursor.execute("ROLLBACK")
+                        return ExperienceReuseFeedbackStoreResult(
+                            "Invalid",
+                            None,
+                            tuple(
+                                StoreValidationError(f"Exposures[{ordinal}].ExperienceId", _ERASED_EXPOSURE)
+                                for ordinal, exposure in enumerate(submitted.exposures or ())
+                                if exposure is not None and exposure.experience_id in erased
+                            ),
+                        )
+
+                    from psycopg.types.numeric import Int4
+
+                    for ordinal, exposure in enumerate(exposures):
+                        cursor.execute(
+                            self._statements["insert-exposure"],
+                            {
+                                "feedback_id": feedback.feedback_id,
+                                "experience_id": exposure.experience_id,
+                                "ordinal": Int4(ordinal),
+                                "attributed": exposure.attributed,
+                                "evidence_id": exposure.evidence_id,
+                                "rationale_sealed": None,
+                            },
+                        )
+                    cursor.execute("COMMIT")
+                    return ExperienceReuseFeedbackStoreResult("Recorded", feedback)
+                except BaseException:
+                    import contextlib
+
+                    with contextlib.suppress(Exception):
+                        cursor.execute("ROLLBACK")
+                    raise
+
+    @staticmethod
+    def _submission_parameters(feedback: RecordedExperienceReuseFeedback, recorded_at: Instant) -> dict[str, Any]:
+        measure = feedback.measure
+        assert measure is not None
+        evidence_ids = list(feedback.evidence_ids or ())
+        return {
+            "feedback_id": feedback.feedback_id,
+            "run_id": feedback.run_id,
+            **_scope_parameters(feedback.scope),
+            "run_outcome": feedback.run_outcome,
+            "claimed_benefit": feedback.claimed_benefit,
+            "benefit": feedback.benefit,
+            "attribution_source": feedback.attribution_source,
+            "reviewer_identity": feedback.reviewer_identity,
+            "evaluator_id": feedback.evaluator_id,
+            "verification_round_id": feedback.verification_round_id,
+            "assessment_id": feedback.assessment_id,
+            "rationale": feedback.rationale,
+            "evidence_ids": evidence_ids or None,
+            "attributed_at": None if feedback.attributed_at is None else feedback.attributed_at.to_datetime(),
+            "measure_kind": measure.kind,
+            "measure_value": float(measure.value),
+            "trial_label": feedback.trial_label,
+            "observed_at": feedback.observed_at.to_datetime(),
+            "recorded_at": recorded_at.to_datetime(),
+        }
+
+    def _read_stored(
+        self, cursor: psycopg.Cursor[Any], feedback_id: uuid.UUID
+    ) -> RecordedExperienceReuseFeedback | None:
+        cursor.execute(self._statements["select-submission"], {"feedback_id": feedback_id})
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        cursor.execute(self._statements["select-exposures"], {"feedback_id": feedback_id})
+        exposures = tuple(
+            ExperienceReuseExposure(_uuid(item[0]), bool(item[1]), None if item[2] is None else _uuid(item[2]))
+            for item in cursor.fetchall()
+        )
+        return RecordedExperienceReuseFeedback(
+            feedback_id=feedback_id,
+            run_id=_uuid(row[0]),
+            scope=Scope(row[1], row[2], row[3], row[4], row[5], row[6]),
+            run_outcome=row[7],
+            claimed_benefit=row[8],
+            benefit=row[9],
+            attribution_source=row[10],
+            reviewer_identity=row[11],
+            evaluator_id=row[12],
+            verification_round_id=None if row[13] is None else _uuid(row[13]),
+            assessment_id=None if row[14] is None else _uuid(row[14]),
+            rationale=row[15],
+            evidence_ids=tuple(_uuid(item) for item in row[16] or ()),
+            attributed_at=None if row[17] is None else _instant(row[17]),
+            measure=ReuseMeasure(row[18], float(row[19])),
+            trial_label=row[20],
+            observed_at=_instant(row[21]),
+            exposures=exposures,
+        )

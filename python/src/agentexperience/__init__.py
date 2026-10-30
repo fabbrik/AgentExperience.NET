@@ -1,5 +1,5 @@
 """
-AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.16.
+AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.17.
 
 Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical Reference
 block, derives the task text, classifies errors, and (with the ``postgres`` extra) writes records to and searches them
@@ -181,6 +181,34 @@ from .retrieval import (
     RetrievalPolicy,
     RetrievalPolicyError,
 )
+from .reuse_feedback import (
+    EXPERIENCE_REUSE_BENEFITS,
+    HUMAN_ASSESSMENT_PRODUCER,
+    MAX_EXPOSED_RECORDS,
+    REUSE_ATTRIBUTION_SOURCES,
+    REUSE_EVIDENCE_MODES,
+    REUSE_EVIDENCE_PRODUCER,
+    ComparativeEvaluationResult,
+    ExperienceExposureDisposition,
+    ExperienceExposureResult,
+    ExperienceReuseBenefit,
+    ExperienceReuseExposure,
+    ExperienceReuseFeedback,
+    ExperienceReuseFeedbackOutcome,
+    ExperienceReuseFeedbackResult,
+    ExperienceReuseFeedbackService,
+    ExperienceReuseFeedbackStore,
+    ExperienceReuseFeedbackStoreOutcome,
+    ExperienceReuseFeedbackStoreResult,
+    HumanReuseAssessment,
+    RecordedExperienceReuseFeedback,
+    ReuseAttributionSource,
+    ReuseEvidenceMode,
+    ReuseEvidenceReport,
+    ReuseEvidenceResult,
+    ReuseMeasure,
+    apply_reuse_evidence,
+)
 from .sanitization import Sanitization, SanitizationPolicy, SanitizationRejected
 from .search import (
     AuthorizationBounds,
@@ -199,9 +227,9 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.16"
-"""The contract version this package passes: every fixture of contract 1.16, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
-1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14 and 1.15 fixture."""
+CONTRACT_VERSION = "1.17"
+"""The contract version this package passes: every fixture of contract 1.17, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15 and 1.16 fixture."""
 
 SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.0",
@@ -221,6 +249,7 @@ SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.14",
     "1.15",
     "1.16",
+    "1.17",
 )
 """Every contract version whose fixtures this package passes."""
 
@@ -233,14 +262,20 @@ __all__ = [
     "CONTRACT_VERSION",
     "DEFAULT_ASSESSMENT_TOKEN_LIFETIME",
     "DEFAULT_HOLDOUT_SALT",
+    "EXPERIENCE_REUSE_BENEFITS",
     "FIRST_EVENT_STATUS",
     "HEURISTIC_RULE_ID",
     "HISTORY_DEFAULT_LIMIT",
     "HISTORY_MAX_LIMIT",
     "HISTORY_MIN_LIMIT",
+    "HUMAN_ASSESSMENT_PRODUCER",
     "MAXIMUM_ASSESSMENT_TOKEN_LIFETIME",
+    "MAX_EXPOSED_RECORDS",
     "MINIMUM_ASSESSMENT_TOKEN_KEY_BYTES",
     "MODEL_METADATA_KEY",
+    "REUSE_ATTRIBUTION_SOURCES",
+    "REUSE_EVIDENCE_MODES",
+    "REUSE_EVIDENCE_PRODUCER",
     "RULE_VERSION",
     "SUPPORTED_CONTRACT_VERSIONS",
     "TOOL_RISK_CLASSES",
@@ -267,6 +302,7 @@ __all__ = [
     "ClosedVerificationRound",
     "CommitLifecycleTransitionRequest",
     "CommitLifecycleTransitionResult",
+    "ComparativeEvaluationResult",
     "ConfidenceAdmissionCounts",
     "ConfidenceArgumentError",
     "ConfidenceDecayPolicy",
@@ -292,11 +328,22 @@ __all__ = [
     "ExclusionReason",
     "ExperienceConfidenceEngine",
     "ExperienceConfidenceInput",
+    "ExperienceExposureDisposition",
+    "ExperienceExposureResult",
     "ExperienceIndependenceOptions",
     "ExperienceLessons",
     "ExperienceLifecycleService",
     "ExperienceRecord",
     "ExperienceReflector",
+    "ExperienceReuseBenefit",
+    "ExperienceReuseExposure",
+    "ExperienceReuseFeedback",
+    "ExperienceReuseFeedbackOutcome",
+    "ExperienceReuseFeedbackResult",
+    "ExperienceReuseFeedbackService",
+    "ExperienceReuseFeedbackStore",
+    "ExperienceReuseFeedbackStoreOutcome",
+    "ExperienceReuseFeedbackStoreResult",
     "ExperienceStoreError",
     "ExperienceStoreOutcome",
     "ExperienceSupersessionOutcome",
@@ -311,6 +358,7 @@ __all__ = [
     "HoldoutOutcomeReader",
     "HoldoutOutcomeRow",
     "HostTrustedEvidenceEffect",
+    "HumanReuseAssessment",
     "IndependenceRefusal",
     "IndependenceVerification",
     "InitialLifecycleEvent",
@@ -349,6 +397,7 @@ __all__ = [
     "RawToolCall",
     "ReceivingAgent",
     "RecordReadResult",
+    "RecordedExperienceReuseFeedback",
     "Reflection",
     "ReflectionBindingError",
     "ReflectionFailed",
@@ -358,7 +407,12 @@ __all__ = [
     "RetrievalOutcome",
     "RetrievalPolicy",
     "RetrievalPolicyError",
+    "ReuseAttributionSource",
     "ReuseConfidenceHeuristicEngine",
+    "ReuseEvidenceMode",
+    "ReuseEvidenceReport",
+    "ReuseEvidenceResult",
+    "ReuseMeasure",
     "RunCapture",
     "RunExposure",
     "Sanitization",
@@ -382,6 +436,7 @@ __all__ = [
     "VectorQuery",
     "VectorSearchResult",
     "accepts_evidence_in",
+    "apply_reuse_evidence",
     "approach_tool_calls",
     "assign_holdout",
     "assign_provider_holdout",

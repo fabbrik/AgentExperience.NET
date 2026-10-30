@@ -17,7 +17,10 @@ import (
 	ct "github.com/fabbrik/AgentExperience.NET/go/internal/contracttest"
 )
 
-var errLifecycleHostEngine = errors.New("the host engine failed")
+// lifecycleHostEngineError is the host engine's own error (the .NET generator's HostEngineException), with its message.
+type lifecycleHostEngineError struct{}
+
+func (lifecycleHostEngineError) Error() string { return "The host engine failed." }
 
 // lifecycleHostEngine is a host engine as a case declares it (the .NET generator's HostEngine).
 type lifecycleHostEngine struct {
@@ -44,7 +47,7 @@ func (e lifecycleHostEngine) Score(input ae.ExperienceConfidenceInput) (float64,
 	case "stored":
 		return input.Record.ReuseConfidence, nil
 	case "throws":
-		return 0, errLifecycleHostEngine
+		return 0, lifecycleHostEngineError{}
 	}
 	panic(fmt.Sprintf("unknown host engine score %v", e.score))
 }
@@ -65,7 +68,10 @@ func lifecycleEngineOf(value any) ae.ConfidenceEngine {
 	panic(fmt.Sprintf("unknown engine %v", value))
 }
 
-func isLifecycleHostEngineError(err error) bool { return errors.Is(err, errLifecycleHostEngine) }
+func isLifecycleHostEngineError(err error) bool {
+	var engine lifecycleHostEngineError
+	return errors.As(err, &engine)
+}
 
 func member(o *ae.Object, key string) any {
 	value, ok := o.Get(key)

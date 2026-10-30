@@ -1,0 +1,187 @@
+{
+  "description": "The same under RecordedOnly, a port's default: the evidence is recorded on an event that moves only the revision, Applied and not counted, and a replay is not a replay (nothing counted).",
+  "service": {
+    "engine": null,
+    "hostTrustedEvidence": "RecordedOnly"
+  },
+  "finalization": {
+    "reuseEvidence": "SameTask",
+    "contradictOnFailure": false
+  },
+  "records": [
+    {
+      "columns": {
+        "experience_id": "00001171-0000-4000-8000-000000000010",
+        "source_run_id": "00001171-0000-4000-8000-000000000110",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.6666666666666666,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-02-20T09:00:00+00:00",
+        "updated_at": "2026-02-20T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "00001171-0000-4000-8000-000000000e10",
+              "verificationRoundId": "00001171-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "00001171-0000-4000-8000-000000000210",
+          "experienceRunId": "00001171-0000-4000-8000-000000000110",
+          "lesson": "Verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "00001171-0000-4000-8000-000000000e10"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    }
+  ],
+  "finalize": {
+    "description": "The same under RecordedOnly, a port's default: the evidence is recorded on an event that moves only the revision, Applied and not counted, and a replay is not a replay (nothing counted).",
+    "options": {
+      "allowedArgumentNames": null
+    },
+    "run": {
+      "runId": "00001171-0000-4000-8000-000000009002",
+      "taskId": "rotate-keys",
+      "taskDescription": "Rotate the signing keys",
+      "scope": {
+        "tenantId": "contract-tenant",
+        "applicationId": "contract-app",
+        "projectId": "contract-project",
+        "teamId": null,
+        "agentId": "refund-agent",
+        "userId": null
+      },
+      "environment": {
+        "hostName": "contract-host",
+        "runtimeVersion": "runtime-1",
+        "operatingSystem": "linux",
+        "applicationVersion": "1.0.0",
+        "metadata": {
+          "region": "eu-west"
+        }
+      },
+      "provenance": {
+        "source": "contract-fixture",
+        "sourceVersion": "1",
+        "recordedAt": "2026-03-02T15:00:00+00:00",
+        "correlationId": null,
+        "exposedTo": [
+          {
+            "experienceId": "00001171-0000-4000-8000-000000000010",
+            "revision": 1
+          }
+        ]
+      },
+      "attempts": [
+        {
+          "attemptId": "00001171-0000-4000-8000-0000000000a0",
+          "sequenceNumber": 0,
+          "startedAt": "2026-03-02T15:00:01+00:00",
+          "duration": "00:00:03.5000000",
+          "toolCalls": [
+            {
+              "toolCallId": "00001171-0000-4000-8000-00000000c000",
+              "sequenceNumber": 0,
+              "toolName": "rotate",
+              "arguments": {},
+              "startedAt": "2026-03-02T15:00:01+00:00",
+              "duration": "00:00:01.2500000",
+              "result": "rotated",
+              "error": null
+            }
+          ],
+          "result": "Rotated.",
+          "error": null
+        }
+      ],
+      "executionStatus": "Completed",
+      "outcome": null,
+      "startedAt": "2026-03-02T15:00:00+00:00",
+      "endedAt": "2026-03-02T15:00:20+00:00"
+    },
+    "completionEventId": "00001171-0000-4000-8000-0000000000e0",
+    "verification": {
+      "closedRound": {
+        "roundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1"
+      },
+      "requiredChecks": [
+        {
+          "checkId": "keys-rotated",
+          "expectedKind": "integration-test"
+        }
+      ],
+      "evidence": [
+        {
+          "evidenceId": "00001171-0000-4000-8000-00000000e100",
+          "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+          "artifactRevision": "rev-1",
+          "checkId": "keys-rotated",
+          "kind": "integration-test",
+          "result": "Pass",
+          "producer": "contract-ci",
+          "detail": "all assertions passed",
+          "capturedAt": "2026-03-02T15:00:25+00:00"
+        }
+      ],
+      "currentArtifactRevision": "rev-1",
+      "finalizedAt": "2026-03-02T15:00:30+00:00"
+    }
+  },
+  "finalizations": 2
+}

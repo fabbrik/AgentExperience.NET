@@ -17,7 +17,7 @@ namespace AgentExperience.Contract.Tests;
 /// <para>
 /// It needs all three toolchains (the .NET SDK, uv with the Python package's <c>postgres</c> extra synced, and Go), so it
 /// runs only when <c>AGENTEXPERIENCE_CROSS_LANGUAGE_RACE=1</c> (CI's <c>cross-language-lifecycle</c> job sets it) and
-/// passes without doing anything otherwise. The Python writer is <c>python/tests/cross-language/lifecycle_race.py</c>
+/// skips with <c>0</c> (see <see cref="CrossLanguageOptIn"/>: unset, it fails in CI). The Python writer is <c>python/tests/cross-language/lifecycle_race.py</c>
 /// and the Go writer <c>go/postgres/internal/lifecyclerace</c>.
 /// </para>
 /// <para>
@@ -44,7 +44,7 @@ public sealed class CrossLanguageLifecycleRacePostgresTests(ContractPostgresData
     [Fact]
     public async Task Dotnet_python_and_go_writers_racing_on_one_revision_commit_exactly_once_and_read_one_history()
     {
-        if (Environment.GetEnvironmentVariable(Variable) != "1")
+        if (!CrossLanguageOptIn.Enabled(Variable))
         {
             return;
         }
@@ -208,6 +208,10 @@ public sealed class CrossLanguageLifecycleRacePostgresTests(ContractPostgresData
         finally
         {
             directory.Delete(recursive: true);
+
+            // Idle pooled connections left behind would exhaust the shared server's slots for the tests after this one.
+            application.Clear();
+            owner.Clear();
         }
     }
 

@@ -110,6 +110,56 @@ internal static class FinalizeContract
         FinalizeInput input,
         IExperienceReflector reflector)
     {
+        var (capture, captureOutcomes) = await CaptureAsync(input);
+        var run = input.Run;
+
+        var store = new InMemoryExperienceRecordStore(new FixedTimeProvider(input.Verification.FinalizedAt));
+        var finalization = new ExperienceFinalizationService(capture, reflector, store, new ExperienceLifecycleService(store));
+        var result = await finalization.FinalizeAsync(Request(input));
+        Assert.True(result.IsDurable, $"The case did not finalize durably: {result.Outcome} at {result.Stage}: {result.Reason}");
+
+        var read = await store.GetAsync(Fixed.Authorization, run.Scope, result.ExperienceId!.Value, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Found, read.Outcome);
+        var record = read.Record!;
+        var initial = result.Event ?? throw new InvalidOperationException("A durable finalization committed no initial event.");
+
+        var lifecycleEvent = new JsonObject
+        {
+            ["event_id"] = initial.EventId.ToString("D", CultureInfo.InvariantCulture),
+            ["experience_id"] = initial.ExperienceRecordId.ToString("D", CultureInfo.InvariantCulture),
+            ["prior_status"] = initial.PriorStatus?.ToString(),
+            ["current_status"] = initial.CurrentStatus.ToString(),
+            ["reason"] = initial.Reason,
+            ["producer"] = initial.Producer,
+            ["occurred_at"] = ContractJson.Timestamp(initial.OccurredAt),
+            ["expected_revision"] = initial.ExpectedRevision,
+            ["applied_revision"] = result.Revision,
+        };
+
+        return (ContractJson.ToStored(record), lifecycleEvent, captureOutcomes, result);
+    }
+
+    /// <summary>The finalization request a case makes: its run, <see cref="Fixed.Authorization"/>, and its verification.</summary>
+    internal static FinalizeExperienceRequest Request(FinalizeInput input)
+    {
+        var verification = input.Verification;
+        return new FinalizeExperienceRequest(
+            input.Run.RunId,
+            Fixed.Authorization,
+            verification.ClosedRound,
+            [.. verification.RequiredChecks.Select(check => new RequiredCheck(check.CheckId, check.ExpectedKind))],
+            verification.Evidence,
+            verification.CurrentArtifactRevision,
+            StorageDecision.Permit,
+            verification.FinalizedAt);
+    }
+
+    /// <summary>
+    /// The capture half of a case: the run captured (and sanitized) by an in-memory capture service, completed, and ready
+    /// to finalize; and <c>expected-capture.json</c>, what capture answered.
+    /// </summary>
+    internal static async Task<(InMemoryExperienceCaptureService Capture, JsonObject Outcomes)> CaptureAsync(FinalizeInput input)
+    {
         var sanitization = input.Options.AllowedArgumentNames is { } names
             ? AgentExperienceDefaults.SanitizationAllowing([.. names])
             : AgentExperienceDefaults.Sanitization;
@@ -150,40 +200,7 @@ internal static class FinalizeContract
             run.ExecutionStatus ?? throw new InvalidOperationException("A finalize case's run must have finished."),
             run.EndedAt ?? throw new InvalidOperationException("A finalize case's run must have an end."));
         Assert.Equal(CompleteRunOutcome.Recorded, completed.Outcome);
-
-        var store = new InMemoryExperienceRecordStore(new FixedTimeProvider(input.Verification.FinalizedAt));
-        var finalization = new ExperienceFinalizationService(capture, reflector, store, new ExperienceLifecycleService(store));
-        var verification = input.Verification;
-        var result = await finalization.FinalizeAsync(new FinalizeExperienceRequest(
-            run.RunId,
-            Fixed.Authorization,
-            verification.ClosedRound,
-            [.. verification.RequiredChecks.Select(check => new RequiredCheck(check.CheckId, check.ExpectedKind))],
-            verification.Evidence,
-            verification.CurrentArtifactRevision,
-            StorageDecision.Permit,
-            verification.FinalizedAt));
-        Assert.True(result.IsDurable, $"The case did not finalize durably: {result.Outcome} at {result.Stage}: {result.Reason}");
-
-        var read = await store.GetAsync(Fixed.Authorization, run.Scope, result.ExperienceId!.Value, CancellationToken.None);
-        Assert.Equal(ExperienceStoreOutcome.Found, read.Outcome);
-        var record = read.Record!;
-        var initial = result.Event ?? throw new InvalidOperationException("A durable finalization committed no initial event.");
-
-        var lifecycleEvent = new JsonObject
-        {
-            ["event_id"] = initial.EventId.ToString("D", CultureInfo.InvariantCulture),
-            ["experience_id"] = initial.ExperienceRecordId.ToString("D", CultureInfo.InvariantCulture),
-            ["prior_status"] = initial.PriorStatus?.ToString(),
-            ["current_status"] = initial.CurrentStatus.ToString(),
-            ["reason"] = initial.Reason,
-            ["producer"] = initial.Producer,
-            ["occurred_at"] = ContractJson.Timestamp(initial.OccurredAt),
-            ["expected_revision"] = initial.ExpectedRevision,
-            ["applied_revision"] = result.Revision,
-        };
-
-        return (ContractJson.ToStored(record), lifecycleEvent, captureOutcomes, result);
+        return (capture, captureOutcomes);
     }
 
     // ---- Cases -------------------------------------------------------------------------------------------------------

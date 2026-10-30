@@ -47,15 +47,15 @@ func TestTheContractVersionIsOneThisPackageSupports(t *testing.T) {
 	if version != ae.ContractVersion {
 		t.Fatalf("the lock is contract %s, this package implements %s", version, ae.ContractVersion)
 	}
-	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16" {
+	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16, 1.17" {
 		t.Fatalf("supported versions: %v", ae.SupportedContractVersions)
 	}
 }
 
 func TestAnUnsupportedContractVersionFailsWithAClearMessage(t *testing.T) {
-	for _, version := range []any{"2.0", "1.17", nil} {
+	for _, version := range []any{"2.0", "1.18", nil} {
 		_, err := ct.CheckContractVersion(ae.NewObject(ae.Member{Key: "contractVersion", Value: version}))
-		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16") {
+		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16, 1.17") {
 			t.Fatalf("version %v: %v", version, err)
 		}
 	}
@@ -114,9 +114,9 @@ func TestEveryFixtureFamilyHasCases(t *testing.T) {
 			families = append(families, entry.Name())
 		}
 	}
-	if strings.Join(families, ",") != "benefit-estimate,benefit-select,confidence-engine,content-guard,embedding-summary,embedding-write,encoding,erased,error-class,finalize,holdout-assign,"+
+	if strings.Join(families, ",") != "benefit-estimate,benefit-select,confidence-engine,content-guard,embedding-summary,embedding-write,encoding,erased,error-class,finalize,finalize-reuse-evidence,holdout-assign,"+
 		"holdout-outcomes,holdout-record,hybrid-merge,inject,inject-options,lesson-export,lessons-html,lessons-view,lifecycle-apply,lifecycle-commit,lifecycle-sql,model-metadata,provider-benefit-estimate,"+
-		"provider-holdout-assign,provider-holdout-record,record-injection,reflection-output,reflection-prompt,retrieval-policy,search,task-text,vector-search" {
+		"provider-holdout-assign,provider-holdout-record,record-injection,reflection-output,reflection-prompt,retrieval-policy,reuse-feedback,reuse-feedback-sql,search,task-text,vector-search" {
 		t.Fatalf("families: %v", families)
 	}
 	for _, family := range []string{"benefit-estimate", "benefit-select", "erased", "finalize", "holdout-outcomes", "holdout-record", "inject", "inject-options",

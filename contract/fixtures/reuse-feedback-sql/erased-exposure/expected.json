@@ -1,0 +1,120 @@
+{
+  "results": [
+    null,
+    null,
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "Exposures[2].ExperienceId",
+          "message": "names an Experience Record that has been erased; nothing may be recorded against it again."
+        }
+      ]
+    },
+    {
+      "outcome": "Recorded",
+      "feedback": {
+        "feedbackId": "00001172-0000-4000-8000-00000000f022",
+        "runId": "00001172-0000-4000-8000-000000005100",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runOutcome": "Verified",
+        "claimedBenefit": "Unknown",
+        "benefit": "Unknown",
+        "attributionSource": "None",
+        "reviewerIdentity": null,
+        "evaluatorId": null,
+        "verificationRoundId": null,
+        "assessmentId": null,
+        "rationale": null,
+        "evidenceIds": [],
+        "attributedAt": null,
+        "measure": {
+          "kind": "tool-calls",
+          "value": 7
+        },
+        "trialLabel": null,
+        "observedAt": "2026-03-02T09:30:00+00:00",
+        "exposures": [
+          {
+            "experienceId": "00001172-0000-4000-8000-000000000031",
+            "attributed": false,
+            "evidenceId": null
+          },
+          {
+            "experienceId": "00001172-0000-4000-8000-000000000032",
+            "attributed": false,
+            "evidenceId": null
+          },
+          {
+            "experienceId": "00001172-0000-4000-8000-00000000003f",
+            "attributed": false,
+            "evidenceId": null
+          }
+        ]
+      },
+      "errors": []
+    }
+  ],
+  "reuse_feedback": [
+    {
+      "feedback_id": "00001172-0000-4000-8000-00000000f022",
+      "run_id": "00001172-0000-4000-8000-000000005100",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "refund-agent",
+      "user_id": null,
+      "run_outcome": "Verified",
+      "claimed_benefit": "Unknown",
+      "benefit": "Unknown",
+      "attribution_source": "None",
+      "reviewer_identity": null,
+      "evaluator_id": null,
+      "verification_round_id": null,
+      "assessment_id": null,
+      "rationale": null,
+      "evidence_ids": null,
+      "attributed_at": null,
+      "measure_kind": "tool-calls",
+      "measure_value": "7",
+      "trial_label": null,
+      "observed_at": "2026-03-02 09:30:00+00",
+      "recorded_at": "2026-03-02 13:03:00+00"
+    }
+  ],
+  "reuse_feedback_exposures": [
+    {
+      "feedback_id": "00001172-0000-4000-8000-00000000f022",
+      "experience_id": "00001172-0000-4000-8000-000000000031",
+      "ordinal": "0",
+      "attributed": "false",
+      "evidence_id": null,
+      "rationale_sealed": null
+    },
+    {
+      "feedback_id": "00001172-0000-4000-8000-00000000f022",
+      "experience_id": "00001172-0000-4000-8000-000000000032",
+      "ordinal": "1",
+      "attributed": "false",
+      "evidence_id": null,
+      "rationale_sealed": null
+    },
+    {
+      "feedback_id": "00001172-0000-4000-8000-00000000f022",
+      "experience_id": "00001172-0000-4000-8000-00000000003f",
+      "ordinal": "2",
+      "attributed": "false",
+      "evidence_id": null,
+      "rationale_sealed": null
+    }
+  ]
+}
