@@ -982,7 +982,7 @@ internal static class LifecycleContract
         };
     }
 
-    private static JsonObject ReadResult(ExperienceLifecycleService service, JsonObject body)
+    internal static JsonObject ReadResult(ExperienceLifecycleService service, JsonObject body)
     {
         var filter = body["filter"]!.GetValue<string>();
         var result = service.ReadConfidenceAsync(
@@ -1020,7 +1020,7 @@ internal static class LifecycleContract
         };
     }
 
-    private static JsonObject HistoryResult(IExperienceRecordStore store, JsonObject body)
+    internal static JsonObject HistoryResult(IExperienceRecordStore store, JsonObject body)
     {
         var query = body["query"]!.AsObject();
         var scope = ReadScope(query["scope"]!);

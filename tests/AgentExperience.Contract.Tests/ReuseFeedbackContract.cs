@@ -1051,28 +1051,7 @@ internal static class ReuseFeedbackContract
                 return new JsonObject { ["thrown"] = new JsonObject { ["exception"] = nameof(ExperienceStoreException), ["message"] = ex.Message } };
             }
 
-            return new JsonObject
-            {
-                ["thrown"] = null,
-                ["outcome"] = result.Outcome.ToString(),
-                ["feedbackId"] = D(result.FeedbackId),
-                ["benefit"] = result.Benefit.ToString(),
-                ["attributionSource"] = result.AttributionSource.ToString(),
-                ["exposures"] = new JsonArray([.. result.Exposures.Select(exposure => (JsonNode)new JsonObject
-                {
-                    ["experienceId"] = D(exposure.ExperienceId),
-                    ["disposition"] = exposure.Disposition.ToString(),
-                    ["evidenceId"] = exposure.EvidenceId is { } evidence ? D(evidence) : null,
-                    ["counted"] = exposure.Counted,
-                    ["reuseConfidence"] = exposure.ReuseConfidence,
-                    ["status"] = exposure.Status?.ToString(),
-                    ["retryable"] = exposure.Retryable,
-                    ["reason"] = exposure.Reason,
-                })]),
-                ["errors"] = LifecycleContract.Errors(result.Errors),
-                ["reason"] = result.Reason,
-                ["isRetryable"] = result.IsRetryable,
-            };
+            return SubmitJson(result);
         }
         finally
         {
@@ -1080,6 +1059,30 @@ internal static class ReuseFeedbackContract
             store.Faults = [];
         }
     }
+
+    /// <summary>A submission's result, as a <c>submit</c> step's expected result holds it.</summary>
+    internal static JsonObject SubmitJson(ExperienceReuseFeedbackResult result) => new()
+    {
+        ["thrown"] = null,
+        ["outcome"] = result.Outcome.ToString(),
+        ["feedbackId"] = D(result.FeedbackId),
+        ["benefit"] = result.Benefit.ToString(),
+        ["attributionSource"] = result.AttributionSource.ToString(),
+        ["exposures"] = new JsonArray([.. result.Exposures.Select(exposure => (JsonNode)new JsonObject
+        {
+            ["experienceId"] = D(exposure.ExperienceId),
+            ["disposition"] = exposure.Disposition.ToString(),
+            ["evidenceId"] = exposure.EvidenceId is { } evidence ? D(evidence) : null,
+            ["counted"] = exposure.Counted,
+            ["reuseConfidence"] = exposure.ReuseConfidence,
+            ["status"] = exposure.Status?.ToString(),
+            ["retryable"] = exposure.Retryable,
+            ["reason"] = exposure.Reason,
+        })]),
+        ["errors"] = LifecycleContract.Errors(result.Errors),
+        ["reason"] = result.Reason,
+        ["isRetryable"] = result.IsRetryable,
+    };
 
     private static JsonObject RecordResult(IExperienceReuseFeedbackStore ledger, JsonObject body)
     {
