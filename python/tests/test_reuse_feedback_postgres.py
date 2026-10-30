@@ -11,6 +11,7 @@ import json
 import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -140,3 +141,35 @@ def test_the_cross_language_writer_records_and_reads_over_postgres(pg_server: Se
     ]
     assert read["confidence"]["outcome"] == "Found"
     assert read["confidence"]["report"]["revision"] == read["history"]["revision"] == 2
+
+
+def test_writers_racing_on_one_feedback_id_record_it_exactly_once(pg_server: Server) -> None:
+    database = create_database(pg_server, "reuse_feedback_race")
+    owner = pg_server.conninfo(database, OWNER, PASSWORD)
+    conninfo = application_conninfo(pg_server, database)
+    step = read_json(FIXTURES / FAMILY / "record-replay-and-conflict" / "steps.json")["steps"][0]["record"]
+    authorization, submission = authorization_of(step["authorization"]), recorded_of(step["feedback"])
+    count = 8
+    barrier = threading.Barrier(count)
+    outcomes: list[str | None] = [None] * count
+    failures: list[BaseException] = []
+
+    def run(index: int) -> None:
+        try:
+            ledger = PostgresExperienceReuseFeedbackStore(conninfo)
+            barrier.wait()
+            outcomes[index] = ledger.record(authorization, submission).outcome
+        except BaseException as failure:  # pragma: no cover - reported below
+            failures.append(failure)
+
+    threads = [threading.Thread(target=run, args=(index,)) for index in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not failures, failures
+    # The primary key is the arbiter: one writer records, every other one finds its own submission stored.
+    assert sorted(outcome or "" for outcome in outcomes) == ["AlreadyRecorded"] * (count - 1) + ["Recorded"]
+    assert len(_rows(owner, "reuse_feedback", ["feedback_id"], "feedback_id")) == 1
+    exposures = _rows(owner, "reuse_feedback_exposures", ["experience_id", "ordinal"], "ordinal")
+    assert len(exposures) == len(submission.exposures or ())

@@ -462,7 +462,11 @@ def same_reuse_feedback(stored: RecordedExperienceReuseFeedback, submitted: Reco
         return None if value is None else value.truncate_to_microseconds()
 
     stored_measure, submitted_measure = stored.measure, submitted.measure
-    assert stored_measure is not None and submitted_measure is not None
+    if stored_measure is None or submitted_measure is None:
+        # A validated submission always has a measure; one without it is never the same as one with it.
+        same_measure = stored_measure is None and submitted_measure is None
+    else:
+        same_measure = stored_measure.kind == submitted_measure.kind and stored_measure.value == submitted_measure.value
     return (
         stored.run_id == submitted.run_id
         and stored.scope == submitted.scope
@@ -477,8 +481,7 @@ def same_reuse_feedback(stored: RecordedExperienceReuseFeedback, submitted: Reco
         and stored.rationale == submitted.rationale
         and tuple(stored.evidence_ids or ()) == tuple(submitted.evidence_ids or ())
         and truncated(stored.attributed_at) == truncated(submitted.attributed_at)
-        and stored_measure.kind == submitted_measure.kind
-        and stored_measure.value == submitted_measure.value
+        and same_measure
         and stored.trial_label == submitted.trial_label
         and stored.observed_at.truncate_to_microseconds() == submitted.observed_at.truncate_to_microseconds()
         and tuple(stored.exposures or ()) == tuple(submitted.exposures or ())

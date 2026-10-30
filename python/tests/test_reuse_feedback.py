@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -48,7 +49,11 @@ from agentexperience import (
 from agentexperience.confidence import ConfidenceEngineError, is_engine_failure
 from agentexperience.inmemory import InMemoryExperienceReuseFeedbackStore, InMemoryExperienceStore
 from agentexperience.observer import AttributeValue, set_observer, type_name
-from agentexperience.reuse_feedback import ExperienceReuseFeedbackStoreResult, is_store_failure
+from agentexperience.reuse_feedback import (
+    ExperienceReuseFeedbackStoreResult,
+    is_store_failure,
+    normalize_reuse_feedback,
+)
 
 TOLERANCE = 1e-12
 FAMILY = "reuse-feedback"
@@ -370,3 +375,96 @@ def test_the_ledger_snapshot_is_independent_of_the_callers_lists() -> None:
     exposures.clear()
     assert result.feedback is not None and len(result.feedback.exposures or ()) == 2
     assert len(ledger.submissions()[0].exposures or ()) == 2
+
+
+def test_the_confidence_apply_a_submission_makes_is_nested_under_reuse_feedback() -> None:
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from agentexperience import telemetry
+
+    case = read_json(FIXTURES / FAMILY / "comparative-improved" / "input.json")
+    submit = case["steps"][0]["submit"]
+    store = InMemoryExperienceStore([from_stored(stored) for stored in case["records"]])
+    lifecycle = ExperienceLifecycleService(store)
+    service = ExperienceReuseFeedbackService(InMemoryExperienceReuseFeedbackStore(), lifecycle)
+
+    spans = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(spans))
+    reader = InMemoryMetricReader()
+    telemetry.enable(tracer_provider, MeterProvider(metric_readers=[reader]))
+    try:
+        result = service.record(authorization_of(submit["authorization"]), feedback_of(submit["feedback"]))
+    finally:
+        set_observer(None)
+    assert [exposure.disposition for exposure in result.exposures] == ["EvidenceApplied", "EvidenceApplied"]
+
+    data = reader.get_metrics_data()
+    nested = {
+        (dict(point.attributes or {})["operation"], dict(point.attributes or {})["nested"])
+        for resource in (data.resource_metrics if data else [])
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+        if metric.name == "agentexperience.operation.count"
+        for point in metric.data.data_points
+    }
+    # As in .NET: the feedback is what the host asked for; each record's evidence is the library's own call inside it.
+    assert nested == {("reuse_feedback", False), ("confidence.apply", True)}
+
+    finished = list(spans.get_finished_spans())
+    parent = next(span for span in finished if span.name == "agentexperience.reuse_feedback")
+    children = [span for span in finished if span.name == "agentexperience.confidence.apply"]
+    assert len(children) == 2
+    assert all(span.parent is not None and span.parent.span_id == parent.context.span_id for span in children)
+
+
+def test_exposures_are_ordered_as_dotnet_orders_guids_unsigned_group_by_group() -> None:
+    ids = [
+        uuid.UUID(text)
+        for text in (
+            "7fffffff-0000-4000-8000-000000000001",
+            "00001170-0001-4000-8000-ffffffffffff",
+            "ffffffff-0000-4000-8000-000000000001",
+            "00001170-ffff-4000-8000-000000000001",
+            "80000000-0000-4000-8000-000000000001",
+            "00001170-0001-4000-ffff-000000000001",
+            "00001170-0001-ffff-8000-000000000001",
+            "00001170-0001-4000-8000-000000000001",
+        )
+    ]
+    expected = [
+        "00001170-0001-4000-8000-000000000001",
+        "00001170-0001-4000-8000-ffffffffffff",
+        "00001170-0001-4000-ffff-000000000001",
+        "00001170-0001-ffff-8000-000000000001",
+        "00001170-ffff-4000-8000-000000000001",
+        "7fffffff-0000-4000-8000-000000000001",
+        "80000000-0000-4000-8000-000000000001",
+        "ffffffff-0000-4000-8000-000000000001",
+    ]
+    step = next(
+        step["record"]
+        for step in read_json(FIXTURES / FAMILY / "exposure-order" / "input.json")["steps"]
+        if "record" in step
+    )
+    submitted = recorded_of(step["feedback"])
+    by_id = {exposure.experience_id: exposure for exposure in submitted.exposures or () if exposure is not None}
+    scrambled = replace(submitted, exposures=tuple(by_id[id] for id in ids))
+
+    def order(feedback: Any) -> list[str]:
+        return [str(exposure.experience_id) for exposure in feedback.exposures]
+
+    assert order(normalize_reuse_feedback(scrambled)) == expected
+    ledger = InMemoryExperienceReuseFeedbackStore()
+    recorded = ledger.record(authorization_of(step["authorization"]), scrambled)
+    assert recorded.outcome == "Recorded"
+    assert order(recorded.feedback) == expected
+    again = ledger.record(
+        authorization_of(step["authorization"]),
+        replace(scrambled, exposures=tuple(reversed(scrambled.exposures or ()))),
+    )
+    assert again.outcome == "AlreadyRecorded"
