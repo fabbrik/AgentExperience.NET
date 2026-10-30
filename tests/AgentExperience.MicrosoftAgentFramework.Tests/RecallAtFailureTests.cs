@@ -211,15 +211,16 @@ public sealed partial class RecallAtFailureTests
     }
 
     [Fact]
-    public async Task A_run_is_hinted_at_most_MaxHintsPerRun_times_and_each_signature_is_looked_up_once()
+    public async Task A_signature_whose_lookup_answered_is_not_looked_up_again_in_the_run()
     {
+        // MaxHintsPerRun over distinct signatures is RecallProviderTests'.
         var host = new Host();
-        await using var services = host.Build(options => options.Recall = new ExperienceRecallOptions { MaxHintsPerRun = 1 });
+        await using var services = host.Build(options => options.Recall = new ExperienceRecallOptions());
         var agent = host.Agent(services);
 
         await agent.RunAsync(FirstTask);
 
-        // Two failures of the same signature: one lookup, then Bounded.
+        // Two failures of the same signature: one lookup (no match), then Bounded.
         Assert.Equal([ExperienceRecallOutcome.NoMatch, ExperienceRecallOutcome.Bounded], host.Recalls.Select(r => r.Outcome));
     }
 
@@ -245,7 +246,13 @@ public sealed partial class RecallAtFailureTests
     {
         var host = new Host();
         var source = new HangingSignatureSource();
-        await using var services = host.Build(options => options.Injection = injection => injection.Recall = null);
+
+        // Configured with a source that would say it was asked, then switched off by the injection hook.
+        await using var services = host.Build(options =>
+        {
+            options.Recall = new ExperienceRecallOptions { SignatureSource = source };
+            options.Injection = injection => injection.Recall = null;
+        });
         var agent = host.Agent(services);
 
         await agent.RunAsync(FirstTask);

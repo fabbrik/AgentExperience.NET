@@ -66,9 +66,33 @@ public sealed class PostgresRecallEndToEndTests(PostgresFixture fixture)
         Assert.All(model.Instructions, instructions => Assert.Null(instructions));
     }
 
+    [Fact]
+    public async Task A_held_out_run_gets_no_hint_and_its_would_be_hinted_record_is_its_assignment_row()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var store = new PostgresExperienceRecordStore(fixture.DataSource);
+        var resolved = Reusable(WithFailedCall(Minimal(scope, status: ExperienceStatus.Validated), error: Error));
+        Assert.Equal(ExperienceStoreOutcome.Created, (await store.CreateAsync(Authorize(tenant), resolved, CancellationToken.None)).Outcome);
+
+        var (recalls, model) = await RunAsync(store, tenant, scope, new ExperienceHoldoutOptions { Rate = 1 });
+
+        var recall = Assert.Single(recalls);
+        Assert.Equal(ExperienceRecallOutcome.Withheld, recall.Outcome);
+        Assert.Equal([resolved.ExperienceId], recall.WithheldExperienceIds);
+        Assert.All(model.Instructions, instructions => Assert.Null(instructions));
+
+        var rows = await store.QueryHoldoutOutcomesAsync(Authorize(tenant), new HoldoutOutcomeQuery(scope), CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Found, rows.Outcome);
+        var row = Assert.Single(rows.Rows);
+        Assert.Equal(HoldoutArm.Holdout, row.Arm);
+        Assert.Equal(resolved.ExperienceId, row.ExperienceId);
+        Assert.Equal(recall.RunId, row.RunId);
+    }
+
     private static ExperienceRecord Reusable(ExperienceRecord record) => record with { ReuseConfidence = 0.8 };
 
-    private async Task<(List<ExperienceRecallResult> Recalls, Model Model)> RunAsync(PostgresExperienceRecordStore store, string tenant, Scope scope)
+    private async Task<(List<ExperienceRecallResult> Recalls, Model Model)> RunAsync(PostgresExperienceRecordStore store, string tenant, Scope scope, ExperienceHoldoutOptions? holdout = null)
     {
         var recalls = new List<ExperienceRecallResult>();
         var clock = new NeverFiringTimers();
@@ -81,6 +105,7 @@ public sealed class PostgresRecallEndToEndTests(PostgresFixture fixture)
                 Limits = ExperienceInjectionLimits.Default with { EligibilityCheckTimeout = TimeSpan.FromMinutes(5) },
                 SessionLimits = null,
                 TimeProvider = clock,
+                Holdout = holdout ?? ExperienceHoldoutOptions.Off,
                 Recall = new ExperienceRecallOptions
                 {
                     SignatureSource = new PostgresExperienceSignatureSource(fixture.DataSource),
