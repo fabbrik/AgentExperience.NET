@@ -39,7 +39,9 @@ type ContextProvider struct {
 
 var _ agent.ContextProvider = (*ContextProvider)(nil)
 
-// Invoking adds the block, when one applies. It never returns an error.
+// Invoking adds the block, when one applies. It returns no error but the caller's own cancellation during retrieval
+// (ctx.Err(), context.Canceled), which propagates as .NET's OperationCanceledException does; every failure is reported
+// and leaves the invocation without a block.
 func (p *ContextProvider) Invoking(ctx context.Context, invoking agent.InvokingContext) (messages []*message.Message,
 	options []agent.Option, err error) {
 	messages, options = withoutBlocks(invoking.Messages), invoking.Options
@@ -50,14 +52,15 @@ func (p *ContextProvider) Invoking(ctx context.Context, invoking agent.InvokingC
 			messages, options, err = withoutBlocks(invoking.Messages), invoking.Options, nil
 		}
 	}()
-	return p.inject(ctx, messages, options), options, nil
+	messages, err = p.inject(ctx, messages, options)
+	return messages, options, err
 }
 
 // Invoked does nothing: capture is the agent middleware's.
 func (p *ContextProvider) Invoked(context.Context, agent.InvokedContext) error { return nil }
 
 func (p *ContextProvider) inject(ctx context.Context, messages []*message.Message,
-	options []agent.Option) []*message.Message {
+	options []agent.Option) ([]*message.Message, error) {
 	ctx, op := ae.Observe(ctx, "inject", false)
 	defer op.End()
 	s := p.settings
@@ -75,28 +78,29 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		if err != nil {
 			s.reportInjection(InjectionFailure{Reason: "Resolving the identity failed; no block was added.", Err: err})
 			op.Done("Failed")
-			return messages
+			return messages, nil
 		}
 	}
 	if identity == nil {
 		op.Done("Skipped")
-		return messages
+		return messages, nil
 	}
 
 	taskText, ok, err := ae.DeriveTaskText(taskMessages(messages), ae.DefaultTaskTextMaxLength, ae.FollowUpThreshold)
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "Deriving the task text failed; no block was added.", Err: err})
 		op.Done("Failed")
-		return messages
+		return messages, nil
 	}
 	if !ok {
 		s.reportInjected(InjectionResult{Outcome: "NothingToInject"})
 		op.Done("NothingToInject")
-		return messages
+		return messages, nil
 	}
-	retrieved, ok := p.retrieve(ctx, op, identity, taskText)
+	retrieved, ok, err := p.retrieve(ctx, op, identity, taskText)
 	if !ok {
-		return messages
+		// err is only ever the caller's own cancellation, which propagates (as .NET's does).
+		return messages, err
 	}
 	ranked, vector, now := retrieved.ranked, retrieved.vector, retrieved.now
 	// Contract 1.10: acting on measured benefit (off by default), from the cached view, which never waits on the store.
@@ -111,7 +115,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "Rendering the block failed; no block was added.", Err: err})
 		op.Done("Failed")
-		return messages
+		return messages, nil
 	}
 	omitted = append(omitted, ae.ByteBudgetOmissions(block, s.BlockOptions)...)
 	if op != nil {
@@ -122,7 +126,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		s.reportInjected(InjectionResult{Outcome: "NothingToInject", Truncated: ranked.Truncated,
 			VectorFallback: vector.fallback, Omitted: omitted, Excluded: ranked.Excluded})
 		op.Done("NothingToInject")
-		return messages
+		return messages, nil
 	}
 
 	// The records this block delivers, at the revision each was rendered from.
@@ -149,7 +153,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 			WithheldExperienceIDs: append([]ae.UUID(nil), ids...), Omitted: omitted})
 		p.startHoldout(ctx, identity, *assignment)
 		op.Done("Withheld")
-		return messages
+		return messages, nil
 	}
 	injected := &message.Message{
 		Role:                 s.MessageRole,
@@ -181,7 +185,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		p.startHoldout(ctx, identity, *assignment)
 	}
 	op.Done("Injected")
-	return out
+	return out, nil
 }
 
 // isBlock reports whether a message is stamped as carrying an injected block.

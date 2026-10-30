@@ -149,10 +149,12 @@ for _, lesson := range page.Lessons {
   the bounds is an empty page with the outcome `Denied`, never an error and never a statement. `HasMore` is set when
   more lessons match, or may (the store answers at most 500 records).
 - **Why a lesson is ineligible**, decided in this order: `Status` (not Validated or Reinforced), `BelowConfidenceFloor`
-  (below the retrieval minimum, 0.5; a NaN is below it), `ModelAuthored` (the setup's `ExcludeModelAuthored`),
-  `OverByteBudget` (its block is larger than `BlockOptions.MaxBytes`) and `Unrenderable` (the block could not be
-  rendered; it is listed, and the others still are). .NET's `Expired` and `ContentUnconfirmed` do not exist here: this
-  port has no maximum-age policy and no provenance signing, so it never answers them.
+  (below the retrieval policy's `MinimumConfidence`, 0.5 by default, which the reason names; a NaN is below it),
+  `ModelAuthored` (the setup's `ExcludeModelAuthored`), `Expired` (contract 1.12: its last activity is more than the
+  retrieval policy's `MaxAge` before the page's clock), `OverByteBudget` (its block is larger than
+  `BlockOptions.MaxBytes`) and `Unrenderable` (the block could not be rendered; it is listed, and the others still
+  are). The view takes the setup's `RetrievalPolicy` (`ae.LessonsOptions.RetrievalPolicy`). .NET's
+  `ContentUnconfirmed` does not exist here: this port has no provenance signing, so it never answers it.
 - **Injections.** `LastInjectedAt` and `InjectionCount` come from the same read as the page. When the injections table
   cannot be read (not migrated, or the role lacks the 1.4 grants) the page is read without them and says
   `InjectionsTracked` false: a nil `LastInjectedAt` then means "not known", not "never".
@@ -439,7 +441,7 @@ err := maf.UseAgentExperience(&config, maf.Options{
 | `CandidateLimit` | `CandidateLimit` | 50 | 1 to 199; the store is asked for one more, to detect truncation |
 | `MaxAbandonedSearches` | `MaxAbandonedSearches` | 16 | per `UseAgentExperience` configuration (its context provider) |
 | `MinimumMatchedTerms` | `MinimumMatchedTerms` | 3 | the text search's |
-| `MinimumVectorRelevance` | `MinimumVectorRelevance` (`*float64`) | none | when nil, `Options.MinVectorRelevance` applies |
+| `MinimumVectorRelevance` | `MinimumVectorRelevance` (`*float64`) | none | `Options.MinVectorRelevance`, when set, replaces it (as .NET's `MinimumSemanticSimilarity` does) |
 | `ConfidenceDecayPolicy.DomainKey` | `ae.ConfidenceDecayPolicy.DomainKey` | `domain` | |
 | `HalfLives` | `HalfLives` (`map[string]*time.Duration`) | empty | a nil half-life never decays; matched ordinally; copied |
 | `DefaultHalfLife` | `DefaultHalfLife` (`*time.Duration`) | none | for an unlisted domain or a record with none |
@@ -459,8 +461,14 @@ err := maf.UseAgentExperience(&config, maf.Options{
 - **Timing out.** Past `Timeout` the invocation gets no block, its inject outcome is `RetrievalTimedOut` (retrieve:
   `TimedOut`) and nothing is reported as a failure. The search is abandoned, its context cancelled, and counted until
   it returns; while `MaxAbandonedSearches` are still running, an invocation is `RetrievalTimedOut` at once without
-  searching, and `OnInjectionFailure` is told the reason, which names the cap. The vector channel is bounded by the
-  same deadline (and by `VectorTimeout`); when it overruns, the text answer stands with a fallback, as in 1.6.
+  searching, and `OnInjectionFailure` is told the reason, which names the cap. `Timeout` bounds both channels
+  together, as .NET's does: a vector channel still running at `Timeout` times the call out, even when the text search
+  had answered. `VectorTimeout` is a fallback (the text answer stands, `ProviderUnavailable` or `VectorSearchFailed`)
+  only when it is strictly shorter than `Timeout`. A store that fails at or after the deadline is a timeout too.
+- **The caller's cancellation** propagates: the context provider's `Invoking` returns `ctx.Err()`
+  (`context.Canceled`), so the agent's run ends with it, as .NET's `OperationCanceledException` does; the `inject` and
+  `retrieve` operations are reported `Faulted` with the error class `Cancelled`, and nothing is told
+  `OnInjectionFailure`. Every other failure still leaves the invocation running without a block.
 - **Denied.** A request scope the identity's bounds do not permit is `RetrievalDenied` (retrieve: `Denied`), and
   nothing is searched or embedded.
 - **Without the agent:** `RetrievalPolicy.SearchParameters` gives the store's parameters (its floor, `CandidateLimit +
@@ -524,8 +532,8 @@ Python agents on the same database.
   does so under a retrieval policy and a confidence decay (contract 1.12), reporting each exclusion.
 - **Semantic retrieval** (contract 1.6). `Embedder` is your embedding object; `RetrievalSummary`, `RecordSummary` and
   `ContentHash` are what is embedded and how it is hashed; `EmbeddingWrite` and `VectorQuery` validate before any
-  statement; `MergeChannels` and `RankHybrid` turn the text and vector candidates into one ranked list (`Rank` itself is
-  unchanged, and ranks every merged candidate, up to 100).
+  statement; `MergeChannels` and `RankHybrid` turn the text and vector candidates into one ranked list: every merged candidate
+  is scored, and the ranked list is cut to the candidate limit (50 by default; contract 1.12's cut, as .NET's).
 - **The lessons view** (contract 1.7). `NewLessons` over any `LessonsReader`, `Lessons.List` and `ListFor`, `RenderAlone`;
   see [See what it learned](#see-what-it-learned-the-lessons-view).
 - **PostgreSQL** (the `postgres` package). `Store` writes a finalized record and its initial event as the application
@@ -621,10 +629,9 @@ injection recording, the lessons view, the injection holdout, the benefit estima
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
 - **Sharing:** grants, and so the grant-disclosure choices.
-- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `Expired` or `ContentUnconfirmed` lesson state).
+- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `ContentUnconfirmed` lesson state).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
-- **Lessons view HTML and endpoint mapping.** The lessons view also does not apply a retrieval policy: its
-  eligibility uses the default confidence floor and never reports a lesson expired by `MaxAge`.
+- **Lessons view HTML and endpoint mapping.**
 - **Required environment attributes** (.NET's `RequiredEnvironmentAttributes`, and so the `EnvironmentMismatch`
   exclusion): the port only grades preferred attributes.
 - **Exporting lessons.**

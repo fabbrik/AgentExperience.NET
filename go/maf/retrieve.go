@@ -9,10 +9,12 @@ import (
 	ae "github.com/fabbrik/AgentExperience.NET/go"
 )
 
-// vectorAnswer is what the vector channel answered: its rows, or why it contributed none.
+// vectorAnswer is what the vector channel answered: its rows, or why it contributed none. pastTimeout is whether the
+// policy's Timeout had expired when it answered: a vector channel still running then times the call out.
 type vectorAnswer struct {
-	rows     []ae.SearchRow
-	fallback *ae.VectorFallback
+	rows        []ae.SearchRow
+	fallback    *ae.VectorFallback
+	pastTimeout bool
 }
 
 // retrieval is a completed retrieval: the ranked result, the vector channel's answer, and the instant it ranked at.
@@ -38,21 +40,28 @@ const (
 
 // retrieve is .NET's ExperienceRetrievalService.RetrieveAsync under the retrieval policy (contract 1.12): the
 // authorization (Denied: nothing searched or embedded), the abandoned-search cap (TimedOut at once, the failure
-// naming the cap), then both channels under the policy's Timeout (TimedOut: no block, no partial result, no failure),
-// and ranking under the policy and the confidence decay. It reports the retrieve operation and, when it ends the
-// injection, the inject operation's outcome; ok is false then.
+// naming the cap), then both channels together under the policy's Timeout (TimedOut: no block, no partial result, no
+// failure), and ranking under the policy and the confidence decay. It reports the retrieve operation and, when it ends
+// the injection, the inject operation's outcome; ok is false then. err is set only for the caller's own cancellation,
+// which propagates: both operations are reported as failed with it (Faulted, Cancelled), and nothing else is told.
 func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identity *ae.Identity,
-	taskText string) (result retrieval, ok bool) {
+	taskText string) (result retrieval, ok bool, err error) {
 	s := p.settings
 	retrieveCtx, observed := ae.Observe(ctx, "retrieve", false)
 	defer observed.End()
-	stop := func(retrieveOutcome ae.RetrievalOutcome, injectOutcome string, failure *InjectionFailure) (retrieval, bool) {
+	stop := func(retrieveOutcome ae.RetrievalOutcome, injectOutcome string, failure *InjectionFailure) (retrieval,
+		bool, error) {
 		observed.Done(string(retrieveOutcome))
 		if failure != nil {
 			s.reportInjection(*failure)
 		}
 		op.Done(injectOutcome)
-		return retrieval{}, false
+		return retrieval{}, false, nil
+	}
+	cancelled := func() (retrieval, bool, error) {
+		observed.Fail(ctx.Err())
+		op.Fail(ctx.Err())
+		return retrieval{}, false, ctx.Err()
 	}
 
 	authorization := identity.Authorization()
@@ -71,22 +80,24 @@ func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identi
 		observed.Fail(err)
 		s.reportInjection(InjectionFailure{Reason: "The retrieval policy refused the search; no block was added.", Err: err})
 		op.Done("Failed")
-		return retrieval{}, false
+		return retrieval{}, false, nil
 	}
 
-	// The whole retrieval, both channels, is bounded by the policy's Timeout.
+	// The whole retrieval, both channels together, is bounded by the policy's Timeout.
 	searchCtx, cancel := context.WithTimeout(retrieveCtx, s.retrieval.Timeout)
 	defer cancel()
+	policyExpired := func() bool { return errors.Is(searchCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil }
 
-	// Both channels run together; the vector channel never fails (it answers with a fallback instead), and is bounded
-	// by VectorTimeout and by the policy's Timeout, so waiting for it after the text search is bounded too.
+	// The vector channel never fails (it answers with a fallback instead). VectorTimeout bounds it on its own only when
+	// it is strictly shorter than the policy's Timeout; otherwise the Timeout decides, and a vector channel still
+	// running then times the call out.
 	vectorDone := make(chan vectorAnswer, 1)
 	if _, fallback := s.indexOf(); fallback != nil {
 		vectorDone <- vectorAnswer{fallback: fallback}
 	} else {
 		go func() {
-			rows, fallback := s.vectorChannel(searchCtx, identity, taskText)
-			vectorDone <- vectorAnswer{rows, fallback}
+			rows, fallback := s.vectorChannel(searchCtx, identity, taskText, s.VectorTimeout < s.retrieval.Timeout)
+			vectorDone <- vectorAnswer{rows, fallback, fallback != nil && policyExpired()}
 		}()
 	}
 
@@ -114,24 +125,31 @@ func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identi
 		cancel()
 	}
 
-	var text textAnswer
-	select {
-	case text = <-textDone:
-	case <-searchCtx.Done():
-		abandon()
-		if ctx.Err() != nil {
-			// The caller's own cancellation: reported as a failed search, as before the policy.
-			observed.Done(string(ae.RetrievalFailed))
-			s.reportInjection(InjectionFailure{Reason: "The search failed; no block was added.", Err: ctx.Err()})
-			op.Done("RetrievalFailed")
-			return retrieval{}, false
+	// Both answers, or the Timeout (or the caller's cancellation), whichever comes first.
+	var text *textAnswer
+	var vector *vectorAnswer
+	for text == nil || vector == nil {
+		select {
+		case answer := <-textDone:
+			text = &answer
+		case answer := <-vectorDone:
+			vector = &answer
+		case <-searchCtx.Done():
+			if text == nil {
+				abandon()
+			}
+			if ctx.Err() != nil {
+				return cancelled()
+			}
+			// A real timeout: reported, never an error, and no failure.
+			return stop(ae.RetrievalTimedOut, "RetrievalTimedOut", nil)
 		}
-		// A real timeout: reported, never an error, and no failure.
-		return stop(ae.RetrievalTimedOut, "RetrievalTimedOut", nil)
 	}
-	vector := <-vectorDone
-	if errors.Is(text.err, context.DeadlineExceeded) && ctx.Err() == nil && searchCtx.Err() != nil {
-		// The store honoured the policy's deadline and answered with it: the same timeout.
+	if ctx.Err() != nil && text.err != nil {
+		return cancelled()
+	}
+	if vector.pastTimeout || (text.err != nil && policyExpired()) {
+		// The vector channel was still running at the Timeout, or the store failed at or after it: the same timeout.
 		return stop(ae.RetrievalTimedOut, "RetrievalTimedOut", nil)
 	}
 	s.reportVectorFallback(vector.fallback)
@@ -153,8 +171,8 @@ func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identi
 		observed.Fail(err)
 		s.reportInjection(InjectionFailure{Reason: "Ranking failed; no block was added.", Err: err})
 		op.Done("Failed")
-		return retrieval{}, false
+		return retrieval{}, false, nil
 	}
 	observed.Done(string(ae.RetrievalCompleted))
-	return retrieval{ranked: ranked, vector: vector, now: now}, true
+	return retrieval{ranked: ranked, vector: *vector, now: now}, true, nil
 }

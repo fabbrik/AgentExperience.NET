@@ -319,10 +319,12 @@ type Options struct {
 	// ones included.
 	Embedder ae.Embedder
 	// MinVectorRelevance, when set (0 to 1), drops vector candidates whose relevance is below it; text candidates
-	// never are. RetrievalPolicy.MinimumVectorRelevance, when set, takes its place.
+	// never are. When set, it replaces RetrievalPolicy.MinimumVectorRelevance (as .NET's one-call setup lets
+	// MinimumSemanticSimilarity replace the policy's floor).
 	MinVectorRelevance *float64
 	// RetrievalPolicy is .NET's RetrievalPolicy (contract 1.12): the retrieval's Timeout (the text search and the
-	// vector channel together; past it the invocation gets no block and the inject outcome RetrievalTimedOut), the
+	// vector channel together: past it, even when only the vector channel is still running, the invocation gets no
+	// block and the inject outcome RetrievalTimedOut; VectorTimeout is a fallback only when strictly shorter), the
 	// search's confidence floor, candidate limit and minimum of matched terms, the expiry (MaxAge, from a record's
 	// last lifecycle activity), the recency half-life, the abandoned-search cap and the vector floor. The zero policy
 	// is .NET's RetrievalPolicy.Default; a zero field means its default (a zero MaxAge, no expiry), and a negative or
@@ -465,7 +467,8 @@ func newSettings(options Options) (*settings, error) {
 		return nil, errors.New("maf: the minimum vector relevance must be a number from 0 to 1")
 	}
 	retrievalPolicy := options.RetrievalPolicy
-	if retrievalPolicy.MinimumVectorRelevance == nil {
+	if options.MinVectorRelevance != nil {
+		// As .NET's one-call setup: the integration's floor replaces the policy's.
 		retrievalPolicy.MinimumVectorRelevance = options.MinVectorRelevance
 	}
 	resolvedPolicy, err := retrievalPolicy.Resolved()

@@ -14,11 +14,16 @@ import (
 	"time"
 
 	"github.com/microsoft/agent-framework-go/agent"
+	"github.com/microsoft/agent-framework-go/message"
 	"github.com/microsoft/agent-framework-go/tool"
 
 	ae "github.com/fabbrik/AgentExperience.NET/go"
 	"github.com/fabbrik/AgentExperience.NET/go/inmemory"
 )
+
+// postgresRetrieval is the retrieval policy every agent test that may run against PostgreSQL uses: a cold
+// Testcontainers database or the race detector must not make the default 500 ms time it out.
+var postgresRetrieval = ae.RetrievalPolicy{Timeout: 30 * time.Second}
 
 // hangingStore answers a search only once released, whatever its context says (a store that ignores cancellation).
 type hangingStore struct {
@@ -161,32 +166,132 @@ func TestARequestScopeOutsideTheBoundsIsDeniedWithoutSearching(t *testing.T) {
 	}
 }
 
-func TestTheCallersCancellationIsAFailedSearchAndTheSearchIsAbandoned(t *testing.T) {
+func TestTheCallersCancellationPropagatesAndTheSearchIsAbandoned(t *testing.T) {
+	o := observe(t)
 	h, store := newHost(t), newHangingStore(t)
 	_, provider := slowAgent(t, h, store, ae.RetrievalPolicy{Timeout: time.Hour})
 	ctx, cancel := context.WithCancel(context.Background())
-	identity := ae.Identity{Principal: "svc", Scope: testScope}
-	done := make(chan bool)
+	input := []*message.Message{{Role: message.RoleUser, Source: message.Source{Type: message.SourceTypeExternal},
+		Contents: message.Contents{&message.TextContent{Text: ticket}}}}
+	done := make(chan error)
 	go func() {
-		_, ok := provider.retrieve(ctx, nil, &identity, "refund stuck on a lock")
-		done <- ok
+		_, _, err := provider.Invoking(ctx, agent.InvokingContext{Messages: input})
+		done <- err
 	}()
 	eventually(t, func() bool { return store.calls.Load() == 1 })
 	cancel()
-	if <-done {
-		t.Fatal("a cancelled retrieval completed")
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Invoking returned %v, not the caller's cancellation", err)
 	}
 	h.mu.Lock()
-	failures := append([]InjectionFailure(nil), h.injectionFailures...)
+	failures := len(h.injectionFailures)
 	h.mu.Unlock()
-	if len(failures) != 1 || !errors.Is(failures[0].Err, context.Canceled) {
-		t.Fatalf("failures %+v", failures)
+	if failures != 0 {
+		t.Fatalf("%d failures reported for the caller's cancellation", failures)
+	}
+	for _, operation := range []string{"inject", "retrieve"} {
+		seen := o.of(operation)
+		if len(seen) != 1 || seen[0].Outcome != ae.OutcomeFaulted || seen[0].ErrorClass != ae.ErrorClassCancelled {
+			t.Fatalf("%s: %+v", operation, seen)
+		}
 	}
 	if provider.searches.Load() != 1 {
 		t.Fatalf("%d abandoned searches counted", provider.searches.Load())
 	}
 	store.open()
 	eventually(t, func() bool { return provider.searches.Load() == 0 })
+}
+
+// lateStore answers every search with a plain error the moment its context is done: after the deadline.
+type lateStore struct{ *inmemory.Store }
+
+func (lateStore) Search(ctx context.Context, _ ae.AuthorizationBounds, _ ae.SearchParameters) ([]ae.SearchRow, error) {
+	<-ctx.Done()
+	return nil, errors.New("connection reset")
+}
+
+func TestAStoreFailingAtTheDeadlineIsATimeoutNotAFailure(t *testing.T) {
+	o := observe(t)
+	h := newHost(t)
+	config := &agent.Config{Name: "triage-ticket"}
+	if err := UseAgentExperience(config, h.options(Options{Store: lateStore{h.store},
+		RetrievalPolicy: ae.RetrievalPolicy{Timeout: 5 * time.Millisecond}})); err != nil {
+		t.Fatal(err)
+	}
+	a := newAgent(newScripted(0), *config)
+	// Whichever the select sees first, the store's late error or the deadline, the call is TimedOut.
+	for range 20 {
+		runText(t, a, ticket)
+	}
+	for _, outcome := range outcomes(o, "inject") {
+		if outcome != "RetrievalTimedOut" {
+			t.Fatalf("inject outcomes %v", outcomes(o, "inject"))
+		}
+	}
+	h.mu.Lock()
+	failures := len(h.injectionFailures)
+	h.mu.Unlock()
+	if failures != 0 {
+		t.Fatalf("%d failures reported", failures)
+	}
+}
+
+func TestAVectorChannelStillRunningAtTheTimeoutTimesTheCallOut(t *testing.T) {
+	o := observe(t)
+	embedder := newFixed()
+	embedder.honour = true
+	v := &vhost{host: newHost(t)}
+	// VectorTimeout (the default, 500 ms) is not shorter than the policy's Timeout: the Timeout decides.
+	a, _, _ := wire(t, v, embeddedStore(t), Options{Embedder: embedder,
+		RetrievalPolicy: ae.RetrievalPolicy{Timeout: 50 * time.Millisecond}})
+	runText(t, a, textQuery)
+	if got := outcomes(o, "inject"); len(got) != 1 || got[0] != "RetrievalTimedOut" {
+		t.Fatalf("inject outcomes %v", got)
+	}
+	if got := outcomes(o, "retrieve"); len(got) != 1 || got[0] != "TimedOut" {
+		t.Fatalf("retrieve outcomes %v", got)
+	}
+
+	// Equal bounds: the Timeout still decides, every time.
+	o2 := observe(t)
+	a, _, _ = wire(t, v, embeddedStore(t), Options{Embedder: embedder, VectorTimeout: 50 * time.Millisecond,
+		RetrievalPolicy: ae.RetrievalPolicy{Timeout: 50 * time.Millisecond}})
+	for range 5 {
+		runText(t, a, textQuery)
+	}
+	if got := outcomes(o2, "inject"); strings.Join(got, ",") != strings.Repeat("RetrievalTimedOut,", 4)+"RetrievalTimedOut" {
+		t.Fatalf("inject outcomes %v", got)
+	}
+}
+
+func TestAShorterVectorTimeoutIsAFallbackAndTheTextAnswerStands(t *testing.T) {
+	o := observe(t)
+	embedder := newFixed()
+	embedder.honour = true
+	v := &vhost{host: newHost(t)}
+	a, _, _ := wire(t, v, embeddedStore(t), Options{Embedder: embedder, VectorTimeout: 30 * time.Millisecond,
+		RetrievalPolicy: ae.RetrievalPolicy{Timeout: 5 * time.Second}})
+	runText(t, a, textQuery)
+	if got := outcomes(o, "retrieve"); len(got) != 1 || got[0] != "Completed" {
+		t.Fatalf("retrieve outcomes %v", got)
+	}
+	if reasons := v.reasons(); len(reasons) != 1 || reasons[0] != ae.FallbackProviderUnavailable {
+		t.Fatalf("fallbacks %v", reasons)
+	}
+}
+
+func TestTheIntegrationsVectorFloorReplacesThePolicys(t *testing.T) {
+	integration, policy := 0.9, 0.2
+	s, err := newSettings(Options{Store: newHost(t).store, Identity: ae.Identity{Principal: "svc", Scope: testScope},
+		MinVectorRelevance: &integration, RetrievalPolicy: ae.RetrievalPolicy{MinimumVectorRelevance: &policy}})
+	if err != nil || *s.retrieval.MinimumVectorRelevance != integration {
+		t.Fatal(s.retrieval.MinimumVectorRelevance, err)
+	}
+	s, err = newSettings(Options{Store: newHost(t).store, Identity: ae.Identity{Principal: "svc", Scope: testScope},
+		RetrievalPolicy: ae.RetrievalPolicy{MinimumVectorRelevance: &policy}})
+	if err != nil || *s.retrieval.MinimumVectorRelevance != policy {
+		t.Fatal(s.retrieval.MinimumVectorRelevance, err)
+	}
 }
 
 func TestAnInvalidRetrievalPolicyOrDecayIsRefused(t *testing.T) {

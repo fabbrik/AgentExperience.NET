@@ -5,6 +5,7 @@ package agentexperience_test
 import (
 	"errors"
 	"math"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -50,10 +51,39 @@ func TestRetrievalPolicy(t *testing.T) {
 				rows = rows[:limit]
 			}
 
-			result, err := ae.RankWith(rows, request.Scope, request.Now, request.Preferred, ae.RankOptions{
-				ExcludeModelAuthored: request.ExcludeModelAuthored, Policy: request.Policy, Decay: request.Decay})
-			if err != nil {
-				t.Fatal(err)
+			options := ae.RankOptions{ExcludeModelAuthored: request.ExcludeModelAuthored, Policy: request.Policy,
+				Decay: request.Decay}
+			var result ae.RankedResult
+			if _, err := os.Stat(fixture(ct.RetrievalPolicyFamily, name, "vector-candidates.json")); err == nil {
+				// Hybrid: what the index is asked for, and its answer, at most that limit.
+				vectorRows, err := ct.CandidatesOf(ct.MustReadJSON(fixture(ct.RetrievalPolicyFamily, name, "vector-candidates.json")))
+				if err != nil {
+					t.Fatal(err)
+				}
+				vectorQuery, err := request.Policy.VectorQuery(request.Scope, "fixture-model", []float32{1},
+					request.ExcludeModelAuthored)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantValue, _ := expected.Get("vectorQuery")
+				want := wantValue.(*ae.Object)
+				wantGet := func(key string) any { value, _ := want.Get(key); return value }
+				if vectorQuery.Validate() != nil || vectorQuery.EffectiveMinConfidence() != ct.Number(wantGet("minConfidence")) ||
+					vectorQuery.EffectiveLimit() != int(ct.Number(wantGet("limit"))) ||
+					vectorQuery.ExcludeModelAuthored != wantGet("excludeModelAuthored") {
+					t.Fatalf("the vector query is %+v, expected %v", vectorQuery, want)
+				}
+				if len(vectorRows) > vectorQuery.EffectiveLimit() {
+					vectorRows = vectorRows[:vectorQuery.EffectiveLimit()]
+				}
+				result, err = ae.RankHybridWith(rows, vectorRows, request.Scope, request.Now, request.Preferred, options)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if result, err = ae.RankWith(rows, request.Scope, request.Now, request.Preferred, options); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if difference := ct.RankingDifference(expected, ae.RetrievalCompleted, result); difference != "" {
 				t.Fatal(difference)
@@ -216,7 +246,26 @@ func TestHybridRankingAppliesThePolicyToTheMergedCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Truncated || len(result.Ranked)+len(result.Excluded) != 4 {
+	// Each channel keeps 2 (4 merged, one Expired), and the ranked result is cut to the candidate limit.
+	if !result.Truncated || len(result.Excluded) != 1 || len(result.Ranked) != 2 {
 		t.Fatalf("%+v", result)
+	}
+}
+
+func TestTheSearchAndVectorLimitsAreDotNetsOneTo200(t *testing.T) {
+	scope := ae.Scope{TenantID: "t", ApplicationID: "a", ProjectID: "p"}
+	for limit, valid := range map[int]bool{-1: false, 0: true, 1: true, 200: true, 201: false} {
+		vector := ae.VectorQuery{Scope: scope, ModelID: "m", Vector: []float32{1}, Limit: limit}
+		if (vector.Validate() == nil) != valid {
+			t.Errorf("vector limit %d: %v", limit, vector.Validate())
+		}
+		text := ae.SearchParameters{Scope: scope, TaskText: "rotate the keys", Limit: limit}
+		if (text.Validate() == nil) != valid {
+			t.Errorf("text limit %d: %v", limit, text.Validate())
+		}
+	}
+	query, err := ae.RetrievalPolicy{CandidateLimit: 199}.VectorQuery(scope, "m", []float32{1}, true)
+	if err != nil || query.Validate() != nil || query.EffectiveLimit() != 200 || !query.ExcludeModelAuthored {
+		t.Fatal(query, err)
 	}
 }

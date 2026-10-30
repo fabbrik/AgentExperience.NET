@@ -234,7 +234,7 @@ func TestALessonTheDotNetLibraryFinalizedIsInjectedIntoTheGoAgent(t *testing.T) 
 	wire := func(scope ae.Scope) (*host, *scripted, *agent.Agent, *agent.Config) {
 		h, model := &host{}, newScripted(0)
 		config := &agent.Config{Name: "refund-agent"}
-		if err := UseAgentExperience(config, h.options(Options{Store: store,
+		if err := UseAgentExperience(config, h.options(Options{Store: store, RetrievalPolicy: postgresRetrieval,
 			Identity: ae.Identity{Principal: "go-principal", Scope: scope}})); err != nil {
 			t.Fatal(err)
 		}

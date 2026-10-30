@@ -89,6 +89,8 @@ func runGoAgent(t *testing.T, store ae.Store) ([]ae.FinalizedExperience, *script
 	model.arguments = func(int) string { return `{"suite":"unit"}` }
 	config := agent.Config{Name: "Go Agent", Tools: []tool.Tool{exits("exit=3", "exit=0", "exit=3", "exit=0")}}
 	options := h.options(Options{
+		// Generous, for the PostgreSQL leg: cold containers and the race detector.
+		RetrievalPolicy:    postgresRetrieval,
 		Store:              store,
 		Identity:           crossIdentity,
 		Verify:             ae.ToolSucceeded("run_tests", ae.WithArtifactRevision("build-7")),

@@ -137,6 +137,19 @@ func (p RetrievalPolicy) SearchParameters(scope Scope, taskText string, excludeM
 		MinimumMatchedTerms: resolved.MinimumMatchedTerms}, nil
 }
 
+// VectorQuery is the vector search's query under the policy: its confidence floor and CandidateLimit + 1 as the
+// limit (the vector floor, MinimumVectorRelevance, is applied by ranking, never sent to the index). An invalid policy
+// is an error.
+func (p RetrievalPolicy) VectorQuery(scope Scope, modelID string, vector []float32, excludeModelAuthored bool) (
+	VectorQuery, error) {
+	resolved, err := p.Resolved()
+	if err != nil {
+		return VectorQuery{}, err
+	}
+	return VectorQuery{Scope: scope, ModelID: modelID, Vector: vector, MinConfidence: resolved.MinimumConfidence,
+		Limit: resolved.CandidateLimit + 1, ExcludeModelAuthored: excludeModelAuthored}, nil
+}
+
 // ConfidenceDecayPolicy is .NET's ConfidenceDecayPolicy: how a record's confidence component fades with the age of
 // the lesson (from CreatedAt), at a rate set by its domain, the value of its environment metadata entry DomainKey.
 // Decay only reorders: it never excludes, and the store's confidence floor is on stored confidence.
@@ -385,16 +398,13 @@ func RankHybridWith(textRows, vectorRows []SearchRow, scope Scope, now Instant, 
 	limit := r.policy.CandidateLimit
 	floor := r.policy.MinimumVectorRelevance
 	var floored []SearchRow
+	// The floor first, over every vector candidate: one it drops is not counted against the candidate limit.
 	for i := range vectorRows {
-		if i > limit {
-			break
-		}
 		if floor == nil || vectorRows[i].Relevance >= *floor {
 			floored = append(floored, vectorRows[i])
 		}
 	}
-	// The checks are over each channel's first CandidateLimit candidates as returned (the floor only drops vector
-	// candidates).
+	// The checks are over each channel's first CandidateLimit candidates.
 	text, err := checkChannel(textRows, scope, limit)
 	if err != nil {
 		return RankedResult{}, err
@@ -410,6 +420,10 @@ func RankHybridWith(textRows, vectorRows []SearchRow, scope Scope, now Instant, 
 		rows[i] = SearchRow{Record: entry.Item.Record, Relevance: entry.Relevance}
 	}
 	ranked, excluded := r.rankChecked(rows, now, preferredEnvironment)
+	// The cut (contract 1.12, step 7): both channels together can hold more than CandidateLimit.
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
 	return RankedResult{Ranked: ranked, Truncated: len(textRows) > limit || len(floored) > limit,
 		Excluded: excluded}, nil
 }

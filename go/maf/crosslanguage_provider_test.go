@@ -72,6 +72,8 @@ func runProviderAgent(t *testing.T, store ae.Store) (*host, *stubMemory, []Provi
 	config := agent.Config{Name: "Provider Agent", Tools: []tool.Tool{exits(providerExits...)},
 		ContextProviders: []agent.ContextProvider{memory}}
 	options := h.options(Options{
+		// Generous, for the PostgreSQL leg: cold containers and the race detector.
+		RetrievalPolicy:    postgresRetrieval,
 		Store:              store,
 		Identity:           ae.Identity{Principal: "go-principal", Scope: providerScope},
 		Verify:             ae.ToolSucceeded("run_tests", ae.WithArtifactRevision("build-7")),

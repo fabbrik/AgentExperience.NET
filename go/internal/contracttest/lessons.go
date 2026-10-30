@@ -51,6 +51,9 @@ type LessonsCase struct {
 	// HoldoutReadRevoked: before listing, the owner revokes the application role's SELECT on the assignments; the list
 	// must fail, with expected.json's errorClass (ExpectedErrorClass).
 	HoldoutReadRevoked bool
+	// Policy is contract 1.12's retrieval policy the view runs with: query.json's minimumConfidence and maxAgeTicks
+	// (the default when absent).
+	Policy ae.RetrievalPolicy
 }
 
 // Query is the case's query.
@@ -65,7 +68,8 @@ func (c *LessonsCase) Query() ae.LessonQuery {
 func (c *LessonsCase) Options() ae.LessonsOptions {
 	now := c.Now
 	return ae.LessonsOptions{Clock: func() ae.Instant { return now },
-		Benefit: ae.BenefitPolicy{MinimumRunsPerArm: c.MinimumRunsPerArm, PerModel: c.PerModel}}
+		Benefit:         ae.BenefitPolicy{MinimumRunsPerArm: c.MinimumRunsPerArm, PerModel: c.PerModel},
+		RetrievalPolicy: c.Policy}
 }
 
 // ExpectedErrorClass is the error class a case whose list must fail names; "" for a case that lists a page.
@@ -153,6 +157,13 @@ func LoadLessonsCase(name string) (*LessonsCase, error) {
 	c.IncludeMeasuredBenefit, _ = get(query, "includeMeasuredBenefit").(bool)
 	c.PerModel, _ = get(query, "perModel").(bool)
 	c.HoldoutReadRevoked, _ = get(query, "holdoutReadRevoked").(bool)
+	if floor := get(query, "minimumConfidence"); floor != nil {
+		f := Number(floor)
+		c.Policy.MinimumConfidence = &f
+	}
+	if maxAge := get(query, "maxAgeTicks"); maxAge != nil {
+		c.Policy.MaxAge = ticks(maxAge)
+	}
 	if minimum := get(query, "minimumRunsPerArm"); minimum != nil {
 		c.MinimumRunsPerArm = int(integer(minimum))
 	}

@@ -261,13 +261,14 @@ type VectorQuery struct {
 	Statuses []ExperienceStatus
 	// MinConfidence is DefaultMinConfidence when nil.
 	MinConfidence *float64
-	// Limit is StatementLimit when 0.
+	// Limit is StatementLimit when 0; when set, 1 to MaxStatementLimit (.NET's ExperienceVectorQuery bounds).
 	Limit                int
 	ExcludeModelAuthored bool
 }
 
 // Validate refuses a search contract 1.6 refuses: a blank or overlong model ID, a vector that is not 1 to
-// MaxDimension finite components, an empty or unknown status, a minimum confidence outside 0 to 1, a negative limit.
+// MaxDimension finite components, an empty or unknown status, a minimum confidence outside 0 to 1, a limit outside 1
+// to MaxStatementLimit.
 func (q VectorQuery) Validate() error {
 	if err := ValidateModelID(q.ModelID); err != nil {
 		return err
@@ -286,8 +287,8 @@ func (q VectorQuery) Validate() error {
 	if q.MinConfidence != nil && !(*q.MinConfidence >= 0 && *q.MinConfidence <= 1) {
 		return errors.New("the minimum confidence must be a number from 0 to 1")
 	}
-	if q.Limit < 0 {
-		return errors.New("the limit must be strictly positive")
+	if q.Limit < 0 || q.Limit > MaxStatementLimit {
+		return errors.New("the limit must be from 1 to " + strconv.Itoa(MaxStatementLimit))
 	}
 	return nil
 }

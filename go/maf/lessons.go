@@ -16,16 +16,18 @@ import (
 var ErrLessonsNotAvailable = errors.New("maf: the lessons view needs a store that is an ae.LessonsReader, " +
 	"and a configuration UseAgentExperience was called on")
 
-// NewLessons is the lessons view for the options' store, block options, model-authored flag, clock (ae.Now when nil)
-// and benefit policy (its window, minimum and per-model switch decide the measured benefit, contract 1.10). Nothing
-// else of the options is used, or validated. The store must be an ae.LessonsReader.
+// NewLessons is the lessons view for the options' store, block options, model-authored flag, clock (ae.Now when nil),
+// benefit policy (its window, minimum and per-model switch decide the measured benefit, contract 1.10) and retrieval
+// policy (its MinimumConfidence and MaxAge decide eligibility, contract 1.12). Nothing else of the options is used,
+// or validated. The store must be an ae.LessonsReader.
 func NewLessons(options Options) (*ae.Lessons, error) {
 	reader, ok := options.Store.(ae.LessonsReader)
 	if !ok {
 		return nil, ErrLessonsNotAvailable
 	}
 	return ae.NewLessons(reader, ae.LessonsOptions{BlockOptions: options.BlockOptions,
-		ExcludeModelAuthored: options.ExcludeModelAuthored, Clock: options.Clock, Benefit: options.Benefit})
+		ExcludeModelAuthored: options.ExcludeModelAuthored, Clock: options.Clock, Benefit: options.Benefit,
+		RetrievalPolicy: options.RetrievalPolicy})
 }
 
 // Lessons is the lessons view over the provider's store, with its block options and model-authored flag. List a
