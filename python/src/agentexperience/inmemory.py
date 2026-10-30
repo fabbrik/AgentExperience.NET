@@ -405,6 +405,9 @@ class InMemoryExperienceStore:
         with self._lock:
             if record.experience_id in self._records or record.experience_id in self._tombstones:
                 raise ValueError("A record with this experience ID is already stored.")
+            if finalized.event.event_id in self._events:
+                # As PostgreSQL's primary key on lifecycle_events refuses it.
+                raise ValueError("A lifecycle event with this event ID is already stored.")
             self._records[record.experience_id] = _index(record)
             self._append(_initial_event(finalized.event, record.scope, self._clock(), actor))
 
@@ -849,7 +852,7 @@ class InMemoryExperienceStore:
     ) -> LifecycleCommitResult:
         """
         Commits one lifecycle event (.NET's ``CommitLifecycleEventAsync``): validated, then authorized, then under the
-        lock in the PostgreSQL store's order: a resubmitted evidence ID, a spent assessment and a taken independence
+        lock in .NET's in-memory store's order: a resubmitted evidence ID, a spent assessment and a taken independence
         key; a resubmitted event ID; the supersession gate; the revision and prior-status guards; then the write,
         stamped with the store's clock (truncated to whole microseconds).
         """
@@ -942,6 +945,7 @@ class InMemoryExperienceStore:
         if record.status != (event.prior_status if event.prior_status is not None else event.current_status):
             return LifecycleCommitResult("StatusMismatch", record.revision, record.status)
 
+        # Everything is decided and built before anything is changed, so a failure here leaves the store untouched.
         now = self._clock().truncate_to_microseconds()
         applied_revision = event.expected_revision + 1
         confidence = event.confidence
@@ -959,10 +963,17 @@ class InMemoryExperienceStore:
                 supporting_validations=confidence.new_supporting_validations,
                 contradictions=confidence.new_contradictions,
             )
-        self._records[record_id] = dataclasses.replace(self._records[record_id], record=moved)
-        self._append(_StoredEvent(event, scope, applied_revision, now, authorization.actor))
-        if confidence is not None:
-            self._add_evidence(record_id, event.event_id, confidence, applied_revision, event.current_status)
+        indexed = dataclasses.replace(self._records[record_id], record=moved)
+        stored = _StoredEvent(event, scope, applied_revision, now, authorization.actor)
+        evidence = (
+            None
+            if confidence is None
+            else self._evidence_entry(record_id, event.event_id, confidence, applied_revision, event.current_status)
+        )
+        self._records[record_id] = indexed
+        self._append(stored)
+        if evidence is not None:
+            self._apply_evidence(*evidence)
         return LifecycleCommitResult("Committed", applied_revision, None, (), confidence)
 
     def _record_duplicate(
@@ -988,15 +999,41 @@ class InMemoryExperienceStore:
         applied_revision: int,
         applied_status: ExperienceStatus,
     ) -> None:
-        self._evidence[update.evidence_id] = _StoredEvidence(
-            record_id, event_id, update, applied_revision, applied_status
+        self._apply_evidence(*self._evidence_entry(record_id, event_id, update, applied_revision, applied_status))
+
+    @staticmethod
+    def _evidence_entry(
+        record_id: uuid.UUID,
+        event_id: uuid.UUID | None,
+        update: ConfidenceUpdate,
+        applied_revision: int,
+        applied_status: ExperienceStatus,
+    ) -> tuple[
+        _StoredEvidence, tuple[uuid.UUID, str] | None, tuple[uuid.UUID, str] | None, tuple[uuid.UUID, uuid.UUID] | None
+    ]:
+        """The ledger row and the keys it claims, built without changing anything."""
+        key = (record_id, stored_independence_key(update))
+        return (
+            _StoredEvidence(record_id, event_id, update, applied_revision, applied_status),
+            key if update.counted else None,
+            key if not update.counted and event_id is not None else None,
+            None if update.assessment_id is None else (record_id, update.assessment_id),
         )
-        if update.counted:
-            self._counted_keys.add((record_id, stored_independence_key(update)))
-        elif event_id is not None:
-            self._recorded_only_keys.add((record_id, stored_independence_key(update)))
-        if update.assessment_id is not None:
-            self._spent_assessments.add((record_id, update.assessment_id))
+
+    def _apply_evidence(
+        self,
+        row: _StoredEvidence,
+        counted_key: tuple[uuid.UUID, str] | None,
+        recorded_only_key: tuple[uuid.UUID, str] | None,
+        assessment: tuple[uuid.UUID, uuid.UUID] | None,
+    ) -> None:
+        self._evidence[row.update.evidence_id] = row
+        if counted_key is not None:
+            self._counted_keys.add(counted_key)
+        if recorded_only_key is not None:
+            self._recorded_only_keys.add(recorded_only_key)
+        if assessment is not None:
+            self._spent_assessments.add(assessment)
 
     def _compare_stored_evidence(
         self, scope: Scope, event: LifecycleEvent, submitted: ConfidenceUpdate, stored: _StoredEvidence

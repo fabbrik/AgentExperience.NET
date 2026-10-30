@@ -6,8 +6,8 @@ with host-trusted or unverified evidence left out (:meth:`ExperienceLifecycleSer
 
 The service runs as .NET's does under ``IndependenceVerification.TrustHostSuppliedIdentifiers``, with no provenance
 signing, no indexing service and no capture service: only the own-run rule is checked, an assessment token is neither
-checked nor spent, and every update is admitted ``HostTrusted``. ``host_trusted_evidence="RecordedOnly"`` records such
-evidence without moving the record, as .NET does.
+checked nor spent, and every update is admitted ``HostTrusted``. By default (``host_trusted_evidence="RecordedOnly"``)
+such evidence is recorded without moving the record, as .NET does with that effect; ``"Counted"`` is an opt-in.
 
 The store operations it uses are :class:`LifecycleStore`'s, which both stores implement: read a record in exactly its
 scope, commit one lifecycle event (the revision compare-and-set, idempotency by event and evidence ID, the independence
@@ -936,7 +936,9 @@ class ExperienceLifecycleService:
 
     ``confidence_engine`` scores evidence (``None``: the heuristic); its identity is checked here, once, and a malformed
     one raises :class:`~agentexperience.confidence.ConfidenceArgumentError` naming ``confidenceEngine``.
-    ``host_trusted_evidence`` is ``Counted`` (the default) or ``RecordedOnly``.
+    ``host_trusted_evidence`` defaults to ``RecordedOnly``: until independence is verified (story 27.7), evidence is
+    recorded on its event without moving the record's counters, score or status, so unverified evidence cannot steer
+    ranking. ``Counted`` is an explicit opt-in, as .NET's ``TrustHostSuppliedIdentifiers`` with its ``Counted`` effect.
     """
 
     FIRST_EVENT_STATUS: ExperienceStatus = FIRST_EVENT_STATUS
@@ -946,7 +948,7 @@ class ExperienceLifecycleService:
         store: LifecycleStore,
         *,
         confidence_engine: ExperienceConfidenceEngine | None = None,
-        host_trusted_evidence: HostTrustedEvidenceEffect = "Counted",
+        host_trusted_evidence: HostTrustedEvidenceEffect = "RecordedOnly",
     ) -> None:
         if store is None:
             raise TypeError("store must not be None.")

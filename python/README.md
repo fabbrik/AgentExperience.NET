@@ -488,13 +488,20 @@ rule = ConfidenceEngineRule.for_engine(BayesianEngine())   # records "bayes/2.1"
 `PostgresExperienceStore`, both `LifecycleStore`s): it commits a transition, applies one piece of reuse evidence, and
 reads the confidence back with some evidence left out.
 
+> **By default, evidence moves nothing.** `host_trusted_evidence` defaults to `"RecordedOnly"`: until story 27.7 brings
+> independence verification to the ports, every piece of evidence a port applies is unverified, so it is recorded (on its
+> lifecycle event and in the evidence ledger, admitted `HostTrusted`) without moving the record's counters, score or
+> status. That keeps unverified evidence from steering ranking or contesting a lesson. To count it, opt in explicitly
+> with `ExperienceLifecycleService(store, host_trusted_evidence="Counted")`, which is .NET's
+> `IndependenceVerification.TrustHostSuppliedIdentifiers` with `HostTrustedEvidenceEffect.Counted`.
+
 ```python
 from agentexperience import (
     ApplyConfidenceEvidenceRequest, AuthorizationBounds, AuthorizationContext, CommitLifecycleTransitionRequest,
     ExperienceLifecycleService,
 )
 
-service = ExperienceLifecycleService(store)   # confidence_engine=..., host_trusted_evidence="Counted" by default
+service = ExperienceLifecycleService(store, host_trusted_evidence="Counted")   # opt in: evidence moves the record
 authorization = AuthorizationContext("host-principal", AuthorizationBounds.of(scope))
 
 committed = service.commit(authorization, CommitLifecycleTransitionRequest(
@@ -523,12 +530,13 @@ report = service.read_confidence(authorization, scope, record.experience_id, "Ex
   `IndependenceVerification.TrustHostSuppliedIdentifiers`. Only the own-run rule is checked (`Unverified`, `OwnRun`);
   every other identifier is taken as given, an assessment token is neither checked nor spent, and every update is
   admitted `HostTrusted`, which is stored with it, so a .NET reader's `ExcludeHostTrusted` or `VerifiedOnly` leaves it
-  out. `host_trusted_evidence="RecordedOnly"` records such evidence without moving the record (the event moves only
-  the revision), as .NET does.
+  out. Under the default, `host_trusted_evidence="RecordedOnly"`, such evidence is recorded without moving the record
+  (the event moves only the revision), as .NET does with that effect; `"Counted"` is the opt-in above.
 - **No provenance signing** (27.7): a record's initial counters count as verified exactly when it was finalized.
 - **No de-indexing** (27.6d): a commit that takes a record out of eligibility removes no embedding; a vector search
   already excludes it by status. **No reuse feedback** (27.6c), and finalization submits no reuse evidence.
 - **A sealed record** (`payload_version` 2) is `NotFound` for a commit, a history and a read: a port holds no key store.
+  The commit checks it only once it holds the record's row lock, so a seal that lands mid-commit still refuses it.
 - `reuse_evidence_id_for` and `reuse_event_id_for` derive the IDs .NET's finalization gives a run's reuse evidence.
 - Telemetry reports `lifecycle.commit` and `confidence.apply` as .NET does.
 

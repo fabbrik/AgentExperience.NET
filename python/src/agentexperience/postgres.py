@@ -865,10 +865,10 @@ class PostgresExperienceStore:
     ) -> LifecycleCommitResult:
         """
         Commits one lifecycle event as ``sql/lifecycle.sql``'s header orders it: validated, then authorized, then one
-        transaction at READ COMMITTED that declares the bounds, refuses a sealed record, inserts the evidence under a
-        savepoint and the event, gates a supersession, and moves the projection by compare-and-set. A unique violation
-        is recognised by its constraint's name; a serialization failure or deadlock on the projection is a stale
-        revision. Any other failure raises the driver's error, with nothing written.
+        transaction at READ COMMITTED that declares the bounds, inserts the evidence under a savepoint and the event,
+        gates a supersession, moves the projection by compare-and-set, and only then, holding the row lock, refuses a
+        sealed record (``NotFound``). A unique violation is recognised by its constraint's name; a serialization
+        failure or deadlock on the projection is a stale revision. Any other failure raises, with nothing written.
         """
         errors = validate_lifecycle_event(scope, event, authorization)
         if errors:
@@ -1077,6 +1077,9 @@ class _Commit:
     def _rollback(self) -> None:
         self._cursor.execute("ROLLBACK")
 
+    def _sealed(self) -> bool:
+        return self._scalar("sealed-record", self._record_parameters())
+
     def _record_parameters(self) -> dict[str, Any]:
         return {"experience_id": self._event.experience_record_id, **self._scope_parameters}
 
@@ -1089,11 +1092,6 @@ class _Commit:
         event = self._event
         self._begin("READ COMMITTED")
         try:
-            # 0. A port holds no key store: a sealed record's events are not its to write.
-            if self._scalar("sealed-record", self._record_parameters()):
-                self._rollback()
-                return LifecycleCommitResult("NotFound", 0, None)
-
             stored_confidence: ConfidenceUpdate | None = None
             if event.confidence is not None:
                 settled = self._insert_evidence(event.confidence)
@@ -1171,6 +1169,12 @@ class _Commit:
                 if revision != event.expected_revision:
                     return LifecycleCommitResult("StaleRevision", revision, None)
                 return LifecycleCommitResult("StatusMismatch", revision, status)
+
+            # 5. A port holds no key store, so a sealed record's events are not its to write. Checked only now that this
+            # transaction holds the row lock, so a seal cannot land between the check and the write.
+            if self._sealed():
+                self._rollback()
+                return LifecycleCommitResult("NotFound", 0, None)
 
             self._commit()
             return LifecycleCommitResult("Committed", self._applied_revision, None, (), stored_confidence)
@@ -1312,6 +1316,10 @@ class _Commit:
         if event.prior_status is not None and status != event.prior_status:
             self._rollback()
             return LifecycleCommitResult("StatusMismatch", revision, status)
+        # A port only: checked under the row lock "lock-revision-and-status" just took.
+        if self._sealed():
+            self._rollback()
+            return LifecycleCommitResult("NotFound", 0, None)
         recorded_only = submitted.as_recorded_only()
         try:
             self._insert_one(recorded_only, None, revision, status)

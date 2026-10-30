@@ -227,7 +227,7 @@ def test_writers_racing_at_one_revision_commit_exactly_once() -> None:
 
 def test_evidence_racing_for_one_key_is_counted_exactly_once() -> None:
     store, record, authorization = _seed()
-    service = ExperienceLifecycleService(store)
+    service = ExperienceLifecycleService(store, host_trusted_evidence="Counted")
     run_id, round_id = uuid.UUID(int=0x2000), uuid.UUID(int=0x2001)
     count = 12
 
@@ -285,7 +285,7 @@ class _Recorder:
 
 def test_commit_and_apply_report_their_operations() -> None:
     store, record, authorization = _seed()
-    service = ExperienceLifecycleService(store)
+    service = ExperienceLifecycleService(store, host_trusted_evidence="Counted")
     recorder = _Recorder()
     set_observer(recorder)
     try:
@@ -379,7 +379,9 @@ def test_an_engine_that_raises_is_reported_faulted_and_writes_nothing() -> None:
     from agentexperience import ApplyConfidenceEvidenceRequest
 
     store, record, authorization = _seed()
-    service = ExperienceLifecycleService(store, confidence_engine=HostEngine("broken", "1", "throws"))
+    service = ExperienceLifecycleService(
+        store, confidence_engine=HostEngine("broken", "1", "throws"), host_trusted_evidence="Counted"
+    )
     recorder = _Recorder()
     set_observer(recorder)
     try:
@@ -413,3 +415,81 @@ def test_a_derived_reuse_id_refuses_an_undefined_kind() -> None:
     )
     with pytest.raises(ValueError, match="Not a defined ConfidenceEvidenceKind"):
         reuse_evidence_id_for(uuid.UUID(int=1), scope, uuid.UUID(int=2), "Sideways")
+
+
+def _evidence_request(record: Any, base: int) -> Any:
+    from agentexperience import ApplyConfidenceEvidenceRequest
+
+    return ApplyConfidenceEvidenceRequest(
+        event_id=uuid.UUID(int=base + 1),
+        experience_id=record.experience_id,
+        scope=record.scope,
+        evidence_id=uuid.UUID(int=base + 2),
+        kind="Contradicting",
+        source="Machine",
+        run_id=uuid.UUID(int=base + 3),
+        verification_round_id=uuid.UUID(int=base + 4),
+        reason="reused and failed",
+        producer="default/1.0",
+        occurred_at=Instant.parse("2026-03-02T09:00:00+00:00"),
+    )
+
+
+def test_by_default_evidence_is_recorded_without_moving_the_record() -> None:
+    store, record, authorization = _seed()
+    service = ExperienceLifecycleService(store)
+    assert service.host_trusted_evidence == "RecordedOnly"
+    applied = service.apply_evidence(authorization, _evidence_request(record, 0x8000))
+    assert (applied.outcome, applied.counted, applied.status, applied.revision) == (
+        "Applied",
+        False,
+        record.status,
+        record.revision + 1,
+    )
+    held = next(item for item in store.records() if item.experience_id == record.experience_id)
+    assert (held.status, held.reuse_confidence, held.supporting_validations, held.contradictions) == (
+        record.status,
+        record.reuse_confidence,
+        record.supporting_validations,
+        record.contradictions,
+    )
+
+
+def test_a_finalized_record_whose_event_id_is_taken_is_refused() -> None:
+    from _contract import run_finalize_case
+
+    first, _ = run_finalize_case(read_json(FIXTURES / "finalize" / cases("finalize")[0] / "input.json"))
+    other_id = uuid.UUID(int=0x8100)
+    second = replace(first, record=replace(first.record, experience_id=other_id))
+    store = InMemoryExperienceStore(clock=lambda: Instant.parse("2026-03-02T10:00:00+00:00"))
+    bounds = AuthorizationBounds.of(first.record.scope)
+    store.insert_finalized(bounds, first, actor="finalizer")
+    with pytest.raises(ValueError, match="event ID is already stored"):
+        store.insert_finalized(bounds, second, actor="finalizer")
+    assert [record.experience_id for record in store.records()] == [first.record.experience_id]
+
+
+def _snapshot(store: InMemoryExperienceStore, record: Any, authorization: AuthorizationContext) -> Any:
+    held = next(item for item in store.records() if item.experience_id == record.experience_id)
+    history = store.get_history(authorization, HistoryQuery(record.scope, record.experience_id))
+    return held, history.events, dict(store._evidence), set(store._counted_keys), set(store._recorded_only_keys)
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("injected"), KeyboardInterrupt()], ids=["error", "interrupt"])
+def test_a_failure_mid_commit_changes_nothing_in_memory(
+    monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    import agentexperience.inmemory as inmemory
+
+    store, record, authorization = _seed()
+    service = ExperienceLifecycleService(store, host_trusted_evidence="Counted")
+    before = _snapshot(store, record, authorization)
+
+    def broken(*_: Any) -> Any:
+        raise failure
+
+    # After every decision is made and the moved record and the event are built: the ledger row fails.
+    monkeypatch.setattr(inmemory, "_StoredEvidence", broken)
+    with pytest.raises(type(failure)):
+        service.apply_evidence(authorization, _evidence_request(record, 0x8200))
+    assert _snapshot(store, record, authorization) == before
