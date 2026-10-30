@@ -1,5 +1,5 @@
 """
-AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.14.
+AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.15.
 
 Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical Reference
 block, derives the task text, classifies errors, and (with the ``postgres`` extra) writes records to and searches them
@@ -39,6 +39,35 @@ from .capabilities import (
     gated_window,
 )
 from .capture import CapturedRun, RawAttempt, RawToolCall, RunCapture
+from .confidence import (
+    ACCEPTS_EVIDENCE,
+    CONFIDENCE_EVIDENCE_KINDS,
+    CONFIDENCE_EVIDENCE_SOURCES,
+    DEFAULT_ASSESSMENT_TOKEN_LIFETIME,
+    HEURISTIC_RULE_ID,
+    MAXIMUM_ASSESSMENT_TOKEN_LIFETIME,
+    MINIMUM_ASSESSMENT_TOKEN_KEY_BYTES,
+    RULE_VERSION,
+    AssessmentTokenIssuer,
+    ConfidenceArgumentError,
+    ConfidenceEngineError,
+    ConfidenceEngineRule,
+    ConfidenceEvidenceKind,
+    ConfidenceEvidenceSource,
+    ConfidenceIndependenceKey,
+    ConfidenceUpdate,
+    ExperienceConfidenceEngine,
+    ExperienceConfidenceInput,
+    ExperienceIndependenceOptions,
+    HostTrustedEvidenceEffect,
+    IndependenceRefusal,
+    IndependenceVerification,
+    IssuedAssessmentToken,
+    ReuseConfidenceHeuristicEngine,
+    accepts_evidence_in,
+    independence_key_for,
+    status_after,
+)
 from .embedding import (
     Embedder,
     EmbeddingWrite,
@@ -135,9 +164,9 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.14"
-"""The contract version this package passes: every fixture of contract 1.14, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
-1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12 and 1.13 fixture."""
+CONTRACT_VERSION = "1.15"
+"""The contract version this package passes: every fixture of contract 1.15, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13 and 1.14 fixture."""
 
 SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.0",
@@ -155,15 +184,25 @@ SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.12",
     "1.13",
     "1.14",
+    "1.15",
 )
 """Every contract version whose fixtures this package passes."""
 
 __all__ = [
+    "ACCEPTS_EVIDENCE",
+    "CONFIDENCE_EVIDENCE_KINDS",
+    "CONFIDENCE_EVIDENCE_SOURCES",
     "CONTRACT_VERSION",
+    "DEFAULT_ASSESSMENT_TOKEN_LIFETIME",
     "DEFAULT_HOLDOUT_SALT",
+    "HEURISTIC_RULE_ID",
+    "MAXIMUM_ASSESSMENT_TOKEN_LIFETIME",
+    "MINIMUM_ASSESSMENT_TOKEN_KEY_BYTES",
     "MODEL_METADATA_KEY",
+    "RULE_VERSION",
     "SUPPORTED_CONTRACT_VERSIONS",
     "TOOL_RISK_CLASSES",
+    "AssessmentTokenIssuer",
     "Attempt",
     "AuthorizationBounds",
     "BenefitAccumulator",
@@ -181,7 +220,14 @@ __all__ = [
     "CapturedRun",
     "ChatReflectorOptions",
     "ClosedVerificationRound",
+    "ConfidenceArgumentError",
     "ConfidenceDecayPolicy",
+    "ConfidenceEngineError",
+    "ConfidenceEngineRule",
+    "ConfidenceEvidenceKind",
+    "ConfidenceEvidenceSource",
+    "ConfidenceIndependenceKey",
+    "ConfidenceUpdate",
     "DeterministicReflector",
     "Duration",
     "Embedder",
@@ -191,6 +237,9 @@ __all__ = [
     "Evidence",
     "ExcludedRecord",
     "ExclusionReason",
+    "ExperienceConfidenceEngine",
+    "ExperienceConfidenceInput",
+    "ExperienceIndependenceOptions",
     "ExperienceLessons",
     "ExperienceRecord",
     "ExperienceReflector",
@@ -202,8 +251,12 @@ __all__ = [
     "HoldoutOptions",
     "HoldoutOutcomeReader",
     "HoldoutOutcomeRow",
+    "HostTrustedEvidenceEffect",
+    "IndependenceRefusal",
+    "IndependenceVerification",
     "InitialLifecycleEvent",
     "Instant",
+    "IssuedAssessmentToken",
     "Lesson",
     "LessonBenefit",
     "LessonCheck",
@@ -241,6 +294,7 @@ __all__ = [
     "RetrievalOutcome",
     "RetrievalPolicy",
     "RetrievalPolicyError",
+    "ReuseConfidenceHeuristicEngine",
     "RunCapture",
     "RunExposure",
     "Sanitization",
@@ -260,6 +314,7 @@ __all__ = [
     "VectorHit",
     "VectorQuery",
     "VectorSearchResult",
+    "accepts_evidence_in",
     "approach_tool_calls",
     "assign_holdout",
     "assign_provider_holdout",
@@ -276,6 +331,7 @@ __all__ = [
     "from_stored",
     "gated_window",
     "holdout_fraction",
+    "independence_key_for",
     "initial_event_id_for",
     "is_valid_provider_key",
     "lessons_html_response",
@@ -289,5 +345,6 @@ __all__ = [
     "render_lessons_html",
     "retrieval_summary",
     "select_block",
+    "status_after",
     "to_stored",
 ]

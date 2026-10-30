@@ -1,0 +1,8 @@
+{
+  "score": null,
+  "refusal": {
+    "exception": "ArgumentOutOfRangeException",
+    "parameter": "contradictions",
+    "message": null
+  }
+}

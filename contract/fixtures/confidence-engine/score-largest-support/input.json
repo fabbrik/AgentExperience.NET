@@ -1,0 +1,6 @@
+{
+  "description": "Supporting at int.MaxValue and nothing against: the largest score below 1.",
+  "operation": "score",
+  "supportingValidations": 2147483647,
+  "contradictions": 0
+}

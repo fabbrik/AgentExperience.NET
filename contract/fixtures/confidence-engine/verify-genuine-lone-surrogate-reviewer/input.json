@@ -1,0 +1,22 @@
+{
+  "description": "Minted for a reviewer holding a lone surrogate, which .NET signs as U+FFFD (and JSON carries as U+FFFD): the reviewer spelled with U+FFFD verifies.",
+  "operation": "verify",
+  "options": {
+    "verification": "Verified",
+    "assessmentTokenKey": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "assessmentTokenLifetimeTicks": 864000000000,
+    "nowUnixMs": 1772442000000
+  },
+  "token": "aexat1.AQAAAPYAAEAAgAAAAAAABAAAAAGcrcaagAAAAZyy7PaAAAEAAAD2AABAAIAAAAAAAAABNuOFdsHdxuKruL_JZKN6SGr-DONzee7-QI1FrgxXuNw",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "runId": "000000f6-0000-4000-8000-000000000100",
+  "reviewer": "rev�iewer",
+  "kind": "Supporting"
+}

@@ -1,0 +1,9 @@
+{
+  "description": "A space in the RuleId is refused.",
+  "operation": "rule",
+  "engine": {
+    "ruleId": "bayes x",
+    "ruleVersion": "1",
+    "score": "bayes"
+  }
+}

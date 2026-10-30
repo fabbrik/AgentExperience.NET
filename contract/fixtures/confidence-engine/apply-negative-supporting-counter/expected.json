@@ -1,0 +1,12 @@
+{
+  "acceptsEvidence": true,
+  "statusAfter": "Validated",
+  "update": null,
+  "recordedOnly": null,
+  "independenceKey": null,
+  "refusal": {
+    "exception": "ArgumentOutOfRangeException",
+    "parameter": "record.SupportingValidations",
+    "message": null
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "description": "Repeated independent support: towards 1 without reaching it.",
+  "operation": "score",
+  "supportingValidations": 1000000,
+  "contradictions": 0
+}

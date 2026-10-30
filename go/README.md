@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.14, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.14 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12 and 1.13 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.15, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.15 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13 and 1.14 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -266,6 +266,51 @@ read from the provider's raw response (`Model`), which the OpenAI provider sets.
 NFKC, which the core module does not carry: the `maf` module registers it (`ae.SetUnicodeNormalizer`) when it is
 imported; a host screening model-authored reflections without `maf` registers `norm.NFKC.String` itself, or every
 model-authored reflection is refused as text that cannot be normalized.
+
+### Computing confidence
+
+Contract 1.15. The core computes how a record's reuse confidence moves when evidence about reusing it arrives, exactly
+as .NET's confidence engine does. It only computes: nothing here reads or writes a store.
+
+```go
+rule := ae.DefaultConfidenceEngineRule() // (1 + S) / (2 + S + F), recorded as "1.0.0"
+update, err := rule.Apply(record, ae.ConfidenceEvidence{
+	EvidenceID: evidenceID, Kind: ae.EvidenceSupporting, Source: ae.EvidenceMachine,
+	RunID: runID, VerificationRoundID: &roundID,
+})
+// update.NewReuseConfidence is 0.75 for a freshly validated record (S 1 -> 2).
+next := ae.StatusAfter(record.Status, ae.EvidenceContradicting) // Contested for a Validated or Reinforced record
+key, err := ae.IndependenceKeyFor(update)                        // machine:<run>:<round>
+
+type bayes struct{} // a host engine, as .NET's IExperienceConfidenceEngine
+
+func (bayes) RuleID() string      { return "bayes" }
+func (bayes) RuleVersion() string { return "2.1" }
+func (bayes) Score(in ae.ExperienceConfidenceInput) (float64, error) {
+	s, f := float64(in.SupportingValidations), float64(in.Contradictions)
+	return (2 + s) / (4 + s + f), nil
+}
+
+hosted, err := ae.NewConfidenceEngineRule(bayes{}, ae.ConfidenceEngineParameter) // records "bayes/2.1"
+```
+
+- **The default rule** (`ConfidenceScore`) is a heuristic for ranking, never a probability, strictly inside (0, 1).
+  `ApplyConfidenceEvidence` is .NET's `ReuseConfidenceHeuristic.Apply`: the counters after one piece of evidence,
+  refusing a negative stored counter or one at 2,147,483,647 (`MaxEvidenceCounter`) that would overflow .NET's.
+  `AcceptsEvidenceIn` is `Validated`, `Reinforced` or `Contested`.
+- **A host engine** (`ConfidenceEngine`) is checked once by `NewConfidenceEngineRule`: each identity 1 to 64
+  characters from `[A-Za-z0-9._-]`, never the default's `reuse-heuristic`. `rule.Apply` asks it for the score of the
+  record as read with the counters after the evidence; a score that is NaN, infinite or outside [0, 1] is a
+  `*ConfidenceEngineError` with .NET's message, never clamped, and an error the engine returns is passed on unchanged.
+  Refusals are `*ConfidenceArgumentError`, carrying .NET's exception type and parameter name.
+- **Assessment tokens.** `NewAssessmentTokenIssuer(ae.IndependenceOptions{AssessmentTokenKey: key})` mints the token a
+  human assessment carries (`Issue(reviewer, scope, runID, kind, experienceIDs)`, with the reviewer's `ae.Identity`),
+  byte for byte .NET's format: call it from your review flow, never from code an agent drives. The key is at least 32
+  bytes; the lifetime a day by default (also when zero), at most 30 days. `IssuedAssessmentToken` and
+  `IndependenceOptions` keep the token and the key out of `String` and `GoString` (so `%v`, `%+v`, `%s`, `%#v`), and
+  the key out of `encoding/json` (`json:"-"`); other verbs and your own copies are yours to keep private. The
+  reviewer's authorization is `Identity.Authorization()`: with nil `Bounds` it is the identity's own scope, so a
+  reviewer issuing for another scope needs `Bounds` that permit it. Checking a token is unexported, as in .NET.
 
 ### What the one call wires
 
@@ -826,15 +871,18 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.14: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.15: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and the injection
 options (the receiving agent, the model-authored policy, the request resolver and the injection decision),
 injection recording, the lessons view and its HTML page, exporting measured lessons, the model-backed reflector and its
-content guard, the injection holdout, the benefit estimate, the benefit policy, measuring another memory provider and
+content guard, computing confidence (the default rule, a host engine and assessment tokens), the injection holdout,
+the benefit estimate, the benefit policy, measuring another memory provider and
 telemetry. These .NET features have no counterpart here, so a mixed
 .NET and Go deployment should keep them on the .NET side:
 
-- **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
+- **Lifecycle after finalization:** applying evidence to a stored record (the port computes the update, contract 1.15,
+  but nothing stores it: no lifecycle event, evidence ledger or independence index), reuse feedback, reinforcement,
+  contest and revocation.
 - **Session tracking and withdrawal notices** (.NET's `SessionLimits`, `SessionStateKey`; story 27.6), and the final
   eligibility re-read before injection, with its `Limits.EligibilityCheckTimeout` and `Limits.MaxAbandonedReads`
   (story 27.6): the port injects the records as retrieval ranked them, and `DecisionContext.Current` is the ranked
@@ -860,7 +908,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.14 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.15 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The

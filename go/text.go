@@ -68,9 +68,29 @@ func utf16Compare(a, b string) int {
 	return 0
 }
 
-// utf8Bytes is s as .NET's Encoding.UTF8.GetBytes encodes it: anything that is not a valid character is U+FFFD.
+// utf8Bytes is s as .NET's Encoding.UTF8.GetBytes encodes it: each invalid unit is its own U+FFFD, as each lone
+// surrogate is in .NET. A surrogate encoded as UTF-8 (ED A0-BF 80-BF) is one unit, as it is one UTF-16 code unit;
+// every other invalid byte is one. A run of invalid bytes is never collapsed into one U+FFFD, so two different
+// strings never encode alike (which would let them share a derived ID or a token's MAC).
 func utf8Bytes(s string) []byte {
-	return []byte(strings.ToValidUTF8(s, "\uFFFD"))
+	if utf8.ValidString(s) {
+		return []byte(s)
+	}
+	out := make([]byte, 0, len(s)+8)
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r != utf8.RuneError || size > 1 {
+			out = append(out, s[i:i+size]...)
+			i += size
+			continue
+		}
+		if i+2 < len(s) && s[i] == 0xED && s[i+1] >= 0xA0 && s[i+1] <= 0xBF && s[i+2] >= 0x80 && s[i+2] <= 0xBF {
+			size = 3
+		}
+		out = append(out, "\uFFFD"...)
+		i += size
+	}
+	return out
 }
 
 // ---- Unicode general categories --------------------------------------------------------------------------------
@@ -244,6 +264,12 @@ func formatRoundTrip(value float64) string {
 }
 
 func formatShortest(value float64, bits int) string {
+	return formatShortestFrom(value, bits, 15)
+}
+
+// formatShortestFrom is formatShortest with scientific notation from 10^largest (formatShortest uses 15; .NET's
+// double.ToString("R") itself switches at 17: 1E+17, but 10000000000000000).
+func formatShortestFrom(value float64, bits, largest int) string {
 	switch {
 	case math.IsNaN(value):
 		return "NaN"
@@ -269,7 +295,7 @@ func formatShortest(value float64, bits int) string {
 	if digits == "" {
 		digits = "0"
 	}
-	if exponent < -4 || exponent >= 15 {
+	if exponent < -4 || exponent >= largest {
 		body := digits[:1]
 		if len(digits) > 1 {
 			body += "." + digits[1:]

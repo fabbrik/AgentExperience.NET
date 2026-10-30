@@ -1,0 +1,11 @@
+{
+  "assessmentId": null,
+  "token": null,
+  "issuedAtUnixMs": null,
+  "expiresAtUnixMs": null,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "scope",
+    "message": "The scope lies outside the reviewer's authorization."
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "accepted": false,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "options",
+    "message": "ExperienceIndependenceOptions.Verification must be a defined mode."
+  }
+}

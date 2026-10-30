@@ -201,6 +201,37 @@ What the engine is given, and what it is not:
   when the record's first evidence is applied. Scores stored before the engine changed keep the rule they were
   recorded under until new evidence arrives.
 
+## In Python and Go
+
+Since contract 1.15 ([what it adds](../../contract/README-1.15.md)), both ports compute confidence as .NET does: the
+default rule, the update one piece of evidence makes, the status it moves the record to, the independence key it is
+counted under, a host engine checked and recorded as above, and assessment tokens minted in .NET's exact format. The
+contract's `confidence-engine` fixtures are .NET's results, and each port must give the same numbers (within 1e-12),
+statuses, rule strings, keys, tokens and refusals.
+
+They only compute. Applying evidence to a stored record (`ApplyEvidenceAsync`'s transaction: the lifecycle event, the
+evidence ledger, the independence index and the revision check), verifying a key's inputs, reuse feedback and
+`ReadConfidenceAsync` are not in the ports yet, so a mixed deployment applies evidence from .NET.
+
+| .NET | Python (`agentexperience.confidence`) | Go (core module) |
+| --- | --- | --- |
+| `ReuseConfidenceHeuristic.Score` | `score(s, f)` | `ConfidenceScore(s, f)` |
+| `ReuseConfidenceHeuristic.Apply` | `apply(record, evidence_id, kind, source, run_id, round_id, reviewer, detail)` | `ApplyConfidenceEvidence(record, ConfidenceEvidence{...})` |
+| `AcceptsEvidenceIn`, `StatusAfter` | `accepts_evidence_in`, `status_after` | `AcceptsEvidenceIn`, `StatusAfter` |
+| `IndependenceKeyFor`, `ConfidenceIndependenceKey` | `independence_key_for`, `ConfidenceIndependenceKey` | `IndependenceKeyFor`, `MachineIndependenceKey`, `HumanIndependenceKey` |
+| `IExperienceConfidenceEngine`, `ReuseConfidenceHeuristicEngine` | `ExperienceConfidenceEngine` (a protocol), `ReuseConfidenceHeuristicEngine.INSTANCE` | `ConfidenceEngine`, `ReuseConfidenceHeuristicEngine{}` |
+| The lifecycle service's engine check and score (`confidenceEngine`) | `ConfidenceEngineRule.for_engine(engine)`, `.apply(...)`, `.recorded` | `NewConfidenceEngineRule(engine, ae.ConfidenceEngineParameter)`, `.Apply`, `.Recorded()` |
+| `AssessmentTokenIssuer`, `ExperienceIndependenceOptions` | `AssessmentTokenIssuer`, `ExperienceIndependenceOptions` | `NewAssessmentTokenIssuer`, `IndependenceOptions` |
+| `ArgumentException` (and its parameter), `InvalidOperationException` | `ConfidenceArgumentError` (`.exception`, `.parameter`), `ConfidenceEngineError` | `*ConfidenceArgumentError`, `*ConfidenceEngineError` |
+
+Where a port differs, each forced by the language: an engine failure is the engine's own exception in Python and the
+error it returns in Go, passed on unchanged as .NET's is; Go reads a zero token lifetime as the default (a day) rather
+than refusing it, as its options do elsewhere; and Python states a lifetime as a `timedelta`, in whole microseconds
+rather than .NET's 100-nanosecond ticks. The token, which carries whole milliseconds, is the same either way. Python's
+`ExperienceIdentity` refuses a blank reviewer principal (`ValueError`) when it is built, before the issuer can; Go's
+`Identity.Authorization()` with nil `Bounds` is the identity's own scope, so a reviewer issuing for another scope needs
+bounds that permit it.
+
 ## Independence is keyed, and the database owns the key
 
 Machine evidence counts once per `(record, run, verification round)`; human evidence once per `(record, reviewer,

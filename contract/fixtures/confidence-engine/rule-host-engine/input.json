@@ -1,0 +1,9 @@
+{
+  "description": "A host engine records \"{RuleId}/{RuleVersion}\".",
+  "operation": "rule",
+  "engine": {
+    "ruleId": "bayes",
+    "ruleVersion": "2.1",
+    "score": "bayes"
+  }
+}
