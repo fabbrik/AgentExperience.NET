@@ -34,6 +34,7 @@ from .benefit import (
     estimate_benefit,
 )
 from .block import Block, BlockOptions, RankedRecord, render_block
+from .capabilities import CapabilityGate
 from .encoding import TICKS_PER_SECOND, Duration, Instant
 from .observer import INFRASTRUCTURE, UNEXPECTED, classify, observe
 from .records import Scope
@@ -66,7 +67,15 @@ SCOPE_MEASURED_HARMFUL_DETAIL = (
 )
 """The omission detail of every record in a scope whose lessons together were measured as hurting."""
 
-OmissionReason = Literal["MeasuredHarmful", "ModelAuthored", "OverRecordLimit", "OverByteBudget"]
+OmissionReason = Literal[
+    "MeasuredHarmful",
+    "ModelAuthored",
+    "ToolUnavailable",
+    "RiskClassExceeded",
+    "HostDenied",
+    "OverRecordLimit",
+    "OverByteBudget",
+]
 """Why a ranked record was not injected: .NET's ``InjectionOmissionReason`` names, those this port can give."""
 
 
@@ -260,11 +269,13 @@ def select_candidates(
     request_limit: int | None = None,
     exclude_model_authored: bool = False,
     prefer_measured_helpful: bool = False,
+    gate: CapabilityGate | None = None,
 ) -> tuple[list[RankedRecord], list[OmittedRecord]]:
     """
     .NET's ``SelectCandidates``: with a view and ``prefer_measured_helpful``, the lessons measured as helping first
     (within the request's window and within the backfill past it, separately); then, in that order, a record the view
-    marks harmful is omitted as ``MeasuredHarmful``, an excluded model-authored record as ``ModelAuthored``, and past
+    marks harmful is omitted as ``MeasuredHarmful``, an excluded model-authored record as ``ModelAuthored``, one the
+    capability ``gate`` keeps out (contract 1.13) as ``ToolUnavailable`` or ``RiskClassExceeded``, and past
     ``min(max_records, request_limit)`` selections as ``OverRecordLimit``. A record past the request limit is backfill:
     selected if a slot is left, otherwise dropped unreported.
     """
@@ -289,6 +300,9 @@ def select_candidates(
         if exclude_model_authored and is_model_authored(record.reflection):
             sink.append(OmittedRecord(record.experience_id, "ModelAuthored"))
             continue
+        if gate is not None and (gated := gate.check(record)) is not None:
+            sink.append(OmittedRecord(record.experience_id, gated))
+            continue
         if len(selected) < limit:
             selected.append(candidate)
             continue
@@ -310,9 +324,12 @@ def select_block(
     request_limit: int | None = None,
     exclude_model_authored: bool = False,
     prefer_measured_helpful: bool = False,
+    gate: CapabilityGate | None = None,
+    decide: Callable[[RankedRecord], OmittedRecord | None] | None = None,
 ) -> Selection:
-    """:func:`select_candidates`, then the block rendered from what it selected: a record the byte budget drops is
-    omitted as ``OverByteBudget``, after the selection's omissions."""
+    """:func:`select_candidates`, then, with ``decide`` (the host's decision, contract 1.13), each selected record in
+    order that it answers an omission for is dropped (its slot is not backfilled), then the block rendered from what is
+    left: a record the byte budget drops is omitted as ``OverByteBudget``, after every other omission."""
     selected, omitted = select_candidates(
         ranked,
         view,
@@ -320,8 +337,18 @@ def select_block(
         request_limit=request_limit,
         exclude_model_authored=exclude_model_authored,
         prefer_measured_helpful=prefer_measured_helpful,
+        gate=gate,
     )
-    block = render_block(selected, options)
+    injectable = selected
+    if decide is not None:
+        injectable = []
+        for candidate in selected:
+            denied = decide(candidate)
+            if denied is None:
+                injectable.append(candidate)
+            else:
+                omitted.append(denied)
+    block = render_block(injectable, options)
     detail = (
         f"The record did not fit in the remaining part of the {options.max_bytes}-byte budget, and a record is never "
         "cut to fit."

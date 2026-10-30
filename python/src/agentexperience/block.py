@@ -459,6 +459,20 @@ def _final_verified_attempt(record: ExperienceRecord, attempts: list[Attempt]) -
     return attempts[-1] if attempts and attempts[-1].error is None else None
 
 
+def approach_tool_calls(record: ExperienceRecord) -> list[ToolCall] | None:
+    """The calls of the attempt a record's ``Worked:`` line names, in call order, cut to ``MAX_APPROACH_TOOL_NAMES``:
+    exactly what its ``Tried:`` line shows of that attempt (.NET's ``HistoricalReferenceWriter.ApproachToolCalls``).
+    ``None`` when the record has no approach: not verified, quarantined, no attempts, duplicated attempt sequence
+    numbers, or a final attempt with an error. Contract 1.13's capability gate checks these."""
+    if record.status == "Quarantined":
+        return None
+    attempts = _ordered_attempts(record)
+    if not attempts:
+        return None
+    final = _final_verified_attempt(record, attempts)
+    return None if final is None else _ordered_calls(final)[0]
+
+
 def _ordered_calls(attempt: Attempt) -> tuple[list[ToolCall], bool]:
     ordered = sorted(attempt.tool_calls, key=lambda call: call.sequence_number)[: MAX_APPROACH_TOOL_NAMES + 1]
     clamped = len(ordered) > MAX_APPROACH_TOOL_NAMES
