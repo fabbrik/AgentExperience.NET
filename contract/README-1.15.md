@@ -110,6 +110,11 @@ fixtures. .NET's token codec is internal and so is each port's; the issuer is pu
 mode as `Verified` and a missing clock as the system clock, as 1.12 allows for the retrieval policy. It still refuses
 every other value .NET refuses. A language whose duration type is coarser than .NET's 100-nanosecond tick (Python's
 `timedelta`, whole microseconds) states a lifetime in its own unit; the whole milliseconds a token carries are the same.
+A port's own identity type may refuse a blank reviewer principal before its issuer does (Python's `ExperienceIdentity`
+raises `ValueError` when it is built), and may derive the reviewer's authorization from the identity (Go's
+`Identity.Authorization()` with no bounds is the identity's own scope); every other refusal is the issuer's, in .NET's
+order. A port whose strings cannot hold a lone surrogate (Go) encodes each invalid unit as its own U+FFFD, never a run
+of them as one.
 
 ## The fixtures
 
@@ -143,7 +148,9 @@ wrote one, and `null` where the runtime's guard clause or a host engine did, in 
   -> `assessmentId`, `token`, `issuedAtUnixMs` and `expiresAtUnixMs`, or `refusal`. The issuer draws a random
   assessment ID; the fixture's token is the same codec's encoding under the case's `assessmentId`, so a port checks
   the issuer's refusals, then encodes under that ID with its codec.
-- **`verify`**: `options`, `token` (`null` for none), and the binding: `scope`, `runId`, `reviewer` and `kind` ->
+- **`verify`**: `options`, `token` (`null` for none), and the binding: `scope`, `runId`, `reviewer` and `kind`
+  (`Sideways` is not defined), and, when the reviewer or team holds a lone surrogate, which JSON text cannot carry,
+  `utf16`: the `reviewer` and `teamId` as arrays of UTF-16 code units, read in their place ->
   `refusal` (`null` for a genuine token), `assessmentId` and `covered`.
 
 Every `options` object holds `verification`, `assessmentTokenKey` (hex, `null` for none),

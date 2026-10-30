@@ -477,7 +477,9 @@ rule = ConfidenceEngineRule.for_engine(BayesianEngine())   # records "bayes/2.1"
 - **Assessment tokens.** `AssessmentTokenIssuer(ExperienceIndependenceOptions(assessment_token_key=...))` mints the
   token a human assessment carries (`issue(reviewer, scope, run_id, kind, experience_ids)`, with the reviewer's
   `ExperienceIdentity`), byte for byte .NET's format: call it from your review flow, never from code an agent drives.
-  The key is at least 32 bytes; the lifetime a day by default, at most 30 days (a `timedelta`, so whole microseconds).
+  The key is at least 32 bytes (kept out of `repr`, though not out of `dataclasses.asdict`); the lifetime a day by
+  default, at most 30 days (a `timedelta`, so whole microseconds). A blank reviewer principal is refused when the
+  `ExperienceIdentity` is built (`ValueError`), before the issuer sees it.
   Checking a token is internal, as in .NET.
 
 ### Measuring benefit: the injection holdout

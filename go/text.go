@@ -68,9 +68,29 @@ func utf16Compare(a, b string) int {
 	return 0
 }
 
-// utf8Bytes is s as .NET's Encoding.UTF8.GetBytes encodes it: anything that is not a valid character is U+FFFD.
+// utf8Bytes is s as .NET's Encoding.UTF8.GetBytes encodes it: each invalid unit is its own U+FFFD, as each lone
+// surrogate is in .NET. A surrogate encoded as UTF-8 (ED A0-BF 80-BF) is one unit, as it is one UTF-16 code unit;
+// every other invalid byte is one. A run of invalid bytes is never collapsed into one U+FFFD, so two different
+// strings never encode alike (which would let them share a derived ID or a token's MAC).
 func utf8Bytes(s string) []byte {
-	return []byte(strings.ToValidUTF8(s, "\uFFFD"))
+	if utf8.ValidString(s) {
+		return []byte(s)
+	}
+	out := make([]byte, 0, len(s)+8)
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r != utf8.RuneError || size > 1 {
+			out = append(out, s[i:i+size]...)
+			i += size
+			continue
+		}
+		if i+2 < len(s) && s[i] == 0xED && s[i+1] >= 0xA0 && s[i+1] <= 0xBF && s[i+2] >= 0x80 && s[i+2] <= 0xBF {
+			size = 3
+		}
+		out = append(out, "\uFFFD"...)
+		i += size
+	}
+	return out
 }
 
 // ---- Unicode general categories --------------------------------------------------------------------------------

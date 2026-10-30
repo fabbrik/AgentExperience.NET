@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -118,13 +119,14 @@ func AcceptsEvidenceIn(status ExperienceStatus) bool {
 }
 
 // ConfidenceScore is the heuristic's reuse confidence, (1 + S) / (2 + S + F): strictly inside (0, 1). A negative
-// count is refused (a *ConfidenceArgumentError naming supportingValidations or contradictions, the first first).
+// count, or one past .NET's 32-bit counters (MaxEvidenceCounter), is refused (a *ConfidenceArgumentError naming
+// supportingValidations or contradictions, the first first).
 func ConfidenceScore(supportingValidations, contradictions int64) (float64, error) {
-	if supportingValidations < 0 {
-		return 0, outOfRange("supportingValidations", "the supporting validations must not be negative")
+	if supportingValidations < 0 || supportingValidations > MaxEvidenceCounter {
+		return 0, outOfRange("supportingValidations", "the supporting validations must be 0 to 2147483647")
 	}
-	if contradictions < 0 {
-		return 0, outOfRange("contradictions", "the contradictions must not be negative")
+	if contradictions < 0 || contradictions > MaxEvidenceCounter {
+		return 0, outOfRange("contradictions", "the contradictions must be 0 to 2147483647")
 	}
 	s, f := float64(supportingValidations), float64(contradictions)
 	return (1 + s) / (2 + s + f), nil
@@ -192,11 +194,11 @@ type ConfidenceEvidence struct {
 // (naming record.SupportingValidations or record.Contradictions), and so is a counter at MaxEvidenceCounter this
 // evidence would increment (naming record). The record's status is not checked here: see AcceptsEvidenceIn.
 func ApplyConfidenceEvidence(record ExperienceRecord, evidence ConfidenceEvidence) (ConfidenceUpdate, error) {
-	if record.SupportingValidations < 0 {
-		return ConfidenceUpdate{}, outOfRange("record.SupportingValidations", "the record's supporting validations are negative")
+	if record.SupportingValidations < 0 || record.SupportingValidations > MaxEvidenceCounter {
+		return ConfidenceUpdate{}, outOfRange("record.SupportingValidations", "the record's supporting validations are out of range")
 	}
-	if record.Contradictions < 0 {
-		return ConfidenceUpdate{}, outOfRange("record.Contradictions", "the record's contradictions are negative")
+	if record.Contradictions < 0 || record.Contradictions > MaxEvidenceCounter {
+		return ConfidenceUpdate{}, outOfRange("record.Contradictions", "the record's contradictions are out of range")
 	}
 	supporting, contradictions := record.SupportingValidations, record.Contradictions
 	if evidence.Kind == EvidenceSupporting {
@@ -320,16 +322,21 @@ type ConfidenceEngineRule struct {
 	recorded string
 }
 
-// DefaultConfidenceEngineRule is the heuristic's rule, recording "1.0.0".
-var DefaultConfidenceEngineRule = &ConfidenceEngineRule{ReuseConfidenceHeuristicEngine{}, ConfidenceRuleVersion}
+var defaultConfidenceEngineRule = &ConfidenceEngineRule{ReuseConfidenceHeuristicEngine{}, ConfidenceRuleVersion}
 
-// NewConfidenceEngineRule checks engine's identity (nil or the heuristic: DefaultConfidenceEngineRule). A malformed
+// DefaultConfidenceEngineRule is the heuristic's rule, recording "1.0.0" (always the same one: it cannot be replaced).
+func DefaultConfidenceEngineRule() *ConfidenceEngineRule { return defaultConfidenceEngineRule }
+
+// errNoEngine is a ConfidenceEngineRule that NewConfidenceEngineRule did not build: the zero value has no engine.
+var errNoEngine = errors.New("the confidence engine rule has no engine: build it with NewConfidenceEngineRule")
+
+// NewConfidenceEngineRule checks engine's identity (nil or the heuristic: DefaultConfidenceEngineRule()). A malformed
 // RuleID or RuleVersion (the ID first), or a host engine claiming HeuristicRuleID, is refused with a
 // *ConfidenceArgumentError naming parameter (.NET's lifecycle service names ConfidenceEngineParameter).
 func NewConfidenceEngineRule(engine ConfidenceEngine, parameter string) (*ConfidenceEngineRule, error) {
 	switch engine.(type) {
 	case nil, ReuseConfidenceHeuristicEngine, *ReuseConfidenceHeuristicEngine:
-		return DefaultConfidenceEngineRule, nil
+		return defaultConfidenceEngineRule, nil
 	}
 	ruleID, ruleVersion := engine.RuleID(), engine.RuleVersion()
 	if !wellFormedEngineIdentity(ruleID) {
@@ -357,15 +364,28 @@ func wellFormedEngineIdentity(value string) bool {
 	return true
 }
 
-// Engine is the rule's engine.
-func (r *ConfidenceEngineRule) Engine() ConfidenceEngine { return r.engine }
+// Engine is the rule's engine (nil for a rule NewConfidenceEngineRule did not build).
+func (r *ConfidenceEngineRule) Engine() ConfidenceEngine {
+	if r == nil {
+		return nil
+	}
+	return r.engine
+}
 
-// Recorded is the rule string every update records.
-func (r *ConfidenceEngineRule) Recorded() string { return r.recorded }
+// Recorded is the rule string every update records ("" for a rule NewConfidenceEngineRule did not build).
+func (r *ConfidenceEngineRule) Recorded() string {
+	if r == nil {
+		return ""
+	}
+	return r.recorded
+}
 
 // Score is the engine's score for record with these counters. An error the engine returns is passed on unchanged; a
 // value that is NaN, infinite or outside [0, 1] is refused with a *ConfidenceEngineError, never clamped.
 func (r *ConfidenceEngineRule) Score(record ExperienceRecord, supportingValidations, contradictions int64) (float64, error) {
+	if r == nil || r.engine == nil {
+		return 0, errNoEngine
+	}
 	score, err := r.engine.Score(ExperienceConfidenceInput{record, supportingValidations, contradictions})
 	if err != nil {
 		return 0, err
@@ -380,6 +400,9 @@ func (r *ConfidenceEngineRule) Score(record ExperienceRecord, supportingValidati
 // counters (and refuses an overflow before the engine is asked anything), then the rule's engine scores the record
 // as read with the new counters, and the update records Recorded.
 func (r *ConfidenceEngineRule) Apply(record ExperienceRecord, evidence ConfidenceEvidence) (ConfidenceUpdate, error) {
+	if r == nil || r.engine == nil {
+		return ConfidenceUpdate{}, errNoEngine
+	}
 	update, err := ApplyConfidenceEvidence(record, evidence)
 	if err != nil {
 		return ConfidenceUpdate{}, err
@@ -446,9 +469,9 @@ var tokenDomainLabel = []byte("AgentExperience.AssessmentToken/v1\x00")
 type IndependenceOptions struct {
 	Verification            IndependenceVerification
 	HostTrustedEvidence     HostTrustedEvidenceEffect
-	AssessmentTokenKey      []byte
+	AssessmentTokenKey      []byte `json:"-"`
 	AssessmentTokenLifetime time.Duration
-	Clock                   func() Instant
+	Clock                   func() Instant `json:"-"`
 }
 
 // String never prints the key.
@@ -504,10 +527,11 @@ func NewAssessmentTokenIssuer(options IndependenceOptions) (*AssessmentTokenIssu
 // kind or experienceIds.
 func (i *AssessmentTokenIssuer) Issue(reviewer Identity, scope Scope, runID UUID, kind ConfidenceEvidenceKind,
 	experienceIDs []UUID) (IssuedAssessmentToken, error) {
-	if err := checkIssue(reviewer, scope, runID, kind, experienceIDs); err != nil {
+	ids := append([]UUID(nil), experienceIDs...) // checked and encoded from one copy, as .NET does
+	if err := checkIssue(reviewer, scope, runID, kind, ids); err != nil {
 		return IssuedAssessmentToken{}, err
 	}
-	return i.codec.encode(i.newUUID(), scope, runID, reviewer.Principal, kind, experienceIDs), nil
+	return i.codec.encode(i.newUUID(), scope, runID, reviewer.Principal, kind, ids)
 }
 
 func checkIssue(reviewer Identity, scope Scope, runID UUID, kind ConfidenceEvidenceKind, ids []UUID) error {
@@ -578,12 +602,16 @@ func unixMilliseconds(instant Instant) int64 {
 	return instant.Ticks()/ticksPerMillisecond - unixEpochMilliseconds
 }
 
-func instantOfUnixMilliseconds(milliseconds int64) Instant {
-	instant, err := InstantFromTicks((milliseconds + unixEpochMilliseconds) * ticksPerMillisecond)
-	if err != nil {
-		panic(err) // unreachable: a token's times are checked, and the clock's are instants
+// maxUnixMilliseconds is the last millisecond .NET's DateTimeOffset represents: 9999-12-31T23:59:59.999Z.
+const maxUnixMilliseconds = int64(253_402_300_799_999)
+
+// instantOfUnixMilliseconds refuses, as .NET's DateTimeOffset.FromUnixTimeMilliseconds does, an instant before year
+// 1 or after year 9999.
+func instantOfUnixMilliseconds(milliseconds int64) (Instant, error) {
+	if milliseconds < -unixEpochMilliseconds || milliseconds > maxUnixMilliseconds {
+		return Instant{}, outOfRange("milliseconds", "the token's times cannot be represented")
 	}
-	return instant
+	return InstantFromTicks((milliseconds + unixEpochMilliseconds) * ticksPerMillisecond)
 }
 
 func kindByte(kind ConfidenceEvidenceKind) int {
@@ -597,9 +625,17 @@ func kindByte(kind ConfidenceEvidenceKind) int {
 }
 
 func (c *assessmentTokenCodec) encode(assessmentID UUID, scope Scope, runID UUID, reviewer string,
-	kind ConfidenceEvidenceKind, ids []UUID) IssuedAssessmentToken {
+	kind ConfidenceEvidenceKind, ids []UUID) (IssuedAssessmentToken, error) {
 	issuedAt := unixMilliseconds(c.clock())
 	expiresAt := issuedAt + c.lifetime.Milliseconds()
+	issued, err := instantOfUnixMilliseconds(issuedAt)
+	if err != nil {
+		return IssuedAssessmentToken{}, err
+	}
+	expires, err := instantOfUnixMilliseconds(expiresAt)
+	if err != nil {
+		return IssuedAssessmentToken{}, err
+	}
 	body := make([]byte, 0, tokenHeaderLength+len(ids)*tokenIDLength+tokenMACLength)
 	body = append(body, tokenVersion)
 	body = append(body, assessmentID[:]...)
@@ -613,9 +649,9 @@ func (c *assessmentTokenCodec) encode(assessmentID UUID, scope Scope, runID UUID
 	return IssuedAssessmentToken{
 		AssessmentID: assessmentID,
 		Token:        AssessmentTokenPrefix + base64.RawURLEncoding.EncodeToString(body),
-		IssuedAt:     instantOfUnixMilliseconds(issuedAt),
-		ExpiresAt:    instantOfUnixMilliseconds(expiresAt),
-	}
+		IssuedAt:     issued,
+		ExpiresAt:    expires,
+	}, nil
 }
 
 // tokenVerification is what the codec found: an empty refusal for a genuine token, with its assessment ID and

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 const confidenceFamily = "confidence-engine"
@@ -190,7 +191,10 @@ func cfClose12(t *testing.T, name string, expected, actual float64) {
 }
 
 func cfOptionalOptions(o *Object) IndependenceOptions {
-	now := instantOfUnixMilliseconds(cfInteger(o, "nowUnixMs"))
+	now, err := instantOfUnixMilliseconds(cfInteger(o, "nowUnixMs"))
+	if err != nil {
+		panic(err)
+	}
 	options := IndependenceOptions{
 		Verification:            IndependenceVerification(cfText(o, "verification")),
 		AssessmentTokenLifetime: time.Duration(cfInteger(o, "assessmentTokenLifetimeTicks")) * 100,
@@ -233,17 +237,18 @@ func cfRunConfidenceCase(t *testing.T, input, expected *Object) {
 	case "apply":
 		cfRunApplyCase(t, input, expected)
 	case "options":
-		_, err := NewAssessmentTokenIssuer(cfOptionalOptions(cfObj(input, "options")))
+		options := cfOptionalOptions(cfObj(input, "options"))
+		_, err := NewAssessmentTokenIssuer(options)
+		want := cfGet(expected, "refusal")
 		if cfZeroLifetime(input) {
-			// Go reads a zero lifetime as the default (DefaultAssessmentTokenLifetime); .NET refuses it. What
-			// the default lifetime gives is the defaults case's, with this case's key.
-			var argument *ConfidenceArgumentError
-			if err != nil && (!errors.As(err, &argument) || strings.Contains(argument.Message, "Lifetime")) {
-				t.Fatalf("a zero lifetime was refused: %v", err)
+			// Go reads a zero lifetime as the default (DefaultAssessmentTokenLifetime) where .NET refuses it, so
+			// with a valid lifetime in its place the next check decides: the mode's refusal stands, and in place of
+			// the lifetime's comes the key's (none, or too short), or acceptance.
+			if message := cfOptionalText(cfObj(expected, "refusal"), "message"); message != nil && strings.Contains(*message, "Lifetime") {
+				want = cfKeyRefusal(options.AssessmentTokenKey)
 			}
-			return
 		}
-		cfCheckRefusal(t, cfGet(expected, "refusal"), err)
+		cfCheckRefusal(t, want, err)
 	case "issue":
 		cfRunIssueCase(t, input, expected)
 	case "verify":
@@ -251,8 +256,16 @@ func cfRunConfidenceCase(t *testing.T, input, expected *Object) {
 		if err != nil || codec == nil {
 			t.Fatalf("codec: %v", err)
 		}
-		result := codec.verify(cfStringOrEmpty(cfGet(input, "token")), cfScopeOf(cfObj(input, "scope")), cfUuidOf(input, "runId"),
-			cfText(input, "reviewer"), ConfidenceEvidenceKind(cfText(input, "kind")))
+		scope, reviewer := cfScopeOf(cfObj(input, "scope")), cfText(input, "reviewer")
+		if utf16, ok := input.Get("utf16"); ok { // lone surrogates, which a Go string holds as U+FFFD
+			reviewer = cfFromUnits(cfGet(utf16.(*Object), "reviewer"))
+			scope.TeamID = nil
+			if team := cfGet(utf16.(*Object), "teamId"); team != nil {
+				scope.TeamID = Ptr(cfFromUnits(team))
+			}
+		}
+		result := codec.verify(cfStringOrEmpty(cfGet(input, "token")), scope, cfUuidOf(input, "runId"), reviewer,
+			ConfidenceEvidenceKind(cfText(input, "kind")))
 		want := ""
 		if value := cfOptionalText(expected, "refusal"); value != nil {
 			want = *value
@@ -275,6 +288,15 @@ func cfRunConfidenceCase(t *testing.T, input, expected *Object) {
 	default:
 		t.Fatalf("unknown operation %q", cfText(input, "operation"))
 	}
+}
+
+func cfFromUnits(units any) string {
+	var codes []uint16
+	for _, unit := range units.([]any) {
+		value, _ := unit.(json.Number).Int64()
+		codes = append(codes, uint16(value))
+	}
+	return string(utf16.Decode(codes))
 }
 
 func cfStringOrEmpty(value any) string {
@@ -362,6 +384,24 @@ func cfRunApplyCase(t *testing.T, input, expected *Object) {
 	}
 }
 
+// cfKeyRefusal is .NET's refusal of options whose only other fault is the key, as the fixtures write one.
+func cfKeyRefusal(key []byte) any {
+	refusal := func(message string) any {
+		o := NewObject()
+		o.Set("exception", "ArgumentException")
+		o.Set("parameter", "options")
+		o.Set("message", message)
+		return o
+	}
+	switch {
+	case key == nil:
+		return refusal("An assessment token issuer needs ExperienceIndependenceOptions.AssessmentTokenKey.")
+	case len(key) < MinimumAssessmentTokenKeyBytes:
+		return refusal("ExperienceIndependenceOptions.AssessmentTokenKey must be at least 32 bytes.")
+	}
+	return nil
+}
+
 func cfRunIssueCase(t *testing.T, input, expected *Object) {
 	scope := cfScopeOf(cfObj(input, "scope"))
 	reviewer := cfObj(input, "reviewer")
@@ -380,7 +420,10 @@ func cfRunIssueCase(t *testing.T, input, expected *Object) {
 		random, err = issuer.Issue(identity, scope, run, kind, ids)
 		if err == nil {
 			// The issuer draws a fresh assessment ID; the fixture pins the same codec's encoding under the case's.
-			issued := issuer.codec.encode(cfUuidOf(input, "assessmentId"), scope, run, identity.Principal, kind, ids)
+			issued, encodeErr := issuer.codec.encode(cfUuidOf(input, "assessmentId"), scope, run, identity.Principal, kind, ids)
+			if encodeErr != nil {
+				t.Fatal(encodeErr)
+			}
 			if issued.Token != cfText(expected, "token") || issued.AssessmentID.String() != cfText(expected, "assessmentId") ||
 				unixMilliseconds(issued.IssuedAt) != cfInteger(expected, "issuedAtUnixMs") ||
 				unixMilliseconds(issued.ExpiresAt) != cfInteger(expected, "expiresAtUnixMs") {
@@ -389,6 +432,17 @@ func cfRunIssueCase(t *testing.T, input, expected *Object) {
 			if random.AssessmentID == issued.AssessmentID || random.IssuedAt != issued.IssuedAt ||
 				random.ExpiresAt != issued.ExpiresAt {
 				t.Fatalf("issued %s", random)
+			}
+			// What the issuer itself emitted: bound to the case's scope, run, reviewer and kind, covering its records
+			// in order (a token issued before 1970 is invalid by construction).
+			verified := issuer.codec.verify(random.Token, scope, run, identity.Principal, kind)
+			if cfInteger(expected, "issuedAtUnixMs") < 0 {
+				if verified.refusal != RefusalAssessmentTokenInvalid {
+					t.Fatalf("a token issued before 1970: %q", verified.refusal)
+				}
+			} else if verified.refusal != "" || verified.assessmentID != random.AssessmentID ||
+				fmt.Sprint(verified.covered) != fmt.Sprint(ids) {
+				t.Fatalf("the issued token reads back as %+v", verified)
 			}
 		}
 	}
@@ -431,7 +485,7 @@ var (
 func TestTheDefaultEngineIsTheHeuristicRecordingThePlainRuleVersion(t *testing.T) {
 	for _, engine := range []ConfidenceEngine{nil, ReuseConfidenceHeuristicEngine{}, &ReuseConfidenceHeuristicEngine{}} {
 		rule, err := NewConfidenceEngineRule(engine, "engine")
-		if err != nil || rule != DefaultConfidenceEngineRule || rule.Recorded() != "1.0.0" {
+		if err != nil || rule != DefaultConfidenceEngineRule() || rule.Recorded() != "1.0.0" {
 			t.Fatalf("%v %v", rule, err)
 		}
 	}
@@ -453,7 +507,10 @@ func TestALoneSurrogateReviewerSignsAsTheReplacementCharacter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := codec.encode(NewRandomUUID(), cfTestScope, cfTestRun, "rev\xed\xa0\x80iewer", EvidenceSupporting, []UUID{NewRandomUUID()})
+	token, err := codec.encode(NewRandomUUID(), cfTestScope, cfTestRun, "rev\xed\xa0\x80iewer", EvidenceSupporting, []UUID{NewRandomUUID()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result := codec.verify(token.Token, cfTestScope, cfTestRun, "rev�iewer", EvidenceSupporting); result.refusal != "" {
 		t.Fatal(result.refusal)
 	}
@@ -515,5 +572,79 @@ func TestAHostKeyIsTheReviewerVerbatim(t *testing.T) {
 	}
 	if _, err := HumanIndependenceKey("r ", cfTestRun); err == nil {
 		t.Fatal("a reviewer ending in a no-break space was accepted")
+	}
+}
+
+func TestEachInvalidUnitIsItsOwnReplacementCharacter(t *testing.T) {
+	cases := map[string]string{
+		"a\xffb":                     "a\uFFFDb",
+		"a\xff\xffb":                 "a\uFFFD\uFFFDb",
+		"a\xed\xa0\x80b":             "a\uFFFDb",       // one lone surrogate, one unit
+		"a\xed\xa0\x80\xed\xa0\x80b": "a\uFFFD\uFFFDb", // two adjacent lone surrogates
+		"a\uFFFDb":                   "a\uFFFDb",
+	}
+	for input, want := range cases {
+		if got := string(utf8Bytes(input)); got != want {
+			t.Fatalf("%q: %q, want %q", input, got, want)
+		}
+	}
+	codec, _ := newAssessmentTokenCodec(IndependenceOptions{AssessmentTokenKey: cfTestKey, Clock: func() Instant { return cfTestNow }})
+	one, two := codec.mac(nil, cfTestScope, cfTestRun, "a\xffb"), codec.mac(nil, cfTestScope, cfTestRun, "a\xff\xffb")
+	if string(one) == string(two) {
+		t.Fatal("one and two invalid bytes sign alike")
+	}
+}
+
+func TestAZeroRuleRefusesRatherThanPanics(t *testing.T) {
+	var zero ConfidenceEngineRule
+	if _, err := zero.Score(ExperienceRecord{}, 1, 0); !errors.Is(err, errNoEngine) {
+		t.Fatal(err)
+	}
+	var missing *ConfidenceEngineRule
+	if _, err := missing.Apply(ExperienceRecord{}, ConfidenceEvidence{Kind: EvidenceSupporting}); !errors.Is(err, errNoEngine) {
+		t.Fatal(err)
+	}
+}
+
+func TestAnUnrepresentableExpiryIsRefusedNotAPanic(t *testing.T) {
+	last, _ := instantOfUnixMilliseconds(maxUnixMilliseconds - 1000)
+	issuer, err := NewAssessmentTokenIssuer(IndependenceOptions{AssessmentTokenKey: cfTestKey, Clock: func() Instant { return last }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = issuer.Issue(Identity{Principal: "r", Scope: cfTestScope}, cfTestScope, cfTestRun, EvidenceSupporting, []UUID{NewRandomUUID()})
+	var argument *ConfidenceArgumentError
+	if !errors.As(err, &argument) || argument.Exception != "ArgumentOutOfRangeException" || argument.Parameter != "milliseconds" {
+		t.Fatal(err)
+	}
+}
+
+func TestACountPastDotNetsCountersIsRefused(t *testing.T) {
+	if _, err := ConfidenceScore(MaxEvidenceCounter+1, 0); err == nil {
+		t.Fatal("accepted")
+	}
+	if _, err := ApplyConfidenceEvidence(ExperienceRecord{Contradictions: MaxEvidenceCounter + 1}, ConfidenceEvidence{Kind: EvidenceSupporting}); err == nil {
+		t.Fatal("accepted")
+	}
+}
+
+func TestTheIssuerChecksAndEncodesItsOwnCopy(t *testing.T) {
+	issuer, _ := NewAssessmentTokenIssuer(IndependenceOptions{AssessmentTokenKey: cfTestKey, Clock: func() Instant { return cfTestNow }})
+	ids := []UUID{NewRandomUUID()}
+	issued, err := issuer.Issue(Identity{Principal: "r", Scope: cfTestScope}, cfTestScope, cfTestRun, EvidenceSupporting, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ids[0]
+	ids[0] = UUID{}
+	if result := issuer.codec.verify(issued.Token, cfTestScope, cfTestRun, "r", EvidenceSupporting); result.covered[0] != want {
+		t.Fatal(result.covered)
+	}
+}
+
+func TestTheKeyIsNeverMarshalled(t *testing.T) {
+	data, err := json.Marshal(IndependenceOptions{AssessmentTokenKey: cfTestKey})
+	if err != nil || strings.Contains(string(data), "Key") {
+		t.Fatalf("%s %v", data, err)
 	}
 }

@@ -227,7 +227,10 @@ evidence ledger, the independence index and the revision check), verifying a key
 Where a port differs, each forced by the language: an engine failure is the engine's own exception in Python and the
 error it returns in Go, passed on unchanged as .NET's is; Go reads a zero token lifetime as the default (a day) rather
 than refusing it, as its options do elsewhere; and Python states a lifetime as a `timedelta`, in whole microseconds
-rather than .NET's 100-nanosecond ticks. The token, which carries whole milliseconds, is the same either way.
+rather than .NET's 100-nanosecond ticks. The token, which carries whole milliseconds, is the same either way. Python's
+`ExperienceIdentity` refuses a blank reviewer principal (`ValueError`) when it is built, before the issuer can; Go's
+`Identity.Authorization()` with nil `Bounds` is the identity's own scope, so a reviewer issuing for another scope needs
+bounds that permit it.
 
 ## Independence is keyed, and the database owns the key
 

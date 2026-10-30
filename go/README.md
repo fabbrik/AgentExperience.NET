@@ -273,7 +273,7 @@ Contract 1.15. The core computes how a record's reuse confidence moves when evid
 as .NET's confidence engine does. It only computes: nothing here reads or writes a store.
 
 ```go
-rule := ae.DefaultConfidenceEngineRule // (1 + S) / (2 + S + F), recorded as "1.0.0"
+rule := ae.DefaultConfidenceEngineRule() // (1 + S) / (2 + S + F), recorded as "1.0.0"
 update, err := rule.Apply(record, ae.ConfidenceEvidence{
 	EvidenceID: evidenceID, Kind: ae.EvidenceSupporting, Source: ae.EvidenceMachine,
 	RunID: runID, VerificationRoundID: &roundID,
@@ -307,7 +307,10 @@ hosted, err := ae.NewConfidenceEngineRule(bayes{}, ae.ConfidenceEngineParameter)
   human assessment carries (`Issue(reviewer, scope, runID, kind, experienceIDs)`, with the reviewer's `ae.Identity`),
   byte for byte .NET's format: call it from your review flow, never from code an agent drives. The key is at least 32
   bytes; the lifetime a day by default (also when zero), at most 30 days. `IssuedAssessmentToken` and
-  `IndependenceOptions` never print the token or the key. Checking a token is unexported, as in .NET.
+  `IndependenceOptions` keep the token and the key out of `String` and `GoString` (so `%v`, `%+v`, `%s`, `%#v`), and
+  the key out of `encoding/json` (`json:"-"`); other verbs and your own copies are yours to keep private. The
+  reviewer's authorization is `Identity.Authorization()`: with nil `Bounds` it is the identity's own scope, so a
+  reviewer issuing for another scope needs `Bounds` that permit it. Checking a token is unexported, as in .NET.
 
 ### What the one call wires
 
