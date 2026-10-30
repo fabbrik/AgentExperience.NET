@@ -16,7 +16,6 @@ from _contract import FIXTURES, cases, json_difference, read_json, scope_of
 from test_lessons import memory_store
 
 from agentexperience import AuthorizationBounds, ExperienceLessons, Instant, Scope
-from agentexperience.identity import ExperienceIdentity
 from agentexperience.benefit import BenefitArm, BenefitComparison, BenefitOptions, comparison_to_json
 from agentexperience.export import (
     ExportedLesson,
@@ -26,6 +25,7 @@ from agentexperience.export import (
     format_exported_at,
     signed,
 )
+from agentexperience.identity import ExperienceIdentity
 
 FAMILY = FIXTURES / "lesson-export"
 
