@@ -380,7 +380,9 @@ internal static class ConfidenceEngineContract
             throw new InvalidOperationException($"The service answered {result.Outcome} for an expressible 1.15 apply case: {result.Reason}");
         }
 
-        ServedByTheService.Add(record.ExperienceId.ToString() + "/" + evidence.ToJsonString() + "/" + engine?.ToJsonString());
+        ServedByTheService.Add(string.Create(
+            CultureInfo.InvariantCulture,
+            $"{record.Status}/{record.ReuseConfidence:R}/{record.SupportingValidations}/{record.Contradictions}/{evidence.ToJsonString()}/{engine?.ToJsonString()}"));
         return stored with { Admission = null };
     }
 

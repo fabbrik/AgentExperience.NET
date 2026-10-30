@@ -224,7 +224,7 @@
           "currentStatus": "Reinforced",
           "reason": "Validated to Reinforced.",
           "producer": "governance-review/1.0",
-          "occurredAt": "2026-03-02T09:00:00.123457+00:00",
+          "occurredAt": "2026-03-02T09:00:00.1234569+00:00",
           "expectedRevision": 1,
           "replacementExperienceId": null
         }

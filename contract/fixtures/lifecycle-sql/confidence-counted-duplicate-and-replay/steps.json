@@ -1,0 +1,362 @@
+{
+  "description": "Confidence rides the event: the evidence row goes in first under a savepoint and claims its independence key, then the event and the counters. The same observation under a new evidence ID loses the key: one ledger row, not counted, and nothing else -- no event, no counters, no revision, no updated_at -- reported with the record's revision and status. A duplicate decided against a stale revision writes nothing. The same evidence ID with the same content and event is the original replayed (the numbers it was stored with); with a fresh event ID, or any content changed, it is a Conflict.",
+  "steps": [
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000004001",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000040",
+          "priorStatus": "Validated",
+          "currentStatus": "Validated",
+          "reason": "Validated to Validated.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 1,
+          "replacementExperienceId": null,
+          "confidence": {
+            "evidenceId": "00001162-0000-4000-8000-000000004101",
+            "kind": "Supporting",
+            "source": "Machine",
+            "runId": "00001162-0000-4000-8000-000000004a01",
+            "verificationRoundId": "00001162-0000-4000-8000-000000004b00",
+            "reviewerIdentity": null,
+            "ruleVersion": "1.0.0",
+            "priorReuseConfidence": 0.6666666666666666,
+            "newReuseConfidence": 0.75,
+            "priorSupportingValidations": 1,
+            "newSupportingValidations": 2,
+            "priorContradictions": 0,
+            "newContradictions": 0,
+            "detail": null,
+            "assessmentId": null,
+            "admission": "HostTrusted"
+          }
+        }
+      },
+      "clock": "2026-03-02T11:00:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000004002",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000040",
+          "priorStatus": "Validated",
+          "currentStatus": "Validated",
+          "reason": "Validated to Validated.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 2,
+          "replacementExperienceId": null,
+          "confidence": {
+            "evidenceId": "00001162-0000-4000-8000-000000004102",
+            "kind": "Supporting",
+            "source": "Machine",
+            "runId": "00001162-0000-4000-8000-000000004a01",
+            "verificationRoundId": "00001162-0000-4000-8000-000000004b00",
+            "reviewerIdentity": null,
+            "ruleVersion": "1.0.0",
+            "priorReuseConfidence": 0.75,
+            "newReuseConfidence": 0.8,
+            "priorSupportingValidations": 2,
+            "newSupportingValidations": 3,
+            "priorContradictions": 0,
+            "newContradictions": 0,
+            "detail": null,
+            "assessmentId": null,
+            "admission": "HostTrusted"
+          }
+        }
+      },
+      "clock": "2026-03-02T11:01:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000004003",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000040",
+          "priorStatus": "Validated",
+          "currentStatus": "Validated",
+          "reason": "Validated to Validated.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 1,
+          "replacementExperienceId": null,
+          "confidence": {
+            "evidenceId": "00001162-0000-4000-8000-000000004103",
+            "kind": "Supporting",
+            "source": "Machine",
+            "runId": "00001162-0000-4000-8000-000000004a01",
+            "verificationRoundId": "00001162-0000-4000-8000-000000004b00",
+            "reviewerIdentity": null,
+            "ruleVersion": "1.0.0",
+            "priorReuseConfidence": 0.75,
+            "newReuseConfidence": 0.8,
+            "priorSupportingValidations": 2,
+            "newSupportingValidations": 3,
+            "priorContradictions": 0,
+            "newContradictions": 0,
+            "detail": null,
+            "assessmentId": null,
+            "admission": "HostTrusted"
+          }
+        }
+      },
+      "clock": "2026-03-02T11:02:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000004001",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000040",
+          "priorStatus": "Validated",
+          "currentStatus": "Validated",
+          "reason": "Validated to Validated.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 1,
+          "replacementExperienceId": null,
+          "confidence": {
+            "evidenceId": "00001162-0000-4000-8000-000000004101",
+            "kind": "Supporting",
+            "source": "Machine",
+            "runId": "00001162-0000-4000-8000-000000004a01",
+            "verificationRoundId": "00001162-0000-4000-8000-000000004b00",
+            "reviewerIdentity": null,
+            "ruleVersion": "1.0.0",
+            "priorReuseConfidence": 0.6666666666666666,
+            "newReuseConfidence": 0.75,
+            "priorSupportingValidations": 1,
+            "newSupportingValidations": 2,
+            "priorContradictions": 0,
+            "newContradictions": 0,
+            "detail": null,
+            "assessmentId": null,
+            "admission": "HostTrusted"
+          }
+        }
+      },
+      "clock": "2026-03-02T11:03:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000004004",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000040",
+          "priorStatus": "Validated",
+          "currentStatus": "Validated",
+          "reason": "Validated to Validated.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 2,
+          "replacementExperienceId": null,
+          "confidence": {
+            "evidenceId": "00001162-0000-4000-8000-000000004101",
+            "kind": "Supporting",
+            "source": "Machine",
+            "runId": "00001162-0000-4000-8000-000000004a01",
+            "verificationRoundId": "00001162-0000-4000-8000-000000004b00",
+            "reviewerIdentity": null,
+            "ruleVersion": "1.0.0",
+            "priorReuseConfidence": 0.6666666666666666,
+            "newReuseConfidence": 0.75,
+            "priorSupportingValidations": 1,
+            "newSupportingValidations": 2,
+            "priorContradictions": 0,
+            "newContradictions": 0,
+            "detail": null,
+            "assessmentId": null,
+            "admission": "HostTrusted"
+          }
+        }
+      },
+      "clock": "2026-03-02T11:04:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000004001",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000040",
+          "priorStatus": "Validated",
+          "currentStatus": "Validated",
+          "reason": "Validated to Validated.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 1,
+          "replacementExperienceId": null,
+          "confidence": {
+            "evidenceId": "00001162-0000-4000-8000-000000004101",
+            "kind": "Supporting",
+            "source": "Machine",
+            "runId": "00001162-0000-4000-8000-000000004a01",
+            "verificationRoundId": "00001162-0000-4000-8000-000000004b00",
+            "reviewerIdentity": null,
+            "ruleVersion": "1.0.0",
+            "priorReuseConfidence": 0.6666666666666666,
+            "newReuseConfidence": 0.75,
+            "priorSupportingValidations": 1,
+            "newSupportingValidations": 2,
+            "priorContradictions": 0,
+            "newContradictions": 0,
+            "detail": "changed",
+            "assessmentId": null,
+            "admission": "HostTrusted"
+          }
+        }
+      },
+      "clock": "2026-03-02T11:05:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000004005",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000040",
+          "priorStatus": "Validated",
+          "currentStatus": "Contested",
+          "reason": "Validated to Contested.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 2,
+          "replacementExperienceId": null,
+          "confidence": {
+            "evidenceId": "00001162-0000-4000-8000-000000004104",
+            "kind": "Contradicting",
+            "source": "Machine",
+            "runId": "00001162-0000-4000-8000-000000004a02",
+            "verificationRoundId": "00001162-0000-4000-8000-000000004b00",
+            "reviewerIdentity": null,
+            "ruleVersion": "1.0.0",
+            "priorReuseConfidence": 0.75,
+            "newReuseConfidence": 0.6,
+            "priorSupportingValidations": 2,
+            "newSupportingValidations": 2,
+            "priorContradictions": 0,
+            "newContradictions": 1,
+            "detail": null,
+            "assessmentId": null,
+            "admission": "HostTrusted"
+          }
+        }
+      },
+      "clock": "2026-03-02T11:06:00+00:00"
+    }
+  ]
+}

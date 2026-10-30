@@ -73,6 +73,15 @@ public sealed partial class ContractFixtureTests
         Assert.True(ConfidenceEngineContract.ServedByTheService.Distinct().Count() >= 15, $"Only {ConfidenceEngineContract.ServedByTheService.Distinct().Count()} 1.15 apply cases came from the service.");
     }
 
+    [Fact]
+    public void The_lifecycle_statements_are_the_dotnet_postgres_stores_own()
+    {
+        var drift = new List<string>();
+        ContractFiles.Verify(LifecycleSqlContract.File, LifecycleSqlContract.Render(), drift);
+        Relock(drift);
+        ContractFiles.AssertNoDrift(drift);
+    }
+
     private static List<string> Outcomes(IReadOnlyList<(string Name, JsonObject Input)> cases, string operation)
     {
         var outcomes = new List<string>();

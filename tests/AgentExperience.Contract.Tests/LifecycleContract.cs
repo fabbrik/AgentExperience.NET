@@ -263,7 +263,7 @@ internal static class LifecycleContract
             [record, other],
             [
                 Step("commit", CommitStep(Auth(S), eventId, record.ExperienceId, S, "Validated", "Reinforced", 1, at: at)),
-                Step("commit", CommitStep(Auth(S), eventId, record.ExperienceId, S, "Validated", "Reinforced", 1, at: at.AddTicks(3))),
+                Step("commit", CommitStep(Auth(S), eventId, record.ExperienceId, S, "Validated", "Reinforced", 1, at: at.AddTicks(2))),
                 Step("commit", CommitStep(Auth(S), eventId, record.ExperienceId, S, "Validated", "Reinforced", 1, reason: "a different reason", at: at)),
                 Step("commit", CommitStep(Auth(S), eventId, other.ExperienceId, S, "Validated", "Reinforced", 1, at: at)),
                 Step("commit", CommitStep(Auth(S), eventId, record.ExperienceId, S, "Validated", "Reinforced", 1, at: at.AddTicks(10))),

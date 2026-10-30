@@ -1,0 +1,243 @@
+{
+  "description": "The revision is compared and set: of two events decided against revision 1 the first commits, and the second meets the event revision index (another event took revision 2) and is StaleRevision with the current revision; one against a revision the record never had matches no row and is StaleRevision too; one against the right revision from a status the record is not in is StatusMismatch with the stored status. A first event (no prior status) may only record the status the record is in.",
+  "steps": [
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000001101",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000010",
+          "priorStatus": "Validated",
+          "currentStatus": "Reinforced",
+          "reason": "Validated to Reinforced.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 1,
+          "replacementExperienceId": null,
+          "confidence": null
+        }
+      },
+      "clock": "2026-03-02T11:00:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000001102",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000010",
+          "priorStatus": "Validated",
+          "currentStatus": "Stale",
+          "reason": "Validated to Stale.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 1,
+          "replacementExperienceId": null,
+          "confidence": null
+        }
+      },
+      "clock": "2026-03-02T11:01:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000001103",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000010",
+          "priorStatus": "Validated",
+          "currentStatus": "Stale",
+          "reason": "Validated to Stale.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 7,
+          "replacementExperienceId": null,
+          "confidence": null
+        }
+      },
+      "clock": "2026-03-02T11:02:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000001104",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000010",
+          "priorStatus": "Validated",
+          "currentStatus": "Stale",
+          "reason": "Validated to Stale.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 2,
+          "replacementExperienceId": null,
+          "confidence": null
+        }
+      },
+      "clock": "2026-03-02T11:03:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000001105",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000011",
+          "priorStatus": null,
+          "currentStatus": "Validated",
+          "reason": "nothing to Validated.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 0,
+          "replacementExperienceId": null,
+          "confidence": null
+        }
+      },
+      "clock": "2026-03-02T11:04:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000001106",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000011",
+          "priorStatus": null,
+          "currentStatus": "Candidate",
+          "reason": "nothing to Candidate.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 0,
+          "replacementExperienceId": null,
+          "confidence": null
+        }
+      },
+      "clock": "2026-03-02T11:05:00+00:00"
+    },
+    {
+      "commit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "event": {
+          "eventId": "00001162-0000-4000-8000-000000001107",
+          "experienceRecordId": "00001162-0000-4000-8000-000000000011",
+          "priorStatus": "Candidate",
+          "currentStatus": "Validated",
+          "reason": "Candidate to Validated.",
+          "producer": "governance-review/1.0",
+          "occurredAt": "2026-03-02T09:00:00+00:00",
+          "expectedRevision": 1,
+          "replacementExperienceId": null,
+          "confidence": null
+        }
+      },
+      "clock": "2026-03-02T11:06:00+00:00"
+    }
+  ]
+}

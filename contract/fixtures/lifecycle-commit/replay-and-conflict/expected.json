@@ -20,7 +20,7 @@
       "reason": null
     },
     {
-      "outcome": "Conflict",
+      "outcome": "Committed",
       "event": {
         "eventId": "00001160-0000-4000-8000-000000003701",
         "experienceRecordId": "00001160-0000-4000-8000-000000000370",
@@ -28,12 +28,12 @@
         "currentStatus": "Reinforced",
         "reason": "Validated to Reinforced.",
         "producer": "governance-review/1.0",
-        "occurredAt": "2026-03-02T09:00:00.123457+00:00",
+        "occurredAt": "2026-03-02T09:00:00.1234569+00:00",
         "expectedRevision": 1,
         "replacementExperienceId": null,
         "confidence": null
       },
-      "revision": 0,
+      "revision": 2,
       "currentStatus": null,
       "errors": [],
       "reason": null
