@@ -2380,9 +2380,13 @@ lessons view's measured benefit.
 ### Story 27.3: Ports Measure Another Memory Provider
 The provider holdout wrapper (`UseMeasuredMemory` equivalent) with its own SQL, privileges and telemetry.
 
-### Story 27.4: Retrieval Policy and Injection Options
-`MaxAge`, per-domain confidence decay, configurable half-life, limits and timeouts, exclusion reasons, deciding and
-resolving the request, receiving-agent capabilities and tool risk, and the model-authored lesson policy.
+### Story 27.4: Retrieval Policy
+`MaxAge`, per-domain confidence decay, configurable recency half-life, candidate limit and timeout (with the
+abandoned-search cap), exclusion reasons and retrieval outcomes, as .NET's `RetrievalPolicy` and
+`ConfidenceDecayPolicy` (contract 1.12's `retrieval-policy` fixtures and a cross-language PostgreSQL test).
+
+### Story 27.4b: Injection Options
+Deciding and resolving the request, receiving-agent capabilities and tool risk, and the model-authored lesson policy.
 
 ### Story 27.5: Lesson Export, the HTML View and the LLM Reflector
 The Markdown lesson export and the lessons HTML (byte fixtures), and a chat-client reflector with prompt and output
