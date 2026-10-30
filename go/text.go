@@ -244,6 +244,12 @@ func formatRoundTrip(value float64) string {
 }
 
 func formatShortest(value float64, bits int) string {
+	return formatShortestFrom(value, bits, 15)
+}
+
+// formatShortestFrom is formatShortest with scientific notation from 10^largest (formatShortest uses 15; .NET's
+// double.ToString("R") itself switches at 17: 1E+17, but 10000000000000000).
+func formatShortestFrom(value float64, bits, largest int) string {
 	switch {
 	case math.IsNaN(value):
 		return "NaN"
@@ -269,7 +275,7 @@ func formatShortest(value float64, bits int) string {
 	if digits == "" {
 		digits = "0"
 	}
-	if exponent < -4 || exponent >= 15 {
+	if exponent < -4 || exponent >= largest {
 		body := digits[:1]
 		if len(digits) > 1 {
 			body += "." + digits[1:]
