@@ -319,10 +319,6 @@ func sortedKeys(m map[string]string) []string {
 // message carries no content.
 var ErrScreeningRefused = errors.New("screening refused the reflection")
 
-func screeningRefused(format string, args ...any) error {
-	return fmt.Errorf("%w: %s", ErrScreeningRefused, fmt.Sprintf(format, args...))
-}
-
 // neutralize is screening's hygiene: line and paragraph separators become a space; control, format, private-use,
 // unassigned and blank-but-not-space characters are removed (a whitespace one becomes a space); a run of combining
 // marks keeps its first four.
@@ -336,13 +332,6 @@ func cleanText(text string) (string, bool) {
 	return neutralized, true
 }
 
-func ensureScreenedLength(text string, limit int, field string) error {
-	if UTF16Len(text) > limit {
-		return screeningRefused("its %s is longer than the %d-character limit", field, limit)
-	}
-	return nil
-}
-
 // IsModelAuthored reports whether a reflection was written by a model: any authorship but Deterministic, or the
 // library's own model-backed reflector.
 func IsModelAuthored(reflection *Reflection) bool {
@@ -350,66 +339,125 @@ func IsModelAuthored(reflection *Reflection) bool {
 		strings.HasPrefix(reflection.Producer, libraryModelReflectorPrefix))
 }
 
-// Screen is the screening finalization applies before a reflection is stored, for a deterministic reflection:
-// every text neutralized, blank list items dropped, the limits enforced. It returns an error wrapping
-// ErrScreeningRefused.
-func Screen(reflection Reflection) (Reflection, error) {
-	if IsModelAuthored(&reflection) {
-		// The model-authored content guard is outside contract 1.x: a port writes deterministic reflections only.
-		return Reflection{}, screeningRefused("a model-authored reflection is outside contract 1.x")
+// Screen is ScreenWith with no run content: a model-authored reflection naming any URL, hostname or IP address is
+// refused.
+func Screen(reflection Reflection) (Reflection, error) { return ScreenWith(reflection, nil) }
+
+// ScreenWith is the screening finalization applies before a reflection is stored, as .NET's ReflectionScreening:
+// the authorship must be defined; the producer, then the list counts, then every text are neutralized and held to
+// their limits (blank list items dropped, blank reuse guidance absent); and a model-authored reflection then meets
+// the content guard, its links compared with runContent (what the reflector showed its model). A refusal is a
+// *ScreeningRefusalError (wrapping ErrScreeningRefused), whose reason carries no content.
+func ScreenWith(reflection Reflection, runContent []string) (Reflection, error) {
+	screened, err := screen(reflection, runContent)
+	if err != nil {
+		return Reflection{}, err
+	}
+	return screened, nil
+}
+
+func refuseScreening(code ScreeningRefusalCode, format string, args ...any) *ScreeningRefusalError {
+	return &ScreeningRefusalError{Code: code, Reason: fmt.Sprintf(format, args...)}
+}
+
+var screenedListNames = [4]string{"SuccessfulApproaches", "FailedApproaches", "Preconditions", "Warnings"}
+
+func screen(reflection Reflection, runContent []string) (Reflection, *ScreeningRefusalError) {
+	switch reflection.Authorship {
+	case "", AuthorshipDeterministic, AuthorshipModel:
+	default:
+		return Reflection{}, refuseScreening(RefusalUndefinedAuthorship, "its Authorship is not a defined ReflectionAuthorship value")
 	}
 	producer, ok := cleanText(reflection.Producer)
 	if !ok {
-		return Reflection{}, screeningRefused("its Producer is missing, or empty once invisible characters are removed")
+		return Reflection{}, refuseScreening(RefusalMissingProducer, "its Producer is missing, or empty once invisible characters are removed")
 	}
-	if err := ensureScreenedLength(producer, maxProducerLength, "Producer"); err != nil {
-		return Reflection{}, err
+	if UTF16Len(producer) > maxProducerLength {
+		return Reflection{}, refuseScreening(RefusalOverLimit, "its Producer is longer than the %d-character limit", maxProducerLength)
+	}
+	lists := [4][]string{reflection.SuccessfulApproaches, reflection.FailedApproaches, reflection.Preconditions,
+		reflection.Warnings}
+	for i, list := range lists {
+		if len(list) > maxListItems {
+			return Reflection{}, refuseScreening(RefusalOverLimit, "its %s holds more items than the %d-item limit",
+				screenedListNames[i], maxListItems)
+		}
 	}
 	lesson, ok := cleanText(reflection.Lesson)
 	if !ok {
-		return Reflection{}, screeningRefused("its Lesson is missing, or empty once invisible characters are removed")
+		return Reflection{}, refuseScreening(RefusalMissingLesson, "its Lesson is missing, or empty once invisible characters are removed")
 	}
-	if err := ensureScreenedLength(lesson, maxLessonLength, "Lesson"); err != nil {
-		return Reflection{}, err
+	if UTF16Len(lesson) > maxLessonLength {
+		return Reflection{}, refuseScreening(RefusalOverLimit, "its Lesson is longer than the %d-character limit", maxLessonLength)
 	}
 	var guidance *string
 	if reflection.ReuseGuidance != nil {
 		if cleaned, ok := cleanText(*reflection.ReuseGuidance); ok {
-			if err := ensureScreenedLength(cleaned, maxLessonLength, "ReuseGuidance"); err != nil {
-				return Reflection{}, err
+			if UTF16Len(cleaned) > maxLessonLength {
+				return Reflection{}, refuseScreening(RefusalOverLimit, "its ReuseGuidance is longer than the %d-character limit",
+					maxLessonLength)
 			}
 			guidance = &cleaned
 		}
 	}
-	screenedList := func(items []string, field string) ([]string, error) {
-		if len(items) > maxListItems {
-			return nil, screeningRefused("its %s holds more items than the %d-item limit", field, maxListItems)
-		}
-		kept := []string{}
-		for index, item := range items {
+	var kept [4][]string
+	var sources [4][]int
+	for i, list := range lists {
+		kept[i] = []string{}
+		for index, item := range list {
 			if text, ok := cleanText(item); ok {
-				if err := ensureScreenedLength(text, maxListItemLength, fmt.Sprintf("%s[%d]", field, index)); err != nil {
-					return nil, err
+				if UTF16Len(text) > maxListItemLength {
+					return Reflection{}, refuseScreening(RefusalOverLimit, "its %s[%d] is longer than the %d-character limit",
+						screenedListNames[i], index, maxListItemLength)
 				}
-				kept = append(kept, text)
+				kept[i] = append(kept[i], text)
+				sources[i] = append(sources[i], index)
 			}
 		}
-		return kept, nil
 	}
-	var err error
+
+	// The content guard, for model-authored text only, over exactly what would be stored, judged on the cleaned
+	// producer.
+	probe := reflection
+	probe.Producer = producer
+	if IsModelAuthored(&probe) {
+		run := linksOf(runContent)
+		check := func(text, field string) *ScreeningRefusalError {
+			if rule := guardCheck(text, run); rule != "" {
+				return refuseScreening(RefusalUnsafeContent, "its %s contains %s", field, rule)
+			}
+			return nil
+		}
+		if refusal := check(lesson, "Lesson"); refusal != nil {
+			return Reflection{}, refusal
+		}
+		for i := range kept {
+			for j, text := range kept[i] {
+				if refusal := check(text, fmt.Sprintf("%s[%d]", screenedListNames[i], sources[i][j])); refusal != nil {
+					return Reflection{}, refusal
+				}
+			}
+		}
+		if guidance != nil {
+			if refusal := check(*guidance, "ReuseGuidance"); refusal != nil {
+				return Reflection{}, refusal
+			}
+		}
+		all := []string{lesson}
+		for i := range kept {
+			all = append(all, kept[i]...)
+		}
+		if guidance != nil {
+			all = append(all, *guidance)
+		}
+		if rule := guardCheckCombined(all); rule != "" {
+			return Reflection{}, refuseScreening(RefusalUnsafeContent, "the text across its fields contains %s", rule)
+		}
+	}
+
 	screened := reflection
 	screened.Lesson, screened.ReuseGuidance, screened.Producer = lesson, guidance, producer
-	if screened.SuccessfulApproaches, err = screenedList(reflection.SuccessfulApproaches, "SuccessfulApproaches"); err != nil {
-		return Reflection{}, err
-	}
-	if screened.FailedApproaches, err = screenedList(reflection.FailedApproaches, "FailedApproaches"); err != nil {
-		return Reflection{}, err
-	}
-	if screened.Preconditions, err = screenedList(reflection.Preconditions, "Preconditions"); err != nil {
-		return Reflection{}, err
-	}
-	if screened.Warnings, err = screenedList(reflection.Warnings, "Warnings"); err != nil {
-		return Reflection{}, err
-	}
+	screened.SuccessfulApproaches, screened.FailedApproaches = kept[0], kept[1]
+	screened.Preconditions, screened.Warnings = kept[2], kept[3]
 	return screened, nil
 }
