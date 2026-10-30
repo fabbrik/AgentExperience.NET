@@ -158,6 +158,12 @@ type ConfidenceUpdate struct {
 	PriorContradictions        int64
 	NewContradictions          int64
 	Detail                     *string
+	// AssessmentID is the assessment a human update spends (once per record), when a verifying writer set one. A
+	// port's own service never sets it (contract 1.16), but its stores honour one another writer set.
+	AssessmentID *UUID
+	// Admission is which mode admitted the update, when it was recorded (nil for evidence stored before admission
+	// was recorded).
+	Admission *ConfidenceEvidenceAdmission
 }
 
 // Counted reports whether the update moved a counter: false for a submission recorded only.
@@ -398,7 +404,8 @@ func (r *ConfidenceEngineRule) Score(record ExperienceRecord, supportingValidati
 
 // Apply is the update evidence makes, as .NET's lifecycle service computes it: ApplyConfidenceEvidence settles the
 // counters (and refuses an overflow before the engine is asked anything), then the rule's engine scores the record
-// as read with the new counters, and the update records Recorded.
+// as read with the new counters, and the update records Recorded. LifecycleService.ApplyEvidence computes the same
+// update and also commits it.
 func (r *ConfidenceEngineRule) Apply(record ExperienceRecord, evidence ConfidenceEvidence) (ConfidenceUpdate, error) {
 	if r == nil || r.engine == nil {
 		return ConfidenceUpdate{}, errNoEngine
