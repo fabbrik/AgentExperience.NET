@@ -91,8 +91,13 @@ def content_of(item: dict[str, Any]) -> Content:
     raise AssertionError(f"Unknown content type {kind}")
 
 
+def _throwing_callback(options: dict[str, Any]) -> None:
+    raise RuntimeError("the host's callback failed")
+
+
 def options_of(value: dict[str, Any]) -> ChatReflectorOptions:
     return ChatReflectorOptions(
+        configure_chat_options=_throwing_callback if value.get("configureChatOptionsThrows") else None,
         model_name=value["modelName"],
         timeout=value["timeoutSeconds"],
         max_quoted_length=value["maxQuotedLength"],
@@ -195,7 +200,7 @@ def test_reflection_output(name: str) -> None:
 
 def test_the_reflection_cases() -> None:
     assert len(cases("reflection-prompt")) == 6
-    assert len(cases("reflection-output")) == 24
+    assert len(cases("reflection-output")) == 31
 
 
 # ---- What no fixture pins ----------------------------------------------------------------------------------------
@@ -378,3 +383,44 @@ def test_a_host_reflector_that_raises_or_returns_a_mismatched_reflection_quarant
         assert isinstance(finalized.reflection_failure, error)
     mismatch = finalize(capture_finalize_case(case)[0], **finalize_arguments(case), reflector=Mismatched())
     assert getattr(mismatch.reflection_failure, "field", None) == "ReflectionId"
+
+
+@pytest.mark.parametrize(
+    ("answer", "lesson"),
+    [
+        ('{"lesson":"a","x":1,"x":2}', "a"),
+        ('{"lesson":"a","x":{"y":1,"y":2}}', "a"),
+        ('{"lesson":"a","x":' + "9" * 10_000 + "}", "a"),
+        ('{"lesson":"a","x":1e999999}', "a"),
+    ],
+)
+def test_strict_reading_accepts_what_dotnet_skips(answer: str, lesson: str) -> None:
+    from agentexperience.reflection_prompt import read_answer
+
+    assert read_answer(answer).lesson == lesson
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        '{"lesson":"a","lesson":"b"}',
+        '{"lesson":"a","warnings":[],"warnings":[]}',
+        '{"lesson":5}',
+        '{"lesson":"a","warnings":[1]}',
+        '{"lesson":"a","x":NaN}',
+        '{"lesson":"\\ud800"}',
+        '{"lesson":"a","x":' + "[" * 64 + "]" * 64 + "}",
+    ],
+)
+def test_strict_reading_refuses_what_dotnet_refuses(answer: str) -> None:
+    from agentexperience.reflection_prompt import read_answer
+
+    with pytest.raises(ReflectionFailed) as failed:
+        read_answer(answer)
+    assert failed.value.kind == "Unparseable"
+
+
+def test_sixty_four_levels_are_read() -> None:
+    from agentexperience.reflection_prompt import read_answer
+
+    assert read_answer('{"lesson":"a","x":' + "[" * 63 + "]" * 63 + "}").lesson == "a"

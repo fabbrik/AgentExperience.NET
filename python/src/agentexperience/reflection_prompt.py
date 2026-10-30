@@ -561,6 +561,11 @@ def _object(pairs: list[tuple[str, Any]]) -> _Object:
     return result
 
 
+class _Number(str):
+    """A JSON number, kept as its text: .NET skips a number in a member it does not map whatever its length, so it is
+    never converted (Python refuses an integer of more than 4,300 digits)."""
+
+
 def _reject_constant(name: str) -> Any:
     raise ValueError(f"{name} is not JSON.")
 
@@ -597,6 +602,10 @@ def _depth(value: Any) -> int:
     return 0
 
 
+def _is_text(value: Any) -> bool:
+    return isinstance(value, str) and not isinstance(value, _Number)
+
+
 def _has_lone_surrogate(text: str) -> bool:
     return any(0xD800 <= ord(ch) <= 0xDFFF for ch in text)
 
@@ -615,7 +624,9 @@ def read_answer(answer: str) -> ModelOutput:
     if not text or text[0] != "{":
         raise ReflectionFailed("Unparseable")
     try:
-        parsed = json.loads(text, object_pairs_hook=_object, parse_constant=_reject_constant)
+        parsed = json.loads(
+            text, object_pairs_hook=_object, parse_constant=_reject_constant, parse_int=_Number, parse_float=_Number
+        )
     except (ValueError, RecursionError):
         raise ReflectionFailed("Unparseable") from None
     if not isinstance(parsed, _Object) or parsed.duplicated & {*_TEXT_MEMBERS, *_LIST_MEMBERS}:
@@ -625,14 +636,14 @@ def read_answer(answer: str) -> ModelOutput:
     values: dict[str, Any] = {}
     for name in _TEXT_MEMBERS:
         value = parsed.get(name)
-        if value is not None and (not isinstance(value, str) or _has_lone_surrogate(value)):
+        if value is not None and (not _is_text(value) or _has_lone_surrogate(value)):
             raise ReflectionFailed("Unparseable")
         values[name] = value
     for name in _LIST_MEMBERS:
         value = parsed.get(name)
         if value is not None:
             if not isinstance(value, list) or any(
-                item is not None and (not isinstance(item, str) or _has_lone_surrogate(item)) for item in value
+                item is not None and (not _is_text(item) or _has_lone_surrogate(item)) for item in value
             ):
                 raise ReflectionFailed("Unparseable")
             value = tuple(value)

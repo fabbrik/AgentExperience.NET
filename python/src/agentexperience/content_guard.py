@@ -72,14 +72,14 @@ def _is_letter(unit: str) -> bool:
 
 
 def lower_invariant(units: str) -> str:
-    """.NET's ``ToLowerInvariant``: each code unit's simple lower-case mapping (the dotted capital I is ``i``)."""
+    """.NET's ``ToLowerInvariant``: each code unit's simple lower-case mapping; the dotted capital I (U+0130) is left
+    as it is, as .NET's invariant mapping leaves it."""
     out: list[str] = []
     for unit in units:
         code = ord(unit)
-        if 0xD800 <= code <= 0xDFFF or code < 0x41:
+        if 0xD800 <= code <= 0xDFFF or code < 0x41 or code == 0x130:
+            # .NET's invariant mapping leaves the dotted capital I as it is.
             out.append(unit)
-        elif code == 0x130:
-            out.append("i")
         else:
             lower = unit.lower()
             out.append(lower if len(lower) == 1 else unit)
@@ -158,11 +158,15 @@ _ROLES = (
 
 @dataclass(frozen=True)
 class _Regexes:
-    url: re.Pattern[str]
+    www: re.Pattern[str]
+    url_body: re.Pattern[str]
+    letter_or_number: re.Pattern[str]
+    bracket: re.Pattern[str]
+    bracket_open: re.Pattern[str]
+    jwt_run: re.Pattern[str]
     dotted_token: re.Pattern[str]
     ip: re.Pattern[str]
     always_refused: re.Pattern[str]
-    bracketed_dot: re.Pattern[str]
     spelled_dot: re.Pattern[str]
     credential: re.Pattern[str]
     phrase: re.Pattern[str]
@@ -173,7 +177,10 @@ class _Regexes:
 def _rx() -> _Regexes:
     """.NET's patterns, compiled once, on first use."""
     _L, _N, _M, _D, _S = _classes()
-    url = re.compile(rf"(?<![{_L}{_N}])[a-z][a-z0-9+.\-]*://[^{_S}<>\"'`]+|(?<![{_L}{_N}{_M}_\-.])www\.[^{_S}<>\"'`]+")
+    # The URL pattern's two alternatives, run by _urls in linear time (see there).
+    www = re.compile(rf"(?<![{_L}{_N}{_M}_\-.])www\.(?=[^{_S}<>\"'`])")
+    url_body = re.compile(rf"[^{_S}<>\"'`]+")
+    letter_or_number = re.compile(rf"[{_L}{_N}]")
     # .NET's labels are atomic groups; a label is always followed by a dot or by a character outside its class, so a
     # greedy label matches exactly what the atomic one does.
     dotted_token = re.compile(rf"(?<![{_L}{_N}{_M}\-])[{_L}{_N}{_M}\-]+(?:\.[{_L}{_N}{_M}\-]+)+(?![{_L}{_N}{_M}])")
@@ -186,7 +193,10 @@ def _rx() -> _Regexes:
         rf"(?<![{_L}{_N}])(?:javascript|vbscript):[^{_S}]|(?<![{_L}{_N}])data:(?:,|[a-z]+/)|(?<![{_L}{_N}])file:/"
         rf"|\\\\[{_L}{_N}][{_L}{_N}.\-]*\\[{_L}{_N}$]"
     )
-    bracketed_dot = re.compile(rf"[{_S}]*[\[({{][{_S}]*(?:\.|dot)[{_S}]*[\])}}][{_S}]*")
+    # The bracketed dot without its leading white space, matched at each opening bracket (see deobfuscate).
+    bracket = re.compile(rf"[\[({{][{_S}]*(?:\.|dot)[{_S}]*[\])}}][{_S}]*")
+    bracket_open = re.compile(r"[\[({]")
+    jwt_run = re.compile(r"[A-Za-z0-9_\-]+")
     spelled_dot = re.compile(rf"(?<=[{_L}{_N}])[{_S}]+dot[{_S}]+(?=[{_L}{_N}])")
 
     credential = re.compile(
@@ -198,7 +208,6 @@ def _rx() -> _Regexes:
         r"|glpat-[A-Za-z0-9_\-]{20,}"
         r"|AIza[0-9A-Za-z_\-]{35}"
         r"|xox[abposr]-"
-        r"|eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"
         rf"|(?<![a-zA-Z])(?:{_SECRET_NAMES})"
         rf"[{_S}]*=[^{_S};\"',]"
     )
@@ -220,7 +229,19 @@ def _rx() -> _Regexes:
     )
     new_instructions = re.compile(rf"(?<![{_L}{_N}])new instructions[{_S}]*:")
     return _Regexes(
-        url, dotted_token, ip, always_refused, bracketed_dot, spelled_dot, credential, phrase, new_instructions
+        www,
+        url_body,
+        letter_or_number,
+        bracket,
+        bracket_open,
+        jwt_run,
+        dotted_token,
+        ip,
+        always_refused,
+        spelled_dot,
+        credential,
+        phrase,
+        new_instructions,
     )
 
 
@@ -295,8 +316,93 @@ def deobfuscate(lower: str) -> str:
     """The common ways of hiding a dot undone: the ideographic and full-width full stops, ``[.]``, ``(.)``, ``{.}``,
     ``[dot]`` and a spelled-out ``dot`` between two words."""
     text = lower.replace("。", ".").replace("｡", ".").replace("．", ".")
-    text = _rx().bracketed_dot.sub(".", text)
-    return _rx().spelled_dot.sub(".", text)
+    return _rx().spelled_dot.sub(".", _replace_bracketed_dots(text))
+
+
+def _replace_bracketed_dots(text: str) -> str:
+    """.NET's ``\\s*[\\[\\(\\{]\\s*(?:\\.|dot)\\s*[\\]\\)\\}]\\s*`` replaced by a dot, in linear time: a match is a
+    bracketed dot with the white space after it, and the white space before it back to the end of the previous match
+    (where the regular expression, starting at each white space character, would scan a long run again and again)."""
+    rx = _rx()
+    out: list[str] = []
+    last = 0
+    position = 0
+    while (opening := rx.bracket_open.search(text, position)) is not None:
+        start = opening.start()
+        match = rx.bracket.match(text, start)
+        if match is None:
+            position = start + 1
+            continue
+        before = start
+        while before > last and is_whitespace(text[before - 1]):
+            before -= 1
+        out.append(text[last:before])
+        out.append(".")
+        last = position = match.end()
+    out.append(text[last:])
+    return "".join(out)
+
+
+_SCHEME = frozenset("abcdefghijklmnopqrstuvwxyz0123456789+.-")
+_URL_STOPS = frozenset("<>\"'`")
+
+
+def _urls(text: str) -> list[str]:
+    """
+    What .NET's URL pattern finds, left to right and not overlapping, in linear time:
+    ``(?<![\\p{L}\\p{N}])[a-z][a-z0-9+.\\-]*://[^\\s<>"'`]+`` or, at the same start only when that fails,
+    ``(?<![\\p{L}\\p{N}\\p{M}_\\-.])www\\.[^\\s<>"'`]+``. A scheme's characters never include ``:``, so a scheme match
+    ends at the end of the run of scheme characters before a ``://``, and its earliest valid start in that run wins.
+    """
+    rx = _rx()
+    candidates: list[tuple[int, int, int]] = []  # (start, alternative, body start)
+    run_floor = 0
+    search = 0
+    while (colon := text.find("://", search)) >= 0:
+        search = colon + 1
+        body = colon + 3
+        if body >= len(text) or is_whitespace(text[body]) or text[body] in _URL_STOPS:
+            continue
+        run_start = colon
+        while run_start > run_floor and text[run_start - 1] in _SCHEME:
+            run_start -= 1
+        run_floor = colon
+        for start in range(run_start, colon):
+            if "a" <= text[start] <= "z" and (start == 0 or rx.letter_or_number.match(text, start - 1) is None):
+                candidates.append((start, 0, body))
+                break
+    candidates += [(match.start(), 1, match.end()) for match in rx.www.finditer(text)]
+    candidates.sort()
+    urls: list[str] = []
+    position = 0
+    for start, _, body in candidates:
+        if start < position:
+            continue
+        end = rx.url_body.match(text, body)
+        assert end is not None
+        urls.append(text[start : end.end()])
+        position = end.end()
+    return urls
+
+
+def _has_jwt(text: str) -> bool:
+    """.NET's ``eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+`` found, in linear time: an ``eyJ`` with at
+    least one more character of its run after it, the run ending in a dot that two more runs follow, separated by a
+    dot."""
+    runs = [(match.start(), match.end()) for match in _rx().jwt_run.finditer(text)]
+    for index, (start, end) in enumerate(runs):
+        if text.find("eyJ", start, end - 1) < 0 or end >= len(text) or text[end] != ".":
+            continue
+        if index + 1 < len(runs) and runs[index + 1][0] == end + 1:
+            second_end = runs[index + 1][1]
+            if (
+                second_end < len(text)
+                and text[second_end] == "."
+                and index + 2 < len(runs)
+                and runs[index + 2][0] == second_end + 1
+            ):
+                return True
+    return False
 
 
 def _trim_url(url: str) -> str:
@@ -326,9 +432,26 @@ def _is_address(match: str) -> bool:
     return True
 
 
+MAX_CHECKED_LENGTH = 1_048_576
+"""The most UTF-16 code units of one text the guard reads. .NET bounds each pattern's match to one second; this port's
+patterns run in linear time and bound the work by size instead: a longer run-content text admits nothing, and a longer
+field is refused as text that could not be checked in time."""
+
+
+class NotCheckedInTime(Exception):
+    """A text longer than :data:`MAX_CHECKED_LENGTH`: .NET's ``RegexMatchTimeoutException``."""
+
+
+def _bounded(units: str) -> str:
+    if len(units) > MAX_CHECKED_LENGTH:
+        raise NotCheckedInTime("The text is too long to be checked.")
+    return units
+
+
 def _links_in_units(units: str) -> Links:
+    _bounded(units)
     text = deobfuscate(lower_invariant(units))
-    urls = frozenset(_trim_url(match.group()) for match in _rx().url.finditer(text))
+    urls = frozenset(_trim_url(url) for url in _urls(text))
     hosts = frozenset(
         host for match in _rx().dotted_token.finditer(text) if (host := _as_host(match.group())) is not None
     )
@@ -349,7 +472,8 @@ def has_link(text: str) -> bool:
 
 def has_credential(text: str) -> bool:
     """Whether ``text`` holds credential-shaped text."""
-    return _rx().credential.search(to_units(text)) is not None
+    units = _bounded(to_units(text))
+    return _rx().credential.search(units) is not None or _has_jwt(units)
 
 
 def _phrase_form(units: str) -> str:
@@ -383,7 +507,7 @@ def _collapse_whitespace(units: str) -> str:
 
 def has_instruction_override(text: str) -> bool:
     """Whether ``text`` holds instruction-override phrasing, in its phrase form or with its letters run together."""
-    units = to_units(text)
+    units = _bounded(to_units(text))
     phrase = _phrase_form(units)
     if _rx().phrase.search(phrase):
         return True
@@ -421,7 +545,7 @@ def has_mixed_script_word(text: str) -> bool:
     """Whether a word of ``text`` mixes Latin letters with Cyrillic or Greek ones. The micro sign's Greek mu is
     neutral."""
     latin = other = False
-    for unit in to_units(text):
+    for unit in _bounded(to_units(text)):
         if not _is_letter(unit) and _category(unit) not in ("Mn", "Mc"):
             latin = other = False
             continue
@@ -464,7 +588,13 @@ def links_of(content: Iterable[str | None] | None) -> Links:
 
 def check(value: str, run: Links) -> str | None:
     """The rule ``value`` breaks, as a content-free phrase, or ``None``. The matched text is never returned."""
-    folded = fold(value)
+    try:
+        return _check(fold(value), run)
+    except NotCheckedInTime:
+        return "text that could not be checked in time"
+
+
+def _check(folded: str, run: Links) -> str | None:
     if has_credential(folded):
         return "credential-shaped text"
     if has_mixed_script_word(folded):
@@ -487,4 +617,7 @@ def check_combined(fields: Sequence[str | None]) -> str | None:
     """Instruction-override phrasing in all of ``fields`` joined by spaces, so a phrase split across items is
     caught."""
     joined = fold(" ".join(item for item in fields if item is not None))
-    return "instruction-override phrasing" if has_instruction_override(joined) else None
+    try:
+        return "instruction-override phrasing" if has_instruction_override(joined) else None
+    except NotCheckedInTime:
+        return "text that could not be checked in time"

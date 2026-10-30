@@ -188,7 +188,7 @@ def test_tokens_compare_whole() -> None:
 def test_utf16_semantics() -> None:
     # A character outside the Basic Multilingual Plane is two code units, neither a letter nor a digit.
     assert to_units("a\U0001f600") == "a" + chr(0xD83D) + chr(0xDE00)
-    assert lower_invariant("İX") == "ix"
+    assert lower_invariant(chr(0x130) + "X") == chr(0x130) + "x"
     assert has_mixed_script_word("g\U0001d5c2\u0456") is False
     assert deobfuscate("a [ dot ] b") == "a.b"
 
@@ -265,3 +265,76 @@ def test_the_producers_model() -> None:
     assert producer_for("\U0001f600") == "AgentExperience.ChatClientExperienceReflector/1.0.0 (__)"
     assert len(producer_for("m" * 500)) == 200
     assert replace(reflection(), lesson="x").lesson == "x"
+
+
+# ---- The content-guard corpus (contract 1.14) --------------------------------------------------------------------
+
+from _contract import FIXTURES, read_json  # noqa: E402
+
+from agentexperience._text import utf16_sort_key  # noqa: E402
+
+CORPUS = read_json(FIXTURES / "content-guard" / "cases.json")["cases"]
+
+
+def _text(units: str) -> str:
+    return units.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "surrogatepass")
+
+
+def _links_json(links: Any) -> dict[str, Any]:
+    def ordered(values: Any) -> list[str]:
+        return sorted((_text(value) for value in values), key=utf16_sort_key)
+
+    return {
+        "urls": ordered(links.urls),
+        "hosts": ordered(links.hosts),
+        "addresses": ordered(links.addresses),
+        "alwaysRefused": links.always_refused,
+    }
+
+
+_FIXTURE_DEFECTS = {
+    # The corpus file holds U+FFFD where .NET's input was a lone surrogate (its JSON writer replaced it), so the
+    # fixture's input no longer gives .NET's own answer: .NET keeps U+FFFD, as this port does.
+    "lone-surrogates": "the fixture's input holds U+FFFD, not the lone surrogates .NET's answer was computed from",
+}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(case, marks=pytest.mark.xfail(reason=_FIXTURE_DEFECTS[case["name"]], strict=True))
+        if case["name"] in _FIXTURE_DEFECTS
+        else case
+        for case in CORPUS
+    ],
+    ids=[case["name"] for case in CORPUS],
+)
+def test_content_guard_corpus(case: dict[str, Any]) -> None:
+    if "Python" in (case.get("notRepresentableIn") or []):
+        pytest.skip(case.get("reason", "not representable in Python"))
+    run_links = links_of(case["runContent"])
+    for field in case["fields"]:
+        folded = fold(field["value"])
+        assert folded == field["folded"]
+        assert _links_json(links_in(folded)) == field["links"], field["value"][:80]
+        assert check(field["value"], run_links) == field["rule"], field["value"][:80]
+    assert check_combined([field["value"] for field in case["fields"]]) == case["combinedRule"]
+
+
+def test_a_large_whitespace_heavy_result_is_read_in_linear_time() -> None:
+    import time
+
+    from agentexperience.content_guard import MAX_CHECKED_LENGTH
+
+    heavy = ("[ " + " " * 4_000 + "x " + "a." * 2_000 + "eyJ" * 1_000) * 50
+    start = time.monotonic()
+    links = links_of([heavy, "see https://good.example/a"])
+    assert check(heavy, links) is None
+    assert time.monotonic() - start < 5
+    assert "https://good.example/a" in {_text(url) for url in links.urls}
+
+    # Past the bound, a run-content text admits nothing and a field is refused as not checked in time.
+    too_long = "see https://good.example/b " + " " * MAX_CHECKED_LENGTH
+    assert links_of([too_long]).urls == frozenset()
+    assert check(too_long, NOTHING) == "text that could not be checked in time"
+    assert check_combined([too_long]) == "text that could not be checked in time"
