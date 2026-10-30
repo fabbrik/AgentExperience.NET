@@ -413,7 +413,8 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 
 	spans := s.spans.GetSpans()
 	for _, want := range []string{"inject", "retrieve", "capture.start_run", "capture.append_attempt",
-		"capture.complete_run", "verify", "reflect", "finalize", "index", "lifecycle.commit", "confidence.apply"} {
+		"capture.complete_run", "verify", "reflect", "finalize", "index", "lifecycle.commit", "confidence.apply",
+		"reuse_feedback"} {
 		spanNamed(t, spans, "agentexperience."+want)
 	}
 	for _, span := range spans {
@@ -507,6 +508,33 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 		commit[telemetry.AttributeOutcome] != "Committed" || commit[ae.AttributeEventID] == nil {
 		t.Errorf("confidence.apply %v, lifecycle.commit %v", apply, commit)
 	}
+	feedback := spanNamed(t, spans, "agentexperience.reuse_feedback")
+	got := attributes(feedback)
+	if got[telemetry.AttributeOutcome] != "Recorded" || got[ae.AttributeFeedbackID] == nil || got[ae.AttributeRunID] == nil {
+		t.Errorf("reuse_feedback %v", got)
+	}
+	// The confidence.apply the feedback ran is its child and nested, as .NET reports it; the host's own is not.
+	var nestedApply, hostApply int
+	for _, span := range spans {
+		if span.Name != "agentexperience.confidence.apply" {
+			continue
+		}
+		if span.Parent.SpanID() == feedback.SpanContext.SpanID() {
+			nestedApply++
+		} else {
+			hostApply++
+		}
+	}
+	if nestedApply != 1 || hostApply != 1 {
+		t.Errorf("confidence.apply: %d under reuse_feedback, %d of the host's", nestedApply, hostApply)
+	}
+	var nestedFlags []any
+	for _, p := range counted(points, "confidence.apply") {
+		nestedFlags = append(nestedFlags, p.attributes["nested"])
+	}
+	if !slices.Contains(nestedFlags, true) || !slices.Contains(nestedFlags, false) {
+		t.Errorf("confidence.apply nested flags %v", nestedFlags)
+	}
 }
 
 // lifecycle applies a piece of evidence to a record and then commits a transition, through the core's lifecycle
@@ -545,6 +573,22 @@ func lifecycle(t *testing.T, store *inmemory.Store) {
 		OccurredAt: ae.Now(), ExpectedRevision: applied.Revision})
 	if err != nil || committed.Outcome != ae.TransitionCommitted {
 		t.Fatalf("%+v %v", committed, err)
+	}
+	// Contract 1.17: reuse feedback attributing improvement to the record, so reuse_feedback runs a nested
+	// confidence.apply.
+	feedback, err := ae.NewReuseFeedbackService(inmemory.NewReuseFeedbackLedger(), service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := feedback.Record(ctx, authorization, ae.ExperienceReuseFeedback{
+		FeedbackID: ae.NewRandomUUID(), RunID: ae.NewRandomUUID(), Scope: record.Scope,
+		ExposedExperienceIDs: []ae.UUID{record.ExperienceID}, RunOutcome: ae.VerificationVerified,
+		Measure: &ae.ReuseMeasure{Kind: "tool-calls", Value: 3}, ObservedAt: ae.Now(),
+		HumanAssessment: &ae.HumanReuseAssessment{AssessmentID: ae.NewRandomUUID(), Benefit: ae.BenefitImproved,
+			AttributedExperienceIDs: []ae.UUID{record.ExperienceID}, Rationale: "it helped", AssessedAt: ae.Now()}})
+	if err != nil || recorded.Outcome != ae.FeedbackRecorded ||
+		recorded.Exposures[0].Disposition != ae.ExposureEvidenceApplied {
+		t.Fatalf("%+v %v", recorded, err)
 	}
 }
 
