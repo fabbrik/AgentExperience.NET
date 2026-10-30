@@ -58,7 +58,11 @@ internal sealed class TriageHost : IAsyncDisposable
     /// <param name="clock">The replay's clock, shared with the container (one instance, as the library requires).</param>
     /// <param name="postgresConnectionString">PostgreSQL, already migrated; <see langword="null"/> for the in-memory store.</param>
     /// <param name="newId">Identifier source for capture (run ids decide holdout arms); <see langword="null"/> for random ones.</param>
-    public static TriageHost Create(IChatClient model, TriageWorkspace workspace, SimulatedClock clock, string? postgresConnectionString, Func<Guid>? newId)
+    /// <param name="sqlitePath">
+    /// Story 28.7: a SQLite file instead (migrated on first use); its run store keeps every captured run, so a later pass
+    /// can finalize a run whose fix had not landed yet.
+    /// </param>
+    public static TriageHost Create(IChatClient model, TriageWorkspace workspace, SimulatedClock clock, string? postgresConnectionString, Func<Guid>? newId, string? sqlitePath = null)
     {
         TriageHost? host = null;
         var services = new ServiceCollection();
@@ -93,7 +97,11 @@ internal sealed class TriageHost : IAsyncDisposable
             };
         });
 
-        if (postgresConnectionString is null)
+        if (sqlitePath is not null)
+        {
+            builder.UseSqlite(sqlitePath, sqlite => sqlite.MigrateSchemaOnFirstUse = true);
+        }
+        else if (postgresConnectionString is null)
         {
             builder.UseInMemoryStorageForDevelopment();
         }

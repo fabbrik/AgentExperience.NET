@@ -27,6 +27,7 @@
     <ProjectReference Include="..\..\src\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.Sqlite\AgentExperience.Storage.Sqlite.csproj" />
   </ItemGroup>
 
   <ItemGroup>

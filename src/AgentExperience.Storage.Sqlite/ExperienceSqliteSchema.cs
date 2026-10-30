@@ -45,8 +45,8 @@ public static class ExperienceSqliteSchema
     }
 
     /// <summary>
-    /// Applies every script the database at <paramref name="databasePath"/> does not hold yet, creating the file when it
-    /// is missing.
+    /// Applies every script the database at <paramref name="databasePath"/> does not hold yet, creating the file (and its
+    /// directory) when it is missing.
     /// </summary>
     /// <param name="databasePath">The database file.</param>
     /// <param name="cancellationToken">Cancels the migration between scripts; a script in flight rolls back.</param>
@@ -96,6 +96,15 @@ public static class ExperienceSqliteSchema
     internal static async Task<int> MigrateConnectionStringAsync(string connectionString, CancellationToken cancellationToken)
     {
         var database = new SqliteDatabase(connectionString);
+
+        // A new file's directory is created too: SQLite creates the file, never its directory.
+        var file = new SqliteConnectionStringBuilder(database.ConnectionString).DataSource;
+        if (!file.StartsWith(':') && !file.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+            && Path.GetDirectoryName(Path.GetFullPath(file)) is { Length: > 0 } directory)
+        {
+            Directory.CreateDirectory(directory);
+        }
+
         try
         {
             var connection = await database.OpenAsync(cancellationToken).ConfigureAwait(false);

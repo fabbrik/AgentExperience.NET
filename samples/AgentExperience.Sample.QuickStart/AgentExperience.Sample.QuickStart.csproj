@@ -24,6 +24,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
+    <!-- The sqlite option: the same demo with its memory in a local file, one run per process. -->
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.Sqlite\AgentExperience.Storage.Sqlite.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -47,6 +47,9 @@ public sealed record TriageRecord(CiFailure Failure, Guid? RunId, IReadOnlyList<
     public Guid? ExperienceId { get; set; }
 
     public FinalizationOutcome? Finalized { get; set; }
+
+    /// <summary>Story 28.7: triaged by an earlier pass while its fix was pending, and finalized by this one from the run store.</summary>
+    public bool Resumed { get; init; }
 }
 
 /// <summary>What a pass produced.</summary>
@@ -80,6 +83,32 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
     public const string FetchError = "fetch-error";
     public const string Stopped = "stopped";
 
+    /// <summary>The note a pending failure's triage leaves when its run waits in the run store for its fix (story 28.7).</summary>
+    public const string AwaitingFix = "awaiting fix: run ";
+
+    /// <summary>
+    /// Story 28.7: the storage keeps captured runs (SQLite's run store). A failure still waiting for its fix is triaged
+    /// now and its run left unfinalized; a later pass, in a new process, finalizes that stored run once the fix lands,
+    /// instead of triaging again.
+    /// </summary>
+    public bool KeepsRuns { get; init; }
+
+    /// <summary>The run id an earlier pass left waiting for its fix, from its ledger note, or <see langword="null"/>.</summary>
+    public static Guid? AwaitingRunId(LedgerRow row)
+    {
+        var at = row.Note.IndexOf(AwaitingFix, StringComparison.Ordinal);
+        return at >= 0 && Guid.TryParse(row.Note.AsSpan(at + AwaitingFix.Length, 36), out var id) ? id : null;
+    }
+
+    /// <summary>A prediction back from the ledger's spelling (<see cref="TriagePrediction.Describe"/>), or <see langword="null"/>.</summary>
+    public static TriagePrediction? ParsePredicted(string predicted) => predicted switch
+    {
+        "flaky" => new TriagePrediction("flaky", []),
+        _ when predicted.StartsWith("code:", StringComparison.Ordinal) =>
+            new TriagePrediction("code", [.. predicted["code:".Length..].Split(',', StringSplitOptions.RemoveEmptyEntries)]),
+        _ => null,
+    };
+
     /// <summary>The events for the triageable failures, in replay order.</summary>
     public static IReadOnlyList<ReplayEvent> Schedule(IEnumerable<CiFailure> failures)
     {
@@ -104,17 +133,48 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
     /// </param>
     /// <param name="rows">Filled as the pass runs, so whatever ran can be written even if the pass throws.</param>
     /// <param name="cancellationToken">Stops the pass.</param>
+    /// <param name="earlierRows">The ledger of earlier passes: a run one left waiting for its fix (<see cref="KeepsRuns"/>) is finalized here once the fix lands.</param>
     public async Task<ReplayResult> RunAsync(
         IReadOnlyList<CiFailure> failures,
         IReadOnlySet<long> alreadyProcessed,
         DateTimeOffset? resumeCutoff,
         Dictionary<long, LedgerRow> rows,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<LedgerRow>? earlierRows = null)
     {
         var todo = new List<CiFailure>();
+        var waiting = new List<CiFailure>();
+        var triages = new Dictionary<long, TriageRecord>();
+        var fixLanded = new List<CiFailure>();
+        var awaiting = (earlierRows ?? [])
+            .Where(row => !row.Final && AwaitingRunId(row) is not null)
+            .ToDictionary(row => row.RunId);
         foreach (var failure in failures.Where(failure => !alreadyProcessed.Contains(failure.Run.Id)))
         {
-            if (!failure.Label.Triageable)
+            if (awaiting.TryGetValue(failure.Run.Id, out var earlierRow))
+            {
+                // Triaged by an earlier pass while its fix was pending; its run is in the run store.
+                if (failure.Label.Triageable)
+                {
+                    var prediction = ParsePredicted(earlierRow.Predicted);
+                    var correct = Scoring.IsCorrect(failure.Label, prediction);
+                    rows[failure.Run.Id] = earlierRow with { Label = failure.Label.Name, Correct = correct ? "true" : "false" };
+                    triages[failure.Run.Id] = new TriageRecord(failure, AwaitingRunId(earlierRow), [], earlierRow.Arm, prediction, correct) { Resumed = true };
+                    fixLanded.Add(failure);
+                }
+                else
+                {
+                    rows[failure.Run.Id] = earlierRow;
+                }
+
+                continue;
+            }
+
+            if (KeepsRuns && failure.Label.Kind == LabelKind.Pending)
+            {
+                waiting.Add(failure);
+            }
+            else if (!failure.Label.Triageable)
             {
                 rows[failure.Run.Id] = Skipped(failure, failure.Label.Name);
             }
@@ -130,10 +190,15 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
 
         var earlier = Accounted((await EstimateAsync(0, cancellationToken).ConfigureAwait(false)).Overall);
 
-        var triages = new Dictionary<long, TriageRecord>();
         string? stopped = null;
         var errorsInARow = 0;
-        foreach (var replayEvent in Schedule(todo))
+        IEnumerable<ReplayEvent> events =
+        [
+            .. Schedule(todo),
+            .. waiting.Select(failure => new TriageEvent(failure.Run.CompletedAt, failure)),
+            .. fixLanded.Select(failure => new FinalizeEvent(failure.Label.Green!.CompletedAt, failure)),
+        ];
+        foreach (var replayEvent in events.OrderBy(e => e.At).ThenBy(e => e.Order).ThenBy(e => e.Failure.Run.Id))
         {
             clock.AdvanceTo(replayEvent.At);
             var id = replayEvent.Failure.Run.Id;
@@ -184,8 +249,9 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
             }
         }
 
-        // Every captured run the holdout assigned, errored ones included (the library counts those Pending).
-        var assigned = triages.Values.Count(record => record.RunId is not null && record.Arm is "treatment" or "holdout");
+        // Every captured run the holdout assigned, errored ones included (the library counts those Pending). A run an earlier
+        // pass captured was counted then.
+        var assigned = triages.Values.Count(record => !record.Resumed && record.RunId is not null && record.Arm is "treatment" or "holdout");
         var estimate = await EstimateAsync(earlier + assigned, cancellationToken).ConfigureAwait(false);
         return new ReplayResult([.. rows.Values], [.. triages.Values], estimate, stopped, metered.ModelCalls, metered.InputTokens, metered.OutputTokens, metered.Cost);
     }
@@ -293,8 +359,15 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
             note = Join(note, "not captured");
         }
 
-        var correct = Scoring.IsCorrect(failure.Label, prediction);
         var errored = note.StartsWith("error:", StringComparison.Ordinal);
+        var pending = !failure.Label.Triageable;
+        var correct = !pending && Scoring.IsCorrect(failure.Label, prediction);
+        if (pending && !errored && runId is { } waitingRun)
+        {
+            // Scored and finalized by a later pass, when the fix lands: the run waits in the run store.
+            note = Join(note, AwaitingFix + waitingRun.ToString("D"));
+        }
+
         // An errored or uncaptured run is never finalized, so the ledger gives it no arm and no score, as the library does.
         var row = new LedgerRow(
             failure.Run.Id,
@@ -303,7 +376,7 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
             failure.Label.Name,
             errored || runId is null ? "-" : arm,
             prediction?.Describe() ?? "unparsed",
-            errored ? "-" : correct ? "true" : "false",
+            errored || pending ? "-" : correct ? "true" : "false",
             metered.Cost - costBefore,
             note);
         return (row, new TriageRecord(failure, runId, named, arm, prediction, correct) { Errored = errored });

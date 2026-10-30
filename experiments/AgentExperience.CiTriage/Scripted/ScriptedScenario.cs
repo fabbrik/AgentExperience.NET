@@ -11,7 +11,12 @@ public static class ScriptedScenario
 {
     public static readonly DateTimeOffset Start = new(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
 
-    public static FakeCi Create()
+    /// <param name="waitingFixed">
+    /// The same history a day later: the failure still waiting for its fix in the first has one now (story 28.7), so a
+    /// second pass over durable storage finalizes the run the first pass captured for it. Its green run is added last, so
+    /// every other run keeps its id.
+    /// </param>
+    public static FakeCi Create(bool waitingFixed = false)
     {
         var ci = new FakeCi();
         ci.AddRun("main", "main-0", "success", Start.AddHours(1));
@@ -40,6 +45,11 @@ public static class ScriptedScenario
         ci.AddFailure("feat/waiting", "wait-1", Start.AddDays(15).AddHours(23), ["src/AgentExperience.Core/Area2/Area2Options.cs"], CompileLog("Area2"));
         ci.AddFailure("feat/expired", "old-1", Start.AddDays(7).AddHours(12), ["src/AgentExperience.Core/Area0/Area0Options.cs"], null, "old-2", Start.AddDays(7).AddHours(13),
             ["src/AgentExperience.Core/Area0/Area0Options.cs"]);
+        if (waitingFixed)
+        {
+            ci.AddFix("feat/waiting", "wait-1", "wait-2", Start.AddDays(16).AddHours(9), ["src/AgentExperience.Core/Area2/Area2Options.cs"]);
+        }
+
         return ci;
     }
 

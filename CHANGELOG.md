@@ -473,6 +473,10 @@ the six Go modules at one version.
   constructor), with the same verification, closed-round and idempotency rules, then marks it finalized. Erasing a
   record deletes the stored run it came from. The run store conformance suite runs on both stores; a run completed in
   one service provider is finalized by another on SQLite and on PostgreSQL. Without a run store nothing changes.
+- **Try it**: the quick-start sample takes `--sqlite <path>` (one run per process: run it twice, and the second process
+  is handed the lesson the first stored), and the CI triage experiment takes `--storage sqlite:<path>`, with which a
+  failure still waiting for its fix is triaged and its run finalized by a later pass once the fix lands
+  (`--scripted --scripted-later` shows it offline).
 - **Not provided**: sharing grants and the access log, encryption and crypto-shredding, row-level security and database
   roles, vectors, retention sweeps. Internally, the PostgreSQL payload's attempt, outcome, environment and provenance
   mappings are each one method now, shared with the SQLite store; nothing stored changes.

@@ -45,7 +45,7 @@ user would wire it, and the library's own holdout judges whether what it learned
   - no `Verify`, because outcomes arrive later and are finalized out of band;
   - the `path` argument of `read_file` is kept and shown on a lesson's `Tried:` line;
   - capture retention is raised, so simulated time cannot expire a captured run.
-- Storage: `.UseInMemoryStorageForDevelopment()` or `.UsePostgres(...)`.
+- Storage: `.UseInMemoryStorageForDevelopment()`, `.UsePostgres(...)` or `.UseSqlite(...)`.
 - `.UseAgentExperience(provider)` on the agent.
 - `Injection.Holdout = new ExperienceHoldoutOptions { Rate = 0.5 }`.
 
@@ -86,6 +86,19 @@ dotnet run --project experiments/AgentExperience.CiTriage
   Keep it outside the repository.
 - **A provider error is never finalized.** The library counts that run as Pending, and the ledger gives it no arm and
   no score, so infrastructure noise never counts against an arm.
+
+**Finalizing later, with SQLite** (`--storage sqlite:<path>`; `--storage memory` and `--storage postgres:<conn>` select
+the other two). The lessons and every captured run live in one local file, so passes resume like PostgreSQL's, and one
+thing changes: a failure still waiting for its fix (`pending`) is triaged anyway, and its captured run is left in the
+file's run store, unfinalized, with `awaiting fix: run <id>` in the ledger. A later pass, in a new process, finalizes
+that stored run once the fix has landed -- it does not triage the failure again -- and scores the earlier prediction
+against the fix. `--scripted` may use a SQLite file (it is local); `--scripted --scripted-later` replays the same fake
+history a day later, when its waiting failure has its fix, so two scripted passes show the whole round trip offline:
+
+```bash
+dotnet run --project experiments/AgentExperience.CiTriage -- --scripted --storage sqlite:/tmp/triage.db
+dotnet run --project experiments/AgentExperience.CiTriage -- --scripted --scripted-later --storage sqlite:/tmp/triage.db
+```
 
 Outputs go to `results/`:
 

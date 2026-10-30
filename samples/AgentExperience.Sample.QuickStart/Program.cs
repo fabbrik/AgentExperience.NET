@@ -6,6 +6,7 @@ using AgentExperience.Core.Verification;
 using AgentExperience.MicrosoftAgentFramework;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 using AgentExperience.Sample.QuickStart;
+using AgentExperience.Storage.Sqlite;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -42,10 +43,24 @@ else if (args.Contains("--recipe", StringComparer.Ordinal))
 {
     await QuickStart.RunRecipeAsync(model, label, Console.Out);
 }
+else if (Array.IndexOf(args, "--sqlite") is var at and >= 0)
+{
+    // --sqlite <path>: one run per process, its memory in a local file. Run the sample twice: the second process is handed
+    // the lesson the first one stored.
+    if (at + 1 >= args.Length)
+    {
+        Console.Error.WriteLine("--sqlite needs a database file path.");
+        return 1;
+    }
+
+    await QuickStart.RunSqliteAsync(model, label, Console.Out, args[at + 1]);
+}
 else
 {
     await QuickStart.RunAsync(model, label, Console.Out);
 }
+
+return 0;
 
 /// <summary>The README quick start's wiring, run twice on the same ticket.</summary>
 public static class QuickStart
@@ -80,12 +95,24 @@ public static class QuickStart
     public static Task<IReadOnlyList<QuickStartRun>> RunRecallAsync(IChatClient model, string modelLabel, TextWriter output) =>
         RunAsync(model, modelLabel, output, recall: true);
 
-    private static async Task<IReadOnlyList<QuickStartRun>> RunAsync(IChatClient model, string modelLabel, TextWriter output, bool recall, bool recipe = false)
+    /// <summary>
+    /// <c>--sqlite &lt;path&gt;</c>: the same wiring with <c>UseSqlite(path)</c>, and one run of <see cref="Ticket"/> per call,
+    /// as one process would make it. The first process learns and stores the lesson in the file; the next one, with
+    /// nothing in memory, is handed it.
+    /// </summary>
+    public static async Task<QuickStartRun> RunSqliteAsync(IChatClient model, string modelLabel, TextWriter output, string databasePath)
+    {
+        // Explicit, once per start: journaled and idempotent, so it applies nothing when the file is current.
+        await ExperienceSqliteSchema.MigrateAsync(databasePath);
+        return (await RunAsync(model, modelLabel, output, recall: false, sqlitePath: databasePath))[0];
+    }
+
+    private static async Task<IReadOnlyList<QuickStartRun>> RunAsync(IChatClient model, string modelLabel, TextWriter output, bool recall, bool recipe = false, string? sqlitePath = null)
     {
         // The tool, and the state Verify reads. Under --recall the working strategy is the last one tried, so the hint shows.
         var desk = recall ? new RefundDesk(RecallWorkingStrategy) : new RefundDesk();
         var services = new ServiceCollection();
-        services.AddAgentExperience(options =>
+        var builder = services.AddAgentExperience(options =>
         {
             // Who the run is for: one fixed local identity, refused outside Development/Test. In production set
             // options.ResolveIdentity from your own authentication, never from model output.
@@ -119,7 +146,17 @@ public static class QuickStart
             {
                 options.Recall = new ExperienceRecallOptions();
             }
-        }).UseInMemoryStorageForDevelopment();
+        });
+        if (sqlitePath is null)
+        {
+            builder.UseInMemoryStorageForDevelopment();
+        }
+        else
+        {
+            // Durable and local: the next process finds the lesson in the same file.
+            builder.UseSqlite(sqlitePath);
+        }
+
         await using var provider = services.BuildServiceProvider();
 
         var log = new ModelInputLog(model);   // keeps what the model was sent, to print it below
@@ -144,6 +181,11 @@ public static class QuickStart
         }).AsBuilder().UseAgentExperience(provider).Build();
 
         await output.WriteLineAsync($"Model: {modelLabel}");
+        if (sqlitePath is not null)
+        {
+            return [await RunOnceAsync(agent, desk, log, output)];
+        }
+
         await output.WriteLineAsync(recall ? $"Task (run 1): {Ticket}" : $"Task (both runs): {Ticket}");
         if (recall)
         {
@@ -196,6 +238,26 @@ public static class QuickStart
         await output.WriteLineAsync("With the stand-in, this shows the loop working, not that it helps a real model: see \"Does it help?\"");
         await output.WriteLineAsync("in the repository README for a live experiment.");
         return runs;
+    }
+
+    /// <summary>One run of <see cref="Ticket"/> under <c>--sqlite</c>, and what it was handed.</summary>
+    private static async Task<QuickStartRun> RunOnceAsync(AIAgent agent, RefundDesk desk, ModelInputLog log, TextWriter output)
+    {
+        await output.WriteLineAsync($"Task: {Ticket}");
+        await output.WriteLineAsync();
+        desk.Reset();
+        log.Reset();
+        await agent.RunAsync(Ticket);
+        var run = new QuickStartRun([.. desk.Attempts], log.Block) { Hint = log.Hint };
+        var tried = run.Attempts.Count == 0
+            ? "nothing"
+            : string.Join(" → ", run.Attempts.Select(attempt => attempt.Strategy + (attempt.Succeeded ? " ✓" : " ✗")));
+        var failed = run.FailedAttempts == 1 ? "1 failed attempt" : $"{run.FailedAttempts} failed attempts";
+        await output.WriteLineAsync($"This run ({(run.Block is null ? "no lesson in the file yet" : "lesson injected from the file")}): tried {tried}  ({failed})");
+        await output.WriteLineAsync(run.Block is null
+            ? "Its lesson is stored in the file: run the sample again with the same --sqlite path."
+            : "An earlier process stored this lesson; this one found it in the file by the ticket's text.");
+        return run;
     }
 }
 
