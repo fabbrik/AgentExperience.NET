@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // The injected block: how stored records become the Historical Reference block an agent is shown. Records are
@@ -65,6 +67,9 @@ const (
 	callFailed             = "[failed]"
 	callFailedClassPrefix  = "[failed: "
 	callMarkerEnd          = "]"
+	callReturnedExcerpt    = "[returned: "
+	maxRecipeExcerptLength = 200
+	maxRecipeToolLength    = 256
 	workedSuffix           = " (the final attempt)"
 	maxTriedAttempts       = 4
 	maxErrorExcerptLength  = 120
@@ -184,6 +189,9 @@ type BlockOptions struct {
 	MaxBytes int
 	// ApproachArguments maps a tool name to the argument keys whose stored values its "Tried:" lines may show.
 	ApproachArguments map[string][]string
+	// RecipeExcerpts are the tool names (matched ordinally) whose stored recipe excerpts the Worked: attempt's
+	// "Tried:" line shows in place of their [returned] marker (contract 1.19). Empty shows none.
+	RecipeExcerpts []string
 }
 
 func (o BlockOptions) withDefaults() BlockOptions {
@@ -235,6 +243,17 @@ func (o BlockOptions) Validate() error {
 					"the line's own delimiters (%s)", tool, maxArgumentKeyLength, forbiddenKeyCharacters)
 			}
 		}
+	}
+	seen := map[string]bool{}
+	for _, tool := range o.RecipeExcerpts {
+		if isNullOrWhitespace(tool) || UTF16Len(tool) > maxRecipeToolLength || strings.IndexFunc(tool, unicode.IsControl) >= 0 {
+			return fmt.Errorf("a recipe-excerpt allowlist entry names a tool that is blank, longer than %d characters, "+
+				"or holds a control character", maxRecipeToolLength)
+		}
+		if seen[tool] {
+			return fmt.Errorf("the recipe-excerpt allowlist names tool '%s' twice", tool)
+		}
+		seen[tool] = true
 	}
 	return nil
 }
@@ -526,6 +545,7 @@ func attemptLines(record *ExperienceRecord, options *BlockOptions) string {
 		}
 		fmt.Fprintf(&text, "  - %d %s\n", first, noun)
 	}
+	worked := record.Outcome.Status == VerificationVerified && attempts[len(attempts)-1].Error == nil
 	for i := first; i < len(attempts); i++ {
 		attempt := &attempts[i]
 		calls, clamped := orderedCalls(attempt)
@@ -533,10 +553,14 @@ func attemptLines(record *ExperienceRecord, options *BlockOptions) string {
 		if attempt.Error != nil {
 			outcome = failure(*attempt.Error, options.FailureDetail)
 		}
-		fmt.Fprintf(&text, "  - attempt %d: %s%s%s\n", attempt.SequenceNumber, callsText(calls, clamped, options),
-			outcomeSeparator, outcome)
+		var recipe []string // Only the attempt the Worked: line names shows recipe excerpts (contract 1.19).
+		if worked && i == len(attempts)-1 {
+			recipe = options.RecipeExcerpts
+		}
+		fmt.Fprintf(&text, "  - attempt %d: %s%s%s\n", attempt.SequenceNumber,
+			callsText(calls, clamped, options, recipe), outcomeSeparator, outcome)
 	}
-	if record.Outcome.Status == VerificationVerified && attempts[len(attempts)-1].Error == nil {
+	if worked {
 		fmt.Fprintf(&text, "Worked: attempt %d%s\n", attempts[len(attempts)-1].SequenceNumber, workedSuffix)
 	}
 	return text.String()
@@ -572,7 +596,7 @@ type argumentBudget struct {
 	exhausted bool
 }
 
-func callsText(calls []ToolCall, clamped bool, options *BlockOptions) string {
+func callsText(calls []ToolCall, clamped bool, options *BlockOptions, recipe []string) string {
 	if len(calls) == 0 {
 		return noToolCalled
 	}
@@ -586,7 +610,11 @@ func callsText(calls []ToolCall, clamped bool, options *BlockOptions) string {
 				step += "(" + shown + ")"
 			}
 		}
-		steps[i] = step + " " + callOutcome(call.Error, options.FailureDetail)
+		marker, ok := recipeMarker(call, recipe)
+		if !ok {
+			marker = callOutcome(call.Error, options.FailureDetail)
+		}
+		steps[i] = step + " " + marker
 	}
 	text := strings.Join(steps, toolSeparator)
 	if clamped {
@@ -596,6 +624,17 @@ func callsText(calls []ToolCall, clamped bool, options *BlockOptions) string {
 		text += attemptArgsClamped
 	}
 	return text
+}
+
+// recipeMarker is a call's [returned: "<excerpt>"] marker (contract 1.19): only for a call that recorded no error,
+// whose tool the recipe allowlist names and whose stored excerpt is not blank, quoted like an argument string value but
+// cut to maxRecipeExcerptLength.
+func recipeMarker(call *ToolCall, recipe []string) (string, bool) {
+	if call.Error != nil || call.RecipeExcerpt == nil || isNullOrWhitespace(*call.RecipeExcerpt) ||
+		!slices.Contains(recipe, call.ToolName) {
+		return "", false
+	}
+	return callReturnedExcerpt + quoted(*call.RecipeExcerpt, maxRecipeExcerptLength) + callMarkerEnd, true
 }
 
 func callOutcome(err *string, detail FailureDetail) string {

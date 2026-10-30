@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.18, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.18 (and so every 1.0 to 1.17 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.19, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.19 (and so every 1.0 to 1.18 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -238,7 +238,7 @@ agent = use_agent_experience(
 | `ModelAuthoredLessons` (`ModelAuthoredLessonPolicy`) | `model_authored_lessons`, `"Include"` or `"Exclude"` (`exclude_model_authored=True` is the same as `"Exclude"`) | `"Include"` |
 | `ResolveRequest`, `ResolveRequestAsync` | `resolve_request`: one callable, sync or async, given a `RequestContext` (agent, session, messages, `derived_task_text`, identity), returning an `InjectionRequest` (`task_text`, `preferred_environment`, `limit`, `exclude_model_authored`, `correlation_id`) or `None` | `None`: the derived task text |
 | `DecideInjection` (`InjectionDecision.Permit`, `Deny`) | `decide_injection`: given a `DecisionContext` (`candidate`, `current`, `model_authored`), returning `InjectionDecision.permit()` or `.deny(reason)` | `None`: permit |
-| `ApproachArguments`, `FailureDetail`, `Rendering`, `Limits.MaxRecords`, `Limits.MaxBytes` | `block_options` (`approach_arguments`, `failure_detail`, `rendering`, `max_records`, `max_bytes`) | the contract's |
+| `ApproachArguments`, `RecipeExcerpts`, `FailureDetail`, `Rendering`, `Limits.MaxRecords`, `Limits.MaxBytes` | `block_options` (`approach_arguments`, `recipe_excerpts`, `failure_detail`, `rendering`, `max_records`, `max_bytes`) | the contract's (`recipe_excerpts` empty: no excerpt shown) |
 | `MessageRole` | `message_role`, `"user"` or `"system"` | `"user"` |
 
 - **The gate** checks the tools of a record's approach (its verified final attempt's calls, as its `Tried:` line shows
@@ -974,7 +974,7 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.18: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.19: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and every
 injection option that needs no session (the receiving agent's gate, the model-authored policy, the request resolver
 and the host's decision),
@@ -987,6 +987,9 @@ here, so a mixed .NET and Python deployment should keep them on the .NET side:
 
 - **De-indexing on leaving eligibility** (story 27.6d), and finalization's reuse evidence run by the MAF integration
   on its own (`AgentExperienceOptions.ReuseEvidence`; call `apply_reuse_evidence` from `on_finalized`).
+- **Capturing a recipe excerpt** (story 28.4, contract 1.19): the port reads a tool call's `recipe_excerpt`, writes
+  it back unchanged and shows it on the `Worked:` attempt for the tools `BlockOptions.recipe_excerpts` names, but its
+  capture never records one, and with no provenance signing it neither signs nor confirms one (claims version 4).
 - **Verified independence** (story 27.7): the lifecycle admits every piece of evidence `HostTrusted`; it verifies no
   run, round or assessment token, and reuse feedback verifies no attribution.
 - **Session tracking and withdrawal notices** (`SessionLimits`, `SessionStateKey`; story 27.6): the port keeps no

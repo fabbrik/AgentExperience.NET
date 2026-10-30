@@ -245,10 +245,10 @@ var recordSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 	}
 	compiler := jsonschema.NewCompiler()
 	compiler.UseRegexpEngine(ecmaRegexp)
-	if err := compiler.AddResource("experience-record.v1.json", document); err != nil {
+	if err := compiler.AddResource("experience-record.v1-1.19.json", document); err != nil {
 		return nil, err
 	}
-	return compiler.Compile("experience-record.v1.json")
+	return compiler.Compile("experience-record.v1-1.19.json")
 })
 
 func assertValidRecord(t *testing.T, stored any) {

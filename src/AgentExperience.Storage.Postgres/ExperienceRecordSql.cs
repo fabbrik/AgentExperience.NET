@@ -180,8 +180,7 @@ internal static class ExperienceRecordSql
     /// <summary>Everything <see cref="GetExactSql"/> says before its <c>WHERE</c>, shared with <see cref="GetManyExactSql"/>.</summary>
     internal const string GetExactSelectFrom =
         $"SELECT {SelectColumns}, false AS {SharedByGrantAlias}, NULL::uuid AS {PermittingGrantAlias}, " +
-        $"NULL::text AS {PermittingDisclosureAlias}, NULL::jsonb AS {PermittingApproachArgumentsAlias}, " +
-        $"NULL::text AS {PermittingRecipeExcerptsAlias}, {DeletedAtColumn} " +
+        $"NULL::text AS {PermittingDisclosureAlias}, NULL::jsonb AS {PermittingApproachArgumentsAlias}, {DeletedAtColumn} " +
         $"FROM {Table} r ";
 
     /// <summary><see cref="GetExactSql"/> for several records in one statement: the fallback <see cref="GetManySql"/> takes when grants are unavailable.</summary>

@@ -87,7 +87,7 @@ public sealed class PostgresRecipeExcerptTests(PostgresFixture fixture)
         Assert.Null((await _store.GetAsync(Authorize(tenant), owner, record.ExperienceId, CancellationToken.None)).GrantRecipeExcerpts);
 
         // Immutable: the monotonicity trigger refuses a change in place.
-        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var connection = await fixture.OwnerDataSource.OpenConnectionAsync();
         await using var update = new NpgsqlCommand(
             "UPDATE agent_experience.experience_grants SET recipe_excerpts = '[\"other\"]'::jsonb WHERE grant_id = @grant_id", connection);
         update.Parameters.AddWithValue("grant_id", created.Grant.GrantId);
@@ -144,7 +144,7 @@ public sealed class PostgresRecipeExcerptTests(PostgresFixture fixture)
 
     private async Task<string> PayloadAsync(Guid experienceId)
     {
-        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var connection = await fixture.OwnerDataSource.OpenConnectionAsync();
         await using var command = new NpgsqlCommand("SELECT payload::text FROM agent_experience.experience_records WHERE experience_id = @id", connection);
         command.Parameters.AddWithValue("id", experienceId);
         return (string)(await command.ExecuteScalarAsync())!;
@@ -152,7 +152,7 @@ public sealed class PostgresRecipeExcerptTests(PostgresFixture fixture)
 
     private async Task<string> RowTextAsync(Guid experienceId)
     {
-        await using var connection = await fixture.DataSource.OpenConnectionAsync();
+        await using var connection = await fixture.OwnerDataSource.OpenConnectionAsync();
         await using var command = new NpgsqlCommand("SELECT r::text FROM agent_experience.experience_records r WHERE experience_id = @id", connection);
         command.Parameters.AddWithValue("id", experienceId);
         return (string)(await command.ExecuteScalarAsync())!;

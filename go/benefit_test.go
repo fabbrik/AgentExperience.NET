@@ -145,9 +145,15 @@ func TestTheModelKeyChangesNoInjectFixture(t *testing.T) {
 				}
 				return int(n.(int64))
 			}
+			var recipe []string
+			if tools, ok := get("recipeExcerpts").([]any); ok {
+				for _, tool := range tools {
+					recipe = append(recipe, tool.(string))
+				}
+			}
 			block, err := ae.RenderBlock(ranked, ae.BlockOptions{Rendering: ae.Rendering(get("rendering").(string)),
 				FailureDetail: ae.FailureDetail(get("failureDetail").(string)), MaxRecords: number("maxRecords"),
-				MaxBytes: number("maxBytes"), ApproachArguments: approach})
+				MaxBytes: number("maxBytes"), ApproachArguments: approach, RecipeExcerpts: recipe})
 			if err != nil {
 				t.Fatal(err)
 			}

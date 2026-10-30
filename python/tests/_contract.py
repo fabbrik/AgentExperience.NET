@@ -31,7 +31,8 @@ from agentexperience.records import Evidence
 REPOSITORY = Path(__file__).resolve().parents[2]
 CONTRACT = REPOSITORY / "contract"
 FIXTURES = CONTRACT / "fixtures"
-SCHEMA = CONTRACT / "schema" / "experience-record.v1.json"
+# Contract 1.19: the 1.0 schema with a tool call's optional recipeExcerpt, which a 1.19 port validates against.
+SCHEMA = CONTRACT / "schema" / "experience-record.v1-1.19.json"
 MIGRATIONS = REPOSITORY / "src" / "AgentExperience.Storage.Postgres" / "Migrations"
 
 
