@@ -18,7 +18,7 @@ namespace AgentExperience.Abstractions;
 /// (<c>TimeoutException</c>, <c>exit 2</c>, <c>HTTP 503</c>, <c>ENOENT</c>, <c>Timeout</c>, or
 /// <c>unclassified error</c>). <see cref="Fingerprint"/> is the first 16 bytes of the SHA-256 of the normalized excerpt
 /// (<see cref="NormalizeExcerpt"/>) in UTF-8, as 32 lowercase hexadecimal characters. <see cref="Key"/> joins the three
-/// with <see cref="KeySeparator"/> (U+001F) into the one string both stores index.
+/// with U+001F, the unit separator, into the one string both stores index.
 /// </para>
 /// <para>
 /// <b>What is not a signature.</b> A call with no error (<see cref="ToolCallRecord.Error"/> is <see langword="null"/>)
@@ -57,8 +57,11 @@ public sealed record ExperienceFailureSignature(string ToolName, string ErrorCla
     /// <summary>The length of <see cref="Fingerprint"/>: 16 bytes, as lowercase hexadecimal.</summary>
     public const int FingerprintLength = 32;
 
-    /// <summary>The character <see cref="Key"/> joins its three parts with: U+001F, the unit separator.</summary>
-    public const char KeySeparator = '\u001F';
+    /// <summary>
+    /// The character <see cref="Key"/> joins its three parts with: U+001F, the unit separator. Internal so the public API
+    /// listing never carries a raw control character; the documentation states it.
+    /// </summary>
+    internal const char KeySeparator = '\u001F';
 
     /// <summary>The placeholder a GUID becomes in a normalized excerpt.</summary>
     public const string GuidPlaceholder = "<guid>";
@@ -102,7 +105,7 @@ public sealed record ExperienceFailureSignature(string ToolName, string ErrorCla
 
     /// <summary>
     /// The single canonical string both stores index: <see cref="ToolName"/>, <see cref="ErrorClass"/> and
-    /// <see cref="Fingerprint"/>, joined by <see cref="KeySeparator"/>.
+    /// <see cref="Fingerprint"/>, joined by U+001F (the unit separator).
     /// </summary>
     public string Key => ToolName + KeySeparator + ErrorClass + KeySeparator + Fingerprint;
 

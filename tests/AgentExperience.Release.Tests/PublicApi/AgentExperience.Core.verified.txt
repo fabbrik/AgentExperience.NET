@@ -879,6 +879,11 @@ namespace AgentExperience.Core.Retrieval
         public bool IsModelAuthored(AgentExperience.Abstractions.ExperienceRecord record) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Retrieval.ExperienceRetrievalResult> RetrieveAsync(AgentExperience.Core.Retrieval.RetrieveExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
     }
+    public sealed class ExperienceSignatureRetrievalService
+    {
+        public ExperienceSignatureRetrievalService(AgentExperience.Abstractions.IExperienceSignatureSource source, AgentExperience.Core.Retrieval.RetrievalPolicy? policy = null, System.TimeProvider? timeProvider = null) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Retrieval.SignatureRetrievalResult> FindAsync(AgentExperience.Core.Retrieval.SignatureRetrievalRequest request, System.Threading.CancellationToken cancellationToken = default) { }
+    }
     public interface IEnvironmentCompatibilityScorer
     {
         double Score(AgentExperience.Abstractions.EnvironmentFingerprint recordEnvironment, System.Collections.Generic.IReadOnlyDictionary<string, string> preferredAttributes);
@@ -976,6 +981,32 @@ namespace AgentExperience.Core.Retrieval
         public System.Collections.Generic.IReadOnlyDictionary<string, string>? RequiredEnvironmentAttributes { get; init; }
         public AgentExperience.Abstractions.Scope Scope { get; init; }
         public string TaskText { get; init; }
+    }
+    public enum SignatureRetrievalOutcome
+    {
+        Completed = 0,
+        Denied = 1,
+        Invalid = 2,
+        Failed = 3,
+    }
+    public sealed class SignatureRetrievalRequest : System.IEquatable<AgentExperience.Core.Retrieval.SignatureRetrievalRequest>
+    {
+        public SignatureRetrievalRequest(AgentExperience.Abstractions.AuthorizationContext Authorization, AgentExperience.Abstractions.Scope Scope, AgentExperience.Abstractions.ExperienceFailureSignature Signature) { }
+        public AgentExperience.Abstractions.AuthorizationContext Authorization { get; init; }
+        public string? CorrelationId { get; init; }
+        public bool ExcludeModelAuthored { get; init; }
+        public int Limit { get; init; }
+        public AgentExperience.Abstractions.ExperienceSignatureMatch Match { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+        public AgentExperience.Abstractions.ExperienceFailureSignature Signature { get; init; }
+    }
+    public sealed class SignatureRetrievalResult : System.IEquatable<AgentExperience.Core.Retrieval.SignatureRetrievalResult>
+    {
+        public SignatureRetrievalResult(AgentExperience.Core.Retrieval.SignatureRetrievalOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceSignatureCandidate> Candidates, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, System.Exception? Failure) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceSignatureCandidate> Candidates { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public System.Exception? Failure { get; init; }
+        public AgentExperience.Core.Retrieval.SignatureRetrievalOutcome Outcome { get; init; }
     }
     public enum TextOnlyReason
     {

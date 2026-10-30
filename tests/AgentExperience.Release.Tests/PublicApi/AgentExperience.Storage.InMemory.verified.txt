@@ -33,6 +33,11 @@ namespace AgentExperience.Storage.InMemory
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceInjectionRecordResult> RecordInjectionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, System.DateTimeOffset injectedAt, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceHoldoutRecordResult> RecordProviderHoldoutAssignmentAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.ProviderHoldoutAssignment assignment, System.Threading.CancellationToken cancellationToken) { }
     }
+    public sealed class InMemoryExperienceSignatureSource : AgentExperience.Abstractions.IExperienceSignatureSource
+    {
+        public InMemoryExperienceSignatureSource(AgentExperience.Storage.InMemory.InMemoryExperienceRecordStore store) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSignatureSearchResult> FindBySignatureAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.ExperienceSignatureQuery query, System.Threading.CancellationToken cancellationToken) { }
+    }
     public sealed class InMemoryStorageOptions
     {
         public InMemoryStorageOptions() { }
