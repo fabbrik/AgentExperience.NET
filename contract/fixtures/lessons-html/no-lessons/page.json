@@ -1,0 +1,17 @@
+{
+  "description": "A page that was found but lists nothing, after leaving out two records the store answered from another scope.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "outcome": "Found",
+  "generatedAt": "2026-03-03T09:00:00.9999999+00:00",
+  "hasMore": false,
+  "outOfScopeDropped": 2,
+  "injectionsTracked": true,
+  "lessons": []
+}

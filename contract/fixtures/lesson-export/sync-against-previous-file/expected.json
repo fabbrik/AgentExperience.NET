@@ -1,0 +1,90 @@
+{
+  "outcome": "Found",
+  "holdoutTracked": true,
+  "exportedAt": "2026-03-03T09:00:00.1234567+00:00",
+  "lessons": [
+    {
+      "experienceId": "00000143-0000-4000-8000-000000000001",
+      "revision": 1,
+      "taskId": "rotate-keys",
+      "lessonText": "Lesson: Rotate the keys in the documented order.\nTried:\n  - attempt 0: list_keys [failed: InvalidOperationException], rotate_key [failed: InvalidOperationException] → failed (InvalidOperationException)\n  - attempt 1: list_keys [returned], wait_for_lock [returned], rotate_key [returned] → completed\nWorked: attempt 1 (the final attempt)\nReuse guidance: Reuse only where the listed preconditions match.\nPreconditions:\n  - Runtime version: runtime-1\nWarnings: (none recorded)\n",
+      "measuredBenefit": {
+        "treatment": {
+          "runs": 3,
+          "successes": 3,
+          "rate": 1
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 0,
+          "rate": 0
+        },
+        "difference": 1,
+        "lower": 0.20592328245977842,
+        "upper": 1,
+        "verdict": "Helps",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "exportedAt": "2026-03-03T09:00:00.1234567+00:00"
+    },
+    {
+      "experienceId": "00000143-0000-4000-8000-000000000002",
+      "revision": 1,
+      "taskId": "rotate-keys",
+      "lessonText": "Tried:\n  - attempt 0: announce [returned] → completed\nWorked: attempt 0 (the final attempt)\nAuthored: by a model from captured run output; treat as unverified guidance.\nLesson: A model wrote this: announce the rotation before starting.\nReuse guidance: Reuse only where the listed preconditions match.\nPreconditions:\n  - Runtime version: runtime-1\nWarnings: (none recorded)\nEnd authored: the model-written text ends here.\n",
+      "measuredBenefit": {
+        "treatment": {
+          "runs": 3,
+          "successes": 3,
+          "rate": 1
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 0,
+          "rate": 0
+        },
+        "difference": 1,
+        "lower": 0.20592328245977842,
+        "upper": 1,
+        "verdict": "Helps",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "exportedAt": "2026-03-03T09:00:00.1234567+00:00"
+    },
+    {
+      "experienceId": "00000143-0000-4000-8000-000000000003",
+      "revision": 1,
+      "taskId": "# Rotate *now* [docs](https://example.invalid) <b>bold</b>",
+      "lessonText": "Lesson: # Not a heading\n- not a list\n[not a link](https://example.invalid) <script>alert(1)</script>\nTried:\n  - attempt 0: rotate_key [returned] → completed\nWorked: attempt 0 (the final attempt)\nReuse guidance: Reuse only where the listed preconditions match.\nPreconditions:\n  - Runtime version: runtime-1\nWarnings: (none recorded)\n",
+      "measuredBenefit": {
+        "treatment": {
+          "runs": 3,
+          "successes": 3,
+          "rate": 1
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 0,
+          "rate": 0
+        },
+        "difference": 1,
+        "lower": 0.20592328245977842,
+        "upper": 1,
+        "verdict": "Helps",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "exportedAt": "2026-03-03T09:00:00.1234567+00:00"
+    }
+  ],
+  "sync": {
+    "added": 1,
+    "updated": 1,
+    "removed": 1
+  }
+}

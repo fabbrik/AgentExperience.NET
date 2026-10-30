@@ -1,0 +1,16 @@
+[
+  "0123456789abcdef",
+  "a-check-id-long",
+  "a_tool_name_lon",
+  "0123456789abc\n",
+  "0123456789abcd",
+  "short",
+  "0123456789abcde",
+  "0123456789ab\"",
+  "\uD83D\uDE00\uD83D\uDE00\uD83D\uDE00\uD83D\uDE00\uD83D\uDE00\uD83D\uDE00\uD83D\uDE00",
+  "0123456789abcdé",
+  "short",
+  "ok",
+  "Done.",
+  "region"
+]

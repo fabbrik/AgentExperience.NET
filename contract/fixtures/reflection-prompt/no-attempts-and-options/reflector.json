@@ -1,0 +1,8 @@
+{
+  "modelName": "contract-model",
+  "timeoutSeconds": 10,
+  "maxQuotedLength": 120,
+  "maxPromptLength": 2000,
+  "temperature": null,
+  "maxOutputTokens": 512
+}

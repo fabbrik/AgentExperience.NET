@@ -1,0 +1,9 @@
+[
+  "Task quote \" backslash \\ CR \r LF \n tab \t SOH \u0001 DEL \u007F NEL \u0085 ALM \u061C ZWSP \u200B LRM \u200E RLO \u202E LS \u2028 PS \u2029 WJ \u2060 BOM \uFEFF receipt \uD83E\uDDFE end",
+  "check \"one\" \u202E",
+  "tool \"quoted\"\\name",
+  "Error quote \" backslash \\ CR \r LF \n tab \t SOH \u0001 DEL \u007F NEL \u0085 ALM \u061C ZWSP \u200B LRM \u200E RLO \u202E LS \u2028 PS \u2029 WJ \u2060 BOM \uFEFF receipt \uD83E\uDDFE end",
+  "Result quote \" backslash \\ CR \r LF \n tab \t SOH \u0001 DEL \u007F NEL \u0085 ALM \u061C ZWSP \u200B LRM \u200E RLO \u202E LS \u2028 PS \u2029 WJ \u2060 BOM \uFEFF receipt \uD83E\uDDFE end",
+  "Attempt result quote \" backslash \\ CR \r LF \n tab \t SOH \u0001 DEL \u007F NEL \u0085 ALM \u061C ZWSP \u200B LRM \u200E RLO \u202E LS \u2028 PS \u2029 WJ \u2060 BOM \uFEFF receipt \uD83E\uDDFE end",
+  "region"
+]

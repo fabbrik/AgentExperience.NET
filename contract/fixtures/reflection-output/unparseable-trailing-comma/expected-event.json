@@ -1,0 +1,11 @@
+{
+  "event_id": "0434da9e-7d4e-8950-9694-d19f0014cdaf",
+  "experience_id": "b9f9ab02-269e-8a60-8c5e-65c43c9aea41",
+  "prior_status": "Candidate",
+  "current_status": "Quarantined",
+  "reason": "Initial finalization: verification Verified, completion score 1, no eligible lesson recorded.",
+  "producer": "AgentExperience.ExperienceFinalizationService/1.0.0",
+  "occurred_at": "2026-03-02T09:00:30+00:00",
+  "expected_revision": 0,
+  "applied_revision": 1
+}

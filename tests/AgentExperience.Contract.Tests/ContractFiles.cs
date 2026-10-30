@@ -19,7 +19,7 @@ internal static class ContractFiles
     /// what minor version N adds) bumps the minor version; a change to anything already published (a fixture, the
     /// schema, the SQL, a README) bumps the major version.
     /// </summary>
-    public const string ContractVersion = "1.13";
+    public const string ContractVersion = "1.14";
 
     /// <summary>
     /// The SHA-256 of <c>contract/lock.json</c> for every published version. This, not <c>lock.json</c>, is the authority:

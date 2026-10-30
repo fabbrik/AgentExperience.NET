@@ -1,0 +1,9 @@
+{
+  "outcome": "Quarantined",
+  "reflectionFailure": {
+    "kind": "ModelCallFailed",
+    "causeType": "System.InvalidOperationException",
+    "message": "The model call for the reflection failed with System.InvalidOperationException."
+  },
+  "screening": null
+}

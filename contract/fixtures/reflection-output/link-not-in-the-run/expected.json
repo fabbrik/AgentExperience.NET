@@ -1,0 +1,8 @@
+{
+  "outcome": "Quarantined",
+  "reflectionFailure": null,
+  "screening": {
+    "refusal": "UnsafeContent",
+    "reason": "its Warnings[1] contains a URL that is not in the captured run"
+  }
+}
