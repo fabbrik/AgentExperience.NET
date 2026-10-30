@@ -296,10 +296,8 @@ class PostgresExperienceStore:
             key: to_driver_placeholders(text) for key, text in contract_statements(LIST_LESSONS_SQL).items()
         }
         # Contract 1.18: lifecycle-1.18.sql's scoped supersession lock runs in place of lifecycle.sql's unscoped one.
-        self._lifecycle = {
-            key: to_driver_placeholders(text)
-            for key, text in (contract_statements(LIFECYCLE_SQL) | contract_statements(LIFECYCLE_SCOPED_LOCK_SQL)).items()
-        }
+        lifecycle = contract_statements(LIFECYCLE_SQL) | contract_statements(LIFECYCLE_SCOPED_LOCK_SQL)
+        self._lifecycle = {key: to_driver_placeholders(text) for key, text in lifecycle.items()}
         self._clock = clock
 
     @contextmanager
