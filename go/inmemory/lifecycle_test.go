@@ -2,6 +2,7 @@ package inmemory
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -85,7 +86,7 @@ func TestConcurrentEvidenceForOneKeyIsCountedOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := ae.NewLifecycleService(store, ae.LifecycleOptions{})
+	service, err := ae.NewLifecycleService(store, ae.LifecycleOptions{HostTrustedEvidence: ae.HostTrustedCounted})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,5 +184,45 @@ func TestAFinalizedRecordsInitialEventIsTheFirstOfItsHistory(t *testing.T) {
 		Reason: "Reinforced.", Producer: "review", OccurredAt: at, ExpectedRevision: 1})
 	if err != nil || result.Outcome != ae.TransitionCommitted || result.Revision != 2 {
 		t.Fatalf("%+v %v", result, err)
+	}
+}
+
+// A commit cancelled while it waits for the store writes nothing: no record change, no event, no evidence.
+func TestACommitCancelledWhileWaitingWritesNothing(t *testing.T) {
+	seeded := record(4, "rotate-keys", "Rotate the signing keys", "Rotate them.", ae.StatusValidated, 0.5)
+	store, err := New(seeded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := ae.NewLifecycleService(store, ae.LifecycleOptions{HostTrustedEvidence: ae.HostTrustedCounted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization := ae.AuthorizationContext{PrincipalID: "aggregator", Bounds: ae.BoundsOf(scope)}
+	round := ae.UUID{0: 0x50, 6: 0x40, 8: 0x80, 15: 4}
+	ctx, cancel := context.WithCancel(context.Background())
+	store.mu.Lock() // another writer holds the store
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.ApplyEvidence(ctx, authorization, ae.ApplyConfidenceEvidenceRequest{
+			EventID: ae.UUID{0: 0xea, 15: 4}, ExperienceID: seeded.ExperienceID, Scope: scope,
+			EvidenceID: ae.UUID{0: 0xeb, 15: 4}, Kind: ae.EvidenceSupporting, Source: ae.EvidenceMachine,
+			RunID: ae.UUID{0: 0x51, 15: 4}, VerificationRoundID: &round, Reason: "reused", Producer: "aggregator",
+			OccurredAt: at})
+		done <- err
+	}()
+	cancel()
+	store.mu.Unlock()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("%v", err)
+	}
+	stored, _ := store.Get(context.Background(), ae.BoundsOf(scope), scope, seeded.ExperienceID)
+	if stored.Revision != 1 || stored.SupportingValidations != seeded.SupportingValidations || stored.UpdatedAt != at {
+		t.Fatalf("%+v", stored)
+	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	if len(store.lifecycle.history) != 0 || len(store.lifecycle.evidence) != 0 || len(store.lifecycle.eventsByID) != 0 {
+		t.Fatal("the cancelled commit wrote something")
 	}
 }

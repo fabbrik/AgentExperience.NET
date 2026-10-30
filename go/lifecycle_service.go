@@ -12,13 +12,16 @@ import (
 // signing (a record's initial counters are "verified" exactly when it was finalized), no indexing service (no
 // embedding is removed when a record leaves eligibility) and no capture service lookup.
 
-// LifecycleOptions configure a LifecycleService. The zero value is the default engine, with host-trusted evidence
-// counted.
+// LifecycleOptions configure a LifecycleService. The zero value is the default engine, with evidence recorded only:
+// until the port verifies independence (story 27.7), everything it admits is host-trusted, and by default such evidence
+// moves no counter, score or status.
 type LifecycleOptions struct {
 	// ConfidenceEngine scores evidence; nil is the heuristic (ReuseConfidenceHeuristicEngine).
 	ConfidenceEngine ConfidenceEngine
-	// HostTrustedEvidence is what host-trusted evidence (everything a port admits) does to its record: Counted (the
-	// default, "" too) or RecordedOnly, which commits it on an event that moves the revision and nothing else.
+	// HostTrustedEvidence is what host-trusted evidence (everything a port admits) does to its record: RecordedOnly
+	// (the default, "" too), which commits it on an event that moves the revision and nothing else, or Counted, an
+	// explicit opt-in that moves the counters, the score and the status as .NET does under
+	// IndependenceVerification.TrustHostSuppliedIdentifiers with HostTrustedEvidenceEffect.Counted.
 	HostTrustedEvidence HostTrustedEvidenceEffect
 }
 
@@ -53,7 +56,7 @@ func NewLifecycleService(store LifecycleStore, options LifecycleOptions) (*Lifec
 	if err != nil {
 		return nil, err
 	}
-	return &LifecycleService{store: store, rule: rule, recordedOnly: options.HostTrustedEvidence == HostTrustedRecordedOnly}, nil
+	return &LifecycleService{store: store, rule: rule, recordedOnly: options.HostTrustedEvidence != HostTrustedCounted}, nil
 }
 
 // IndependenceVerification is the mode this service runs in: always TrustHostSuppliedIdentifiers (contract 1.16).

@@ -209,23 +209,29 @@ func TestAnEngineFailureIsReturnedAndNothingIsCommitted(t *testing.T) {
 	ctx := context.Background()
 	store := &scriptedStore{read: RecordReadResult{Outcome: StoreFound, Record: validatedRecord()},
 		commit: LifecycleCommitResult{Outcome: StoreFound}}
-	service, _ := NewLifecycleService(store, LifecycleOptions{ConfidenceEngine: cfHostEngine{"broken", "1", "throws"}})
+	service, _ := NewLifecycleService(store, LifecycleOptions{ConfidenceEngine: cfHostEngine{"broken", "1", "throws"},
+		HostTrustedEvidence: HostTrustedCounted})
 	if _, err := service.ApplyEvidence(ctx, lifecycleAuth, evidenceRequest()); !errors.Is(err, errCfHostEngine) {
 		t.Fatalf("%v", err)
 	}
-	service, _ = NewLifecycleService(store, LifecycleOptions{ConfidenceEngine: cfHostEngine{"high", "1", "Infinity"}})
+	service, _ = NewLifecycleService(store, LifecycleOptions{ConfidenceEngine: cfHostEngine{"high", "1", "Infinity"},
+		HostTrustedEvidence: HostTrustedCounted})
 	var engine *ConfidenceEngineError
 	if _, err := service.ApplyEvidence(ctx, lifecycleAuth, evidenceRequest()); !errors.As(err, &engine) ||
 		engine.Rule != "high/1" {
 		t.Fatalf("%v", err)
 	}
-	// Recorded only, the engine is not asked.
+	// Recorded only (explicitly, and by default until the port verifies independence), the engine is not asked, and
+	// the event moves nothing but the revision.
 	store.commit = LifecycleCommitResult{Outcome: StoreCommitted, Revision: 2}
-	service, _ = NewLifecycleService(store, LifecycleOptions{ConfidenceEngine: cfHostEngine{"broken", "1", "throws"},
-		HostTrustedEvidence: HostTrustedRecordedOnly})
-	if result, err := service.ApplyEvidence(ctx, lifecycleAuth, evidenceRequest()); err != nil || result.Counted() ||
-		result.Update.RuleVersion != "broken/1" {
-		t.Fatalf("%+v %v", result, err)
+	for _, effect := range []HostTrustedEvidenceEffect{HostTrustedRecordedOnly, ""} {
+		service, _ = NewLifecycleService(store, LifecycleOptions{ConfidenceEngine: cfHostEngine{"broken", "1", "throws"},
+			HostTrustedEvidence: effect})
+		result, err := service.ApplyEvidence(ctx, lifecycleAuth, evidenceRequest())
+		if err != nil || result.Counted() || result.Update.RuleVersion != "broken/1" ||
+			result.Event.CurrentStatus != StatusValidated || result.Event.Confidence.NewSupportingValidations != 1 {
+			t.Fatalf("%q: %+v %v", effect, result, err)
+		}
 	}
 }
 

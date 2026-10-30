@@ -83,18 +83,37 @@ type readCommittedBeginner interface {
 	BeginTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error)
 }
 
-// begin starts a transaction (READ COMMITTED pinned when committed is set and the source can pin it; a pgx.Tx source
-// nests a savepoint, under the host's own isolation) and declares the authorization's bounds.
+// ErrHostIsolation is a lifecycle commit asked of a store whose source is the host's own transaction (a pgx.Tx)
+// running at an isolation level other than READ COMMITTED: a commit decides a lost race by re-reading the record,
+// which under a snapshot isolation would read the host's stale snapshot and never see the revision move.
+var ErrHostIsolation = errors.New("a lifecycle commit needs READ COMMITTED, and the host's transaction runs at " +
+	"another isolation level: give the store a pool or a connection, or begin the transaction READ COMMITTED")
+
+// begin starts a transaction and declares the authorization's bounds. For a commit (readCommitted) on a pool or a
+// connection it pins READ COMMITTED; on a host's pgx.Tx (a savepoint inside it) it checks the host's transaction runs
+// at READ COMMITTED, and refuses anything else with ErrHostIsolation.
 func (s *Store) begin(ctx context.Context, bounds ae.AuthorizationBounds, readCommitted bool) (pgx.Tx, error) {
 	var tx pgx.Tx
 	var err error
-	if pinned, ok := s.db.(readCommittedBeginner); ok && readCommitted {
+	pinned, canPin := s.db.(readCommittedBeginner)
+	if canPin && readCommitted {
 		tx, err = pinned.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	} else {
 		tx, err = s.db.Begin(ctx)
 	}
 	if err != nil {
 		return nil, err
+	}
+	if readCommitted && !canPin {
+		var level string
+		if err := tx.QueryRow(ctx, "SELECT current_setting('transaction_isolation')").Scan(&level); err != nil {
+			rollback(tx)
+			return nil, err
+		}
+		if level != "read committed" {
+			rollback(tx)
+			return nil, fmt.Errorf("%w (it is %s)", ErrHostIsolation, level)
+		}
 	}
 	parameters := bounds.Parameters()
 	values := make(map[string]any, len(parameters))
@@ -353,15 +372,6 @@ func (c *commitState) commit() (ae.LifecycleCommitResult, error) {
 		}
 	}()
 
-	// 0. A port neither reads nor writes a sealed record.
-	sealed, err := s.exists(ctx, tx, "sealed-record", c.values(nil))
-	if err != nil {
-		return ae.LifecycleCommitResult{}, err
-	}
-	if sealed {
-		return ae.LifecycleCommitResult{Outcome: ae.StoreNotFound, Errors: noErrors()}, nil
-	}
-
 	// 1. The evidence first: whether its independence key was free decides whether there is anything else to write.
 	stored := c.event.Confidence
 	if submitted := c.event.Confidence; submitted != nil {
@@ -466,7 +476,17 @@ func (c *commitState) commit() (ae.LifecycleCommitResult, error) {
 			CurrentStatus: &status, Errors: noErrors()}, nil
 	}
 
-	// 5. Commit.
+	// 5. A port neither reads nor writes a sealed record: asked only now that this transaction holds the row lock, so
+	// a seal cannot land between the check and the write.
+	sealed, err := s.exists(ctx, tx, "sealed-record", c.values(nil))
+	if err != nil {
+		return ae.LifecycleCommitResult{}, err
+	}
+	if sealed {
+		return ae.LifecycleCommitResult{Outcome: ae.StoreNotFound, Errors: noErrors()}, nil
+	}
+
+	// 6. Commit.
 	if err := tx.Commit(ctx); err != nil {
 		return ae.LifecycleCommitResult{}, err
 	}
@@ -598,6 +618,14 @@ func (c *commitState) recordDuplicate(tx pgx.Tx, submitted ae.ConfidenceUpdate) 
 	if c.event.PriorStatus != nil && status != *c.event.PriorStatus {
 		return &ae.LifecycleCommitResult{Outcome: ae.StoreStatusMismatch, Revision: current.revision,
 			CurrentStatus: &status, Errors: noErrors()}, false, nil
+	}
+	// The row is locked: a sealed record is NotFound to a port, and nothing is recorded against it.
+	sealed, err := s.exists(ctx, tx, "sealed-record", c.values(nil))
+	if err != nil {
+		return nil, false, err
+	}
+	if sealed {
+		return &ae.LifecycleCommitResult{Outcome: ae.StoreNotFound, Errors: noErrors()}, false, nil
 	}
 	recordedOnly := submitted.AsRecordedOnly()
 	values, err := c.evidenceValues(recordedOnly, nil, current.revision, status)

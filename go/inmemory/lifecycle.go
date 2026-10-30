@@ -2,7 +2,8 @@ package inmemory
 
 // Contract 1.16: the lifecycle store operations, exactly as .NET's InMemoryExperienceRecordStore runs them, under the
 // store's mutex: the scoped read, the commit (the revision compare-and-set, idempotency by event ID and by evidence ID,
-// the independence key, the single-use assessment and the supersession gate, in the PostgreSQL store's order), a
+// the independence key, the single-use assessment and the supersession gate, in .NET's in-memory store's order: the
+// supersession gate before the revision check, where the PostgreSQL store asks it after the event insert), a
 // history page and the supersession check. A commit stamps the store's clock (Clock, or SetClock), truncated to whole
 // microseconds, on the event and (unless the evidence is recorded only) on the record.
 
@@ -130,6 +131,10 @@ func (s *Store) CommitLifecycleEvent(ctx context.Context, authorization ae.Autho
 	event.OccurredAt = event.OccurredAt.TruncateToMicroseconds()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Cancelled while waiting for the store: nothing is written. Once decided, a commit is applied whole.
+	if err := ctx.Err(); err != nil {
+		return ae.LifecycleCommitResult{}, err
+	}
 	return s.commitLocked(authorization, scope, event), nil
 }
 

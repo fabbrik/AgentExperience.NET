@@ -153,8 +153,13 @@ func runLifecycleCase(t *testing.T, family, name string) {
 		t.Fatal(err)
 	}
 	service := member(input, "service").(*ae.Object)
+	// The case's mode, always explicitly: the Go default (RecordedOnly) is not .NET's (Counted).
+	effect := ae.HostTrustedEvidenceEffect(member(service, "hostTrustedEvidence").(string))
+	if effect != ae.HostTrustedCounted && effect != ae.HostTrustedRecordedOnly {
+		t.Fatalf("the case names no host-trusted evidence effect: %q", effect)
+	}
 	options := ae.LifecycleOptions{ConfidenceEngine: lifecycleEngineOf(member(service, "engine")),
-		HostTrustedEvidence: ae.HostTrustedEvidenceEffect(member(service, "hostTrustedEvidence").(string))}
+		HostTrustedEvidence: effect}
 	lifecycle, err := ae.NewLifecycleService(store, options)
 	if err != nil {
 		t.Fatal(err)
