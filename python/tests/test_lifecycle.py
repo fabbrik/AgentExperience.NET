@@ -371,3 +371,45 @@ def test_an_undefined_host_trusted_evidence_effect_is_refused() -> None:
     with pytest.raises(ConfidenceArgumentError) as refused:
         ExperienceLifecycleService(InMemoryExperienceStore(), host_trusted_evidence="Sometimes")  # type: ignore[arg-type]
     assert (refused.value.exception, refused.value.parameter) == ("ArgumentException", "independence")
+
+
+def test_an_engine_that_raises_is_reported_faulted_and_writes_nothing() -> None:
+    from _lifecycle import HostEngine, HostEngineException
+
+    from agentexperience import ApplyConfidenceEvidenceRequest
+
+    store, record, authorization = _seed()
+    service = ExperienceLifecycleService(store, confidence_engine=HostEngine("broken", "1", "throws"))
+    recorder = _Recorder()
+    set_observer(recorder)
+    try:
+        with pytest.raises(HostEngineException):
+            service.apply_evidence(
+                authorization,
+                ApplyConfidenceEvidenceRequest(
+                    event_id=uuid.UUID(int=0x6001),
+                    experience_id=record.experience_id,
+                    scope=record.scope,
+                    evidence_id=uuid.UUID(int=0x6002),
+                    kind="Supporting",
+                    source="Machine",
+                    run_id=uuid.UUID(int=0x6003),
+                    verification_round_id=uuid.UUID(int=0x6004),
+                    reason="reused",
+                    producer="telemetry/1.0",
+                    occurred_at=Instant.parse("2026-03-02T09:00:00+00:00"),
+                ),
+            )
+    finally:
+        set_observer(None)
+    assert [(operation, outcome) for operation, outcome, _ in recorder.finished] == [("confidence.apply", "Faulted")]
+    history = store.get_history(authorization, HistoryQuery(record.scope, record.experience_id))
+    assert (history.revision, history.events) == (record.revision, ())
+
+
+def test_a_derived_reuse_id_refuses_an_undefined_kind() -> None:
+    scope = scope_of(
+        read_json(FIXTURES / "lifecycle-commit" / "derived-ids" / "input.json")["steps"][0]["derive"]["scope"]
+    )
+    with pytest.raises(ValueError, match="Not a defined ConfidenceEvidenceKind"):
+        reuse_evidence_id_for(uuid.UUID(int=1), scope, uuid.UUID(int=2), "Sideways")
