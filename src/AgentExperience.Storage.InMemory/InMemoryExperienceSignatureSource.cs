@@ -3,8 +3,8 @@ using AgentExperience.Abstractions;
 namespace AgentExperience.Storage.InMemory;
 
 /// <summary>
-/// An <see cref="IExperienceSignatureSource"/> over the records of one <see cref="InMemoryExperienceRecordStore"/>
-/// (story 28.2). <b>For development and tests only</b>, like the store it reads.
+/// An <see cref="IExperienceSignatureSource"/> over the records of one <see cref="InMemoryExperienceRecordStore"/>.
+/// <b>For development and tests only</b>, like the store it reads.
 /// </summary>
 /// <remarks>
 /// <para>

@@ -2,7 +2,7 @@ namespace AgentExperience.Abstractions;
 
 /// <summary>
 /// Optional port for finding Experience Records by the situation a run is in rather than by its request text: records
-/// holding a failed tool call with a given <see cref="ExperienceFailureSignature"/> (story 28.2). It is a read-only
+/// holding a failed tool call with a given <see cref="ExperienceFailureSignature"/>. It is a read-only
 /// search seam beside <see cref="IExperienceCandidateSource"/>, which it does not change; a store that does not index
 /// signatures simply does not implement it.
 /// </summary>

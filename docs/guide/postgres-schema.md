@@ -833,7 +833,7 @@ captured run was assigned to (see [Measuring another memory provider](injection.
 
 ### 0030: each record's failure signatures
 
-`0030_experience_failure_signatures.sql` indexes the failure signatures each record holds (story 28.2; see
+`0030_experience_failure_signatures.sql` indexes the failure signatures each record holds (see
 [Failure signatures](retrieval.md#failure-signatures)):
 
 - `agent_experience.experience_failure_signatures`: one row per record, signature version and signature key, keyed on

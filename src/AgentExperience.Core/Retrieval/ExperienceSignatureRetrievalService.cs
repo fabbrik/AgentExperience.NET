@@ -4,10 +4,10 @@ using AgentExperience.Core.Diagnostics;
 namespace AgentExperience.Core.Retrieval;
 
 /// <summary>
-/// Looks reusable experience up by a failure signature (story 28.2): the records holding a failed tool call with the
+/// Looks reusable experience up by a failure signature: the records holding a failed tool call with the
 /// same signature -- or, asked for a coarse match, the same tool and error class -- through an
 /// <see cref="IExperienceSignatureSource"/>, with the eligibility Core's text retrieval applies. It ranks nothing and
-/// renders nothing: it is the lookup a caller that is watching a run fail (story 28.3) builds on.
+/// renders nothing: it is the lookup a caller that is watching a run fail builds on.
 /// </summary>
 /// <remarks>
 /// <para>

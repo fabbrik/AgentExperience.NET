@@ -999,7 +999,7 @@ internal static partial class ExperienceRecordValidator
     }
 
     /// <summary>
-    /// Validates a signature search (story 28.2): the scope, a signature whose parts are what a derivation could
+    /// Validates a signature search: the scope, a signature whose parts are what a derivation could
     /// produce, the eligibility filters as <see cref="ValidateCandidateQuery"/> checks them, the match and the limit.
     /// </summary>
     public static IReadOnlyList<StoreValidationError> ValidateSignatureQuery(Scope scope, ExperienceSignatureQuery query)

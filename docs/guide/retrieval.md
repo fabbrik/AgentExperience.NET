@@ -299,9 +299,9 @@ something to pass on.
 ## Failure signatures
 
 A request's text says what the user asked for; what predicts whether a lesson applies is often the situation the agent
-is in: which tool just failed, and how. Since story 28.2 every failed tool call a record holds has a **failure
+is in: which tool just failed, and how. Every failed tool call a record holds has a **failure
 signature**, and both stores can find records by it. Nothing about injection or ranking uses it yet: it is the key
-recall at the moment of failure (story 28.3) and consolidation (28.6) build on.
+recall at the moment of failure and consolidating lessons per situation build on.
 
 **What a signature is.** `ExperienceFailureSignature.From(ToolCallRecord)` (or `From(toolName, error)` for a failure no
 record holds yet) gives `(ToolName, ErrorClass, Fingerprint)`, and `Key`, the three joined by U+001F. The error class is

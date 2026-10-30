@@ -6,7 +6,7 @@ using ErrorClassRule = AgentExperience.Abstractions.ErrorClassification.ErrorCla
 namespace AgentExperience.Abstractions;
 
 /// <summary>
-/// The failure signature of one failed tool call (story 28.2): which tool failed, how, and a fingerprint of what it
+/// The failure signature of one failed tool call: which tool failed, how, and a fingerprint of what it
 /// said, as a key a lesson can be looked up by while a run is failing. It is derived only from what a record already
 /// stores (<see cref="ToolCallRecord.ToolName"/> and <see cref="ToolCallRecord.Error"/>), deterministically, so the
 /// same failure in two runs has the same signature whatever IDs, paths, line numbers or timestamps its message named.
@@ -292,7 +292,7 @@ public enum ExperienceSignatureResolution
 /// <param name="Resolution">Whether a later call in the same verified record succeeded after the failure's last occurrence.</param>
 public sealed record ExperienceRecordFailureSignature(ExperienceFailureSignature Signature, ExperienceSignatureResolution Resolution);
 
-/// <summary>The failure signatures of a whole record (story 28.2).</summary>
+/// <summary>The failure signatures of a whole record.</summary>
 public static class ExperienceFailureSignatures
 {
     /// <summary>

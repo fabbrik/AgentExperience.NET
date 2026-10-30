@@ -37,7 +37,7 @@ internal static class ApplicationRolePrivileges
     internal const string ProviderHoldoutAssignmentsTable = "experience_provider_holdout_assignments";
 
     /// <summary>
-    /// <c>0030</c>'s table: each record's failure signatures (story 28.2). Optional, so the privileges call still succeeds
+    /// <c>0030</c>'s table: each record's failure signatures. Optional, so the privileges call still succeeds
     /// on a schema not yet migrated to <c>0030</c>. .NET-only: no contract privileges file grants it.
     /// </summary>
     internal const string FailureSignaturesTable = "experience_failure_signatures";

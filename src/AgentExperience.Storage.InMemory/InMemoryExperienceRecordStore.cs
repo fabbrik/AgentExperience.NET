@@ -49,7 +49,7 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
     private readonly Dictionary<Guid, RecordSearchText> _searchText = [];
 
     /// <summary>
-    /// Story 28.2: each record's failure signatures, derived once when it is created (a record's attempts never change
+    /// Each record's failure signatures, derived once when it is created (a record's attempts never change
     /// afterwards), and the two indexes the signature source looks them up by: the whole key, and the tool and error
     /// class. Kept under the same lock as the records, so a committed write is visible to the next lookup.
     /// </summary>

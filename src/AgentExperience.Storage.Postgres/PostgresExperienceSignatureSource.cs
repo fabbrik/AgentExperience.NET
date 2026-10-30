@@ -5,8 +5,8 @@ using NpgsqlTypes;
 namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
-/// <see cref="IExperienceSignatureSource"/> over <c>0030</c>'s <c>agent_experience.experience_failure_signatures</c>
-/// (story 28.2). It follows exactly the order <see cref="PostgresExperienceCandidateSource"/> uses -- validate the
+/// <see cref="IExperienceSignatureSource"/> over <c>0030</c>'s <c>agent_experience.experience_failure_signatures</c>.
+/// It follows exactly the order <see cref="PostgresExperienceCandidateSource"/> uses -- validate the
 /// request, check it against the host-established <see cref="AuthorizationContext"/>, and only then open a connection
 /// and run parameterized SQL whose predicates apply the scope -- and translates failures the same way.
 /// </summary>

@@ -10,7 +10,7 @@ using static AgentExperience.Storage.Postgres.ExperienceStoreFailures;
 namespace AgentExperience.Storage.Postgres;
 
 /// <summary>
-/// Story 28.2: each record's failure signatures. <c>0030</c>'s <c>agent_experience.experience_failure_signatures</c>
+/// Each record's failure signatures. <c>0030</c>'s <c>agent_experience.experience_failure_signatures</c>
 /// holds one row per record and signature; <see cref="CreateAsync"/> writes a record's rows in the same transaction as the
 /// record, and <see cref="BackfillFailureSignaturesAsync(AuthorizationContext, Scope, int, ScopeMatch, Guid?, CancellationToken)"/>
 /// writes them for plaintext records stored before <c>0030</c>.
@@ -131,7 +131,7 @@ public sealed partial class PostgresExperienceRecordStore
         BackfillFailureSignaturesAsync(authorization, scope, batchSize, match, startAfter: null, cancellationToken);
 
     /// <summary>
-    /// The failure-signature backfill (story 28.2): examines up to <paramref name="batchSize"/> live plaintext records in
+    /// The failure-signature backfill: examines up to <paramref name="batchSize"/> live plaintext records in
     /// <paramref name="scope"/> -- or, with <see cref="ScopeMatch.Subtree"/>, in that scope and every scope beneath it --
     /// in ID order after <paramref name="startAfter"/>, derives each one's failure signatures
     /// (<see cref="ExperienceFailureSignatures.Of"/>) and writes the ones it does not hold yet. Bounded, resumable,

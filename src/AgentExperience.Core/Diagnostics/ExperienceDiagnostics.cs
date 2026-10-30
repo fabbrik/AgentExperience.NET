@@ -119,7 +119,7 @@ internal static class ExperienceDiagnostics
     internal const string CorrelationIdAttribute = "agentexperience.correlation_id";
 
     /// <summary>
-    /// The retrieval channel a lookup ran on (story 28.2): <c>signature</c> on a <c>retrieve.signature</c> span. A closed
+    /// The retrieval channel a lookup ran on: <c>signature</c> on a <c>retrieve.signature</c> span. A closed
     /// set; the signature itself, its tool name and its error class are never telemetry values.
     /// </summary>
     internal const string RetrievalChannelAttribute = "agentexperience.retrieval.channel";

@@ -431,7 +431,7 @@ public static class PostgresExperienceRecordSchema
     public const string ExperienceProviderHoldoutAssignmentsScriptName = "0029_experience_provider_holdout_assignments.sql";
 
     /// <summary>
-    /// The script that indexes each record's failure signatures (story 28.2): it creates
+    /// The script that indexes each record's failure signatures: it creates
     /// <c>agent_experience.experience_failure_signatures</c>, one row per record and signature (tool name, error class,
     /// fingerprint, whether it was resolved, and the derivation's version, never error text), which
     /// <see cref="PostgresExperienceRecordStore.CreateAsync"/> writes with the record and

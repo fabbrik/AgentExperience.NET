@@ -120,7 +120,7 @@ internal static partial class ExperienceRecordValidator
         return errors;
     }
 
-    /// <summary>Validates a failure-signature backfill (story 28.2): the scope, the scope match, and the batch bound.</summary>
+    /// <summary>Validates a failure-signature backfill: the scope, the scope match, and the batch bound.</summary>
     public static IReadOnlyList<StoreValidationError> ValidateSignatureBackfill(Scope scope, int batchSize, ScopeMatch match)
     {
         var errors = new List<StoreValidationError>();
