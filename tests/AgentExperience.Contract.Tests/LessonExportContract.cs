@@ -23,7 +23,15 @@ internal sealed record LessonExportOptions(
     Scope AuthorizedScope,
     DateTimeOffset Now,
     int? MinimumRunsPerArm,
-    bool HasPreviousFile);
+    bool HasPreviousFile)
+{
+    /// <summary>
+    /// Whether the file before the export starts with a UTF-8 byte order mark: <c>previous.md</c> without it (contract
+    /// files never hold one), the bytes EF BB BF before it. Written only when set.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool PreviousFileBom { get; init; }
+}
 
 /// <summary>A lesson-export case: the records and holdout rows seeded, the options, and the file as it was before.</summary>
 internal sealed record LessonExportCase(
@@ -59,6 +67,8 @@ internal static class LessonExportContract
         ("sync-against-previous-file", Previous(0x143)),
         ("hand-edited-previous-file", HandEdited(0x144)),
         ("denied", Denied()),
+        ("hand-edited-heading-whitespace", HeadingWhitespace(0x146)),
+        ("previous-file-with-bom", WithBom(0x147)),
     ];
 
     /// <summary>The files of one case: <c>previous.md</c> only when the file existed before the export.</summary>
@@ -121,6 +131,44 @@ internal static class LessonExportContract
                     + "## Lesson 1234\n\nNot a lesson heading this sink writes.\n\n"
                     + "## Lesson " + first + "\n\nA second section for the same lesson.\n\n"
                     + "    ## Lesson " + Fixed.Id(f, 0xffe).ToString("D", CultureInfo.InvariantCulture) + "\n";
+            });
+    }
+
+    private static LessonExportCase HeadingWhitespace(int f)
+    {
+        var (records, assignments) = MeasuredRecords(f, Fixed.Scope);
+        return new LessonExportCase(
+            records,
+            assignments,
+            Options(
+                "Headings edited by hand around their IDs (previous.md): white space before and after the GUID (two spaces, a tab, a no-break space) is trimmed as .NET's GUID parser trims it, so each still opens its lesson's section; an upper-case GUID is the same lesson. Each section differs from what the sink writes now, so the three current lessons are updated, and a lesson the file held that is gone is removed.",
+                3) with
+            { HasPreviousFile = true },
+            current =>
+            {
+                string Id(int index) => current[index].ExperienceId.ToString("D", CultureInfo.InvariantCulture);
+                return "## Lesson  " + Id(0) + "  \n\nEdited.\n\n"
+                    + "## Lesson " + Id(1).ToUpperInvariant() + "\t\n\nEdited.\n\n"
+                    + "## Lesson \u00A0" + Id(2) + "\u00A0\n\nEdited.\n\n"
+                    + "## Lesson " + Fixed.Id(f, 0xffd).ToString("D", CultureInfo.InvariantCulture) + " \n\nGone.\n";
+            });
+    }
+
+    private static LessonExportCase WithBom(int f)
+    {
+        var (records, assignments) = MeasuredRecords(f, Fixed.Scope);
+        return new LessonExportCase(
+            records,
+            assignments,
+            Options(
+                "The file before the export starts with a UTF-8 byte order mark (previousFileBom: previous.md's bytes follow EF BB BF), then the first lesson's heading: the mark is not part of the text read, so that heading opens its section and the lesson is unchanged; the file written has no mark.",
+                3) with
+            { HasPreviousFile = true, PreviousFileBom = true },
+            current =>
+            {
+                // An earlier export of the same lessons, from its first heading on.
+                var written = WritePrevious(Fixed.Scope, current, Now);
+                return written[written.IndexOf(MarkdownLessonFileSink.LessonHeadingPrefix, StringComparison.Ordinal)..];
             });
     }
 
@@ -284,7 +332,7 @@ internal static class LessonExportContract
             var path = Path.Combine(directory.FullName, "lessons.md");
             if (previousFile is not null)
             {
-                await File.WriteAllTextAsync(path, previousFile, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                await File.WriteAllTextAsync(path, previousFile, new UTF8Encoding(encoderShouldEmitUTF8Identifier: options.PreviousFileBom));
             }
 
             var result = await lessons.ExportMeasuredAsync(

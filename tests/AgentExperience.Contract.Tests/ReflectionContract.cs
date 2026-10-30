@@ -20,6 +20,13 @@ internal sealed record ReflectorOptionsInput(
     float? Temperature,
     int MaxOutputTokens)
 {
+    /// <summary>
+    /// Whether the host's <see cref="ChatClientExperienceReflectorOptions.ConfigureChatOptions"/> callback throws (an
+    /// <see cref="InvalidOperationException"/>). Written only when set.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ConfigureChatOptionsThrows { get; init; }
+
     /// <summary>The defaults.</summary>
     public static ReflectorOptionsInput Default { get; } = new(
         null,
@@ -38,6 +45,9 @@ internal sealed record ReflectorOptionsInput(
         MaxPromptLength = MaxPromptLength,
         Temperature = Temperature,
         MaxOutputTokens = MaxOutputTokens,
+        ConfigureChatOptions = ConfigureChatOptionsThrows
+            ? _ => throw new InvalidOperationException("The host's callback failed.")
+            : null,
     };
 }
 
@@ -237,7 +247,46 @@ internal static class ReflectionContract
             },
             ScriptedReply.Text(ValidAnswer),
             ReflectorOptionsInput.Default with { MaxQuotedLength = 999, MaxPromptLength = 1_000 })),
+
+        // Added within 1.14, before it was published.
+        ("chat-options-callback-fails", Output(
+            Base(0x188, "The host's ConfigureChatOptions callback throws: ChatOptionsCallbackFailed, naming the exception's type, and the model is never called."),
+            ScriptedReply.Text(ValidAnswer),
+            ReflectorOptionsInput.Default with { ConfigureChatOptionsThrows = true })),
+        ("answer-at-the-byte-limit", Output(
+            Base(0x189, "An answer of exactly 65,536 UTF-8 bytes (a valid answer padded with an unknown member) is read: Validated."),
+            ScriptedReply.Text(Padded(ReflectionAnswerLimit)))),
+        ("answer-one-byte-over-the-limit", Output(
+            Base(0x18a, "An answer of 65,537 UTF-8 bytes: OutputTooLarge, unread."),
+            ScriptedReply.Text(Padded(ReflectionAnswerLimit + 1)))),
+        ("nesting-at-the-depth-limit", Output(
+            Base(0x18b, "An unknown member nested so the answer is 64 levels deep (the answer object counting as one): read, and the member ignored."),
+            ScriptedReply.Text(Nested(64)))),
+        ("nesting-over-the-depth-limit", Output(
+            Base(0x18c, "An unknown member nested so the answer is 65 levels deep: Unparseable."),
+            ScriptedReply.Text(Nested(65)))),
+        ("lone-surrogate-escape", Output(
+            Base(0x18d, "A lesson holding the JSON escape of a lone surrogate: Unparseable."),
+            ScriptedReply.Text("{\"lesson\":\"Wait \\ud800 for the lock.\"}"))),
+        ("model-ids-dropped", Output(
+            Base(0x18e, "The response's model ID contains ':' and the options' ModelName is an IP address (a link): both are dropped, and the producer names 'unknown'."),
+            ScriptedReply.Text(ValidAnswer, modelId: "acme:gpt-4"),
+            ReflectorOptionsInput.Default with { ModelName = "10.0.0.7" })),
     ];
+
+    private const int ReflectionAnswerLimit = ChatClientExperienceReflector.MaxAnswerBytes;
+
+    /// <summary>A valid answer padded with an unknown member to exactly <paramref name="bytes"/> UTF-8 bytes.</summary>
+    private static string Padded(int bytes)
+    {
+        var head = ValidAnswer[..^1] + ",\"padding\":\"";
+        const string Tail = "\"}";
+        return head + new string('p', bytes - System.Text.Encoding.UTF8.GetByteCount(head) - Tail.Length) + Tail;
+    }
+
+    /// <summary>A valid answer with an unknown member of nested arrays, so the answer is <paramref name="depth"/> levels deep.</summary>
+    private static string Nested(int depth) =>
+        ValidAnswer[..^1] + ",\"nested\":" + new string('[', depth - 1) + new string(']', depth - 1) + "}";
 
     private static ReflectionCase Prompt(FinalizeInput input, ReflectorOptionsInput reflector) => new(input, reflector, ScriptedReply.Text(ValidAnswer));
 

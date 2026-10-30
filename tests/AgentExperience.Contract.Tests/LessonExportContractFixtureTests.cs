@@ -54,6 +54,8 @@ public sealed partial class ContractFixtureTests
         Assert.Contains("    team: payments\n", runs["scope-with-every-segment"].File, StringComparison.Ordinal);
         Assert.Equal(new ExperienceLessonSyncResult(1, 1, 1), runs["sync-against-previous-file"].Result.Sync);
         Assert.Equal(new ExperienceLessonSyncResult(2, 1, 0), runs["hand-edited-previous-file"].Result.Sync);
+        Assert.Equal(new ExperienceLessonSyncResult(0, 3, 1), runs["hand-edited-heading-whitespace"].Result.Sync);
+        Assert.Equal(new ExperienceLessonSyncResult(0, 0, 0), runs["previous-file-with-bom"].Result.Sync);
 
         Assert.Equal(ExperienceStoreOutcome.Denied, runs["denied"].Result.Outcome);
         Assert.Null(runs["denied"].Result.Sync);

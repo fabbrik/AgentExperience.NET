@@ -72,11 +72,18 @@ public sealed partial class ContractFixtureTests
             Assert.Equal(FinalizationOutcome.Validated, results[name].Outcome);
         }
 
-        // Every failure kind finalization can reach (ChatOptionsCallbackFailed needs a host callback, which a port tests itself).
+        // Every failure kind.
         Assert.Equal(
-            Enum.GetValues<ReflectionFailureKind>().Where(kind => kind != ReflectionFailureKind.ChatOptionsCallbackFailed).Order(),
+            Enum.GetValues<ReflectionFailureKind>().Order(),
             results.Keys.Select(Kind).OfType<ReflectionFailureKind>().Distinct().Order());
         Assert.Equal(ReflectionFailureKind.TimedOut, Kind("timed-out"));
+        Assert.Equal(FinalizationOutcome.Validated, results["answer-at-the-byte-limit"].Outcome);
+        Assert.Equal(ReflectionFailureKind.OutputTooLarge, Kind("answer-one-byte-over-the-limit"));
+        Assert.Equal(FinalizationOutcome.Validated, results["nesting-at-the-depth-limit"].Outcome);
+        Assert.Equal(ReflectionFailureKind.Unparseable, Kind("nesting-over-the-depth-limit"));
+        Assert.Equal(ReflectionFailureKind.Unparseable, Kind("lone-surrogate-escape"));
+        Assert.Equal(ReflectionFailureKind.ChatOptionsCallbackFailed, Kind("chat-options-callback-fails"));
+        Assert.Equal(FinalizationOutcome.Validated, results["model-ids-dropped"].Outcome);
         Assert.Equal("System.InvalidOperationException", ((ReflectionFailedException)results["model-call-throws"].Failure!.Exception!).CauseType);
 
         Assert.Equal(ReflectionScreeningRefusal.UnsafeContent, Refusal("link-not-in-the-run"));
