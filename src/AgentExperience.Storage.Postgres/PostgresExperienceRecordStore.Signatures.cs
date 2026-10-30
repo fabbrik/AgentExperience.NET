@@ -61,13 +61,24 @@ public sealed partial class PostgresExperienceRecordStore
 
     private const string SignatureSavepoint = "experience_failure_signatures";
 
+    /// <summary>Whether the connecting role may insert into the signature table, asked after a refusal.</summary>
+    private const string MayInsertSignaturesSql =
+        "SELECT pg_catalog.has_table_privilege('" + FailureSignaturesTable + "', 'INSERT')";
+
     /// <summary>
-    /// Writes <paramref name="record"/>'s failure signatures inside the create's transaction, under a savepoint: a table
-    /// that does not exist yet, or a column the statement reads that does not (a database not migrated to <c>0030</c>, or
-    /// to the earlier scripts it builds on), or a role not yet granted the table (the privileges call not re-run) rolls
-    /// back to the savepoint and the record is created without them, for the backfill to add later.
-    /// Any other failure fails the create.
+    /// Writes <paramref name="record"/>'s failure signatures inside the create's transaction, under a savepoint. Three
+    /// conditions roll back to the savepoint and let the record be created without them, for the backfill to add later:
+    /// the table does not exist yet (<c>42P01</c>), a column the statement reads does not (<c>42703</c>: a database not
+    /// migrated to <c>0030</c>, or to the scripts it builds on), or the role has not been granted the table
+    /// (<c>42501</c>, the privileges call not re-run). Each skip is reported as a <c>record.signature.write</c> operation
+    /// with the outcome <c>Skipped</c> and the SQLSTATE, the storage adapter's one operator-visible channel.
     /// </summary>
+    /// <remarks>
+    /// <c>42501</c> is also what a row-level security policy's refusal raises. The two are told apart by asking the
+    /// database, not by reading the (localizable) message: after rolling back to the savepoint, the role's
+    /// <c>INSERT</c> privilege on the table is checked, and a refusal by a role that holds it -- a policy, or anything
+    /// else -- is rethrown and fails the create. Any other failure fails the create too.
+    /// </remarks>
     private static async Task WriteFailureSignaturesAsync(
         AuthorizedTransaction session,
         ExperienceRecord record,
@@ -90,6 +101,18 @@ public sealed partial class PostgresExperienceRecordStore
         catch (PostgresException ex) when (ex.SqlState is UndefinedTable or UndefinedColumn or InsufficientPrivilege && !cancellationToken.IsCancellationRequested)
         {
             await session.Transaction.RollbackAsync(SignatureSavepoint, cancellationToken).ConfigureAwait(false);
+            if (ex.SqlState == InsufficientPrivilege)
+            {
+                await using var check = session.CreateCommand(MayInsertSignaturesSql);
+                if (await check.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true)
+                {
+                    // The role may insert, so this was not a missing grant: a row-level security policy (or something
+                    // else) refused the row, and hiding that would hide a misconfigured or tampered policy.
+                    throw;
+                }
+            }
+
+            ErasureDiagnostics.SignatureWriteSkipped(ex.SqlState);
         }
     }
 

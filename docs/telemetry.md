@@ -116,7 +116,7 @@ for exporter options. For the sample's fixtures and limitations, read its
 | --- | --- | --- | --- |
 | `AgentExperience.Core` | `ActivitySource` and `Meter` | `AgentExperience.Core` | the fourteen Core operations below |
 | `AgentExperience.MicrosoftAgentFramework` | `ActivitySource` and `Meter` | `AgentExperience.MicrosoftAgentFramework` | `inject`, and `record_injection`, `record_holdout`, `record_provider_holdout` and `benefit_refresh` (measurements only, no span) |
-| `AgentExperience.Storage.Postgres` | `ActivitySource` and `Meter` | `AgentExperience.Storage.Postgres` | `delete`, `retention.sweep`, `grant.purge`, `grant.access.purge` (erasure and retention), `record.seal` (the crypto-shredding upgrade), and the `record.authorship.backfill` and `record.signature.backfill` upgrade jobs only |
+| `AgentExperience.Storage.Postgres` | `ActivitySource` and `Meter` | `AgentExperience.Storage.Postgres` | `delete`, `retention.sweep`, `grant.purge`, `grant.access.purge` (erasure and retention), `record.seal` (the crypto-shredding upgrade), the `record.authorship.backfill` and `record.signature.backfill` upgrade jobs, and `record.signature.write` (a record created without its failure signatures) only |
 
 - **One source and meter per assembly.** A text-only host can subscribe to Core without pulling in the adapters, and
   the `AgentExperience.*` wildcard subscribes to all three.
@@ -167,7 +167,7 @@ spans only (see [Span attributes](#span-attributes)) and never as a metric dimen
 
 | Dimension | Values |
 | --- | --- |
-| `operation` | one of the twenty-two values in [Operations](#operations) |
+| `operation` | one of the twenty-seven values in [Operations](#operations) |
 | `outcome` | an enum member name from that operation's own outcome enum, verbatim, or `Faulted` when it threw. See [Operations](#operations) |
 | `error.class` | `Cancelled`, `Timeout`, `Infrastructure`, `Unexpected`. See [`error.class`](#errorclass). Only on `agentexperience.operation.failures` |
 | `nested` | `true` or `false` (a boolean). See [`nested`](#nested) |
@@ -248,6 +248,7 @@ These are the only span attributes the library writes.
 | `agentexperience.interrupted` | boolean: whether the sweep stopped before the end of its batch | `retention.sweep`, where `erased_count` is written |
 | `agentexperience.scope_match` | `Exact` or `Subtree`: how wide the call was asked to reach (the `ScopeMatch` member's name, never the scope) | `retention.sweep`, `grant.access.purge`, `record.seal`, `record.authorship.backfill`, `record.signature.backfill`, whenever the caller passed a defined `ScopeMatch`; the five-argument `SweepExpiredAsync` reports `Exact` |
 | `agentexperience.sealed_count` | integer: how many plaintext records the upgrade batch sealed. Which ones stays in the database | `record.seal`, on every returned result (0 on a refusal) |
+| `agentexperience.sqlstate` | the SQLSTATE that made a signature write skip: `42P01`, `42703` or `42501`. Nothing else from the error | `record.signature.write` |
 | `agentexperience.backfilled_count` | integer: how many sealed records the authorship backfill batch wrote a flag for, or how many records the signature backfill batch wrote signatures for. Which ones, and what was written, stay in the database | `record.authorship.backfill`, `record.signature.backfill`, on every returned result (0 on a refusal) |
 
 Identifiers that come from the request are written before the operation runs, so they are present on a span that
@@ -278,8 +279,9 @@ record was erased is out of the library's reach: see KL-2.
 
 ## Operations
 
-There are twenty-six `operation` values: fourteen emitted on `AgentExperience.Core`, five on
-`AgentExperience.MicrosoftAgentFramework`, and seven on `AgentExperience.Storage.Postgres`. The set is closed: adding
+There are twenty-seven `operation` values: fourteen emitted on `AgentExperience.Core`, five on
+`AgentExperience.MicrosoftAgentFramework` (the nineteen `docs/telemetry-names.json` pins for the ports), and eight on
+`AgentExperience.Storage.Postgres` (pinned by the storage tests' diagnostics-agreement test, not by the names file). The set is closed: adding
 a value is a deliberate change that widens every instrument's cardinality.
 
 | `operation` | Emitted by | `outcome` values (besides `Faulted`) | Span attributes beyond the common ones | Nested operations it emits |
@@ -310,6 +312,7 @@ a value is a deliberate change that widens every instrument's cardinality.
 | `record.seal` | `PostgresExperienceRecordStore.SealPlaintextRecordsAsync` (the crypto-shredding upgrade; one span per batch) | `ExperienceStoreOutcome`: `Committed`, `Denied`, `Invalid` (including a store with no `ExperienceEncryption`) | `sealed_count`, `scope_match` | — |
 | `record.authorship.backfill` | `PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync` (the owner-run authorship backfill; one span per batch) | `ExperienceStoreOutcome`: `Committed`, `Denied`, `Invalid` (including a store with no `ExperienceEncryption`) | `backfilled_count`, `scope_match` | — |
 | `record.signature.backfill` | `PostgresExperienceRecordStore.BackfillFailureSignaturesAsync` (story 28.2: the failure-signature upgrade job over plaintext records; one span per batch) | `ExperienceStoreOutcome`: `Committed`, `Denied`, `Invalid` | `backfilled_count`, `scope_match` | — |
+| `record.signature.write` | `PostgresExperienceRecordStore.CreateAsync`, only when it created a record **without** its failure signatures because the signature table (`42P01`), a column it reads (`42703`) or the role's `INSERT` privilege on it (`42501`) was missing — migrate, re-run the privileges call, then run the backfill. A refusal by a role that holds the privilege (a row-level security policy) is not a skip: the create fails | `Skipped` | `sqlstate` | — |
 
 Notes:
 
@@ -398,8 +401,8 @@ Since contract 1.16 both ports emit `lifecycle.commit` and `confidence.apply` (C
 lifecycle services, with .NET's outcomes and attributes: `experience_id` and `event_id`, and on `confidence.apply`
 `confidence.admission` (always `HostTrusted` from a port) and `independence.refusal`. The ports never emit `deindex`,
 `reindex`, `reuse_feedback`, `delete`,
-`retention.sweep`, `grant.purge`, `grant.access.purge`, `record.seal`, `record.authorship.backfill`, `retrieve.signature` or
-`record.signature.backfill`: they do not perform
+`retention.sweep`, `grant.purge`, `grant.access.purge`, `record.seal`, `record.authorship.backfill`, `retrieve.signature`,
+`record.signature.backfill` or `record.signature.write`: they do not perform
 them. Differences from .NET that a dashboard should know:
 
 - `nested` is `true` for `verify` and `reflect` inside `finalize`, and `false` for everything else: `inject`,
