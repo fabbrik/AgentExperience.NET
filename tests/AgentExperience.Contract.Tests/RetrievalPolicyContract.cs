@@ -537,7 +537,7 @@ internal static class RetrievalPolicyContract
             source,
             policy,
             RankingWeights.Default,
-            new FixedTimeProvider(now),
+            new FrozenTimeProvider(now),
             embeddingIndex: index,
             embeddingGenerator: index is null ? null : new FixtureGenerator(),
             environmentScorer: null,
@@ -708,6 +708,28 @@ internal static class RetrievalPolicyContract
     }
 
     /// <summary>An index that answers every search with the case's vector candidates, cut at the limit it was asked for, and keeps the query.</summary>
+    /// <summary>
+    /// A clock fixed at one instant on which no time passes, so the policy's timeout never fires: a case's result is what
+    /// retrieval ranks, never a <c>TimedOut</c> that a slow or busy machine's thread pool could cause.
+    /// </summary>
+    private sealed class FrozenTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) => new NeverFires();
+
+        private sealed class NeverFires : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose()
+            {
+            }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
     private sealed class FixtureIndex(IReadOnlyList<(ExperienceRecord Record, double Relevance)> candidates) : IExperienceEmbeddingIndex
     {
         public ExperienceVectorQuery? Query { get; private set; }

@@ -132,8 +132,9 @@ internal static class ContentGuardContract
 
             var combined = Guard.CheckCombined(definition.Fields);
 
-            // The fixture must never depend on the machine: .NET's matchers stop at one second, and no case comes near it.
-            if (watch.Elapsed > TimeSpan.FromMilliseconds(250))
+            // The fixture must never depend on the machine: .NET's matchers stop at one second, and no case may come near it
+            // when the fixture is generated. Checking it only compares the answers, which no timing changes below the timeout.
+            if (ContractFiles.Updating && watch.Elapsed > TimeSpan.FromMilliseconds(250))
             {
                 throw new InvalidOperationException($"The content-guard case {definition.Name} took {watch.Elapsed}; it must stay far from .NET's match timeout.");
             }
