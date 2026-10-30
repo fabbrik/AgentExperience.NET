@@ -492,7 +492,7 @@ public sealed class SingleCallParityTests
     public async Task A_history_read_past_its_bound_joins_nothing_never_fails_the_run_and_is_reported()
     {
         var trace = new Trace();
-        await using var services = trace.Host.Build(trace.RecordDerivedTexts);
+        await using var services = trace.Host.Build(options => trace.RecordDerivedTexts(options, realTimers: true));
         var history = new FlakyHistory();
         var agent = Wire(explicitWiring: false, services, new ChatClientAgentOptions { ChatHistoryProvider = history }, trace.Model);
         var session = await agent.CreateSessionAsync();
@@ -639,6 +639,13 @@ public sealed class SingleCallParityTests
     private static bool IsInjectedNow(ChatMessage message) =>
         IsHistoricalReference(message) && message.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory;
 
+    /// <summary>The system clock, except that no timer it creates ever fires, so no real-clock timeout can be hit.</summary>
+    private sealed class NeverFiringTimers : TimeProvider
+    {
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            System.CreateTimer(static _ => { }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    }
+
     /// <summary>Everything one wiring's scenario produced.</summary>
     private sealed class Trace
     {
@@ -650,8 +657,21 @@ public sealed class SingleCallParityTests
 
         public List<string> Errors { get; } = [];
 
-        public void RecordDerivedTexts(AgentExperienceOptions options)
+        public void RecordDerivedTexts(AgentExperienceOptions options) => RecordDerivedTexts(options, realTimers: false);
+
+        /// <param name="options">The options to record on.</param>
+        /// <param name="realTimers">
+        /// Only a test that needs a bound to fire (a hung history read) passes <see langword="true"/>. Every other test runs
+        /// on a clock whose timers never fire, so a loaded CI machine cannot time out a retrieval, an eligibility re-read or
+        /// a history read that would have finished, and make the two wirings disagree.
+        /// </param>
+        public void RecordDerivedTexts(AgentExperienceOptions options, bool realTimers)
         {
+            if (!realTimers)
+            {
+                options.TimeProvider = new NeverFiringTimers();
+            }
+
             var injection = options.Injection;
             options.Injection = settings =>
             {
