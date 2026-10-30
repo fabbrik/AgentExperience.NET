@@ -57,12 +57,15 @@ public sealed partial class PostgresExperienceRecordStore
 
     private const string InsufficientPrivilege = "42501";
 
+    private const string UndefinedColumn = "42703";
+
     private const string SignatureSavepoint = "experience_failure_signatures";
 
     /// <summary>
     /// Writes <paramref name="record"/>'s failure signatures inside the create's transaction, under a savepoint: a table
-    /// that does not exist yet (a database not migrated to <c>0030</c>) or a role not yet granted it (the privileges call
-    /// not re-run) rolls back to the savepoint and the record is created without them, for the backfill to add later.
+    /// that does not exist yet, or a column the statement reads that does not (a database not migrated to <c>0030</c>, or
+    /// to the earlier scripts it builds on), or a role not yet granted the table (the privileges call not re-run) rolls
+    /// back to the savepoint and the record is created without them, for the backfill to add later.
     /// Any other failure fails the create.
     /// </summary>
     private static async Task WriteFailureSignaturesAsync(
@@ -84,7 +87,7 @@ public sealed partial class PostgresExperienceRecordStore
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             await session.Transaction.ReleaseAsync(SignatureSavepoint, cancellationToken).ConfigureAwait(false);
         }
-        catch (PostgresException ex) when (ex.SqlState is UndefinedTable or InsufficientPrivilege && !cancellationToken.IsCancellationRequested)
+        catch (PostgresException ex) when (ex.SqlState is UndefinedTable or UndefinedColumn or InsufficientPrivilege && !cancellationToken.IsCancellationRequested)
         {
             await session.Transaction.RollbackAsync(SignatureSavepoint, cancellationToken).ConfigureAwait(false);
         }
