@@ -1,8 +1,9 @@
 """
 The receiving agent's capability gate (contract 1.13): .NET's ``ReceivingAgentCapabilities``, ``ToolRiskClass`` and
-``CapabilityGate``. A record whose verified approach calls a tool the receiving agent lacks, or a tool riskier than it may
-use, is kept out of the block (``ToolUnavailable``, ``RiskClassExceeded``, with no detail), before the record limit, so
-it takes no slot. Passing the gate grants nothing: every tool call is still the host's approval boundary's to decide.
+``CapabilityGate``. A record whose verified approach calls a tool the receiving agent lacks, or a tool riskier than it
+may use, is kept out of the block (``ToolUnavailable``, ``RiskClassExceeded``, with no detail), before the record
+limit, so it takes no slot. Passing the gate grants nothing: the host's approval boundary still decides every
+tool call.
 """
 
 from __future__ import annotations
@@ -45,7 +46,8 @@ class ReceivingAgent:
 
     - ``available_tools``: the tools it has, compared ordinally; ``None`` (the default) skips the tool check, and an
       empty collection admits only approaches that call no tool.
-    - ``max_risk_class``: the riskiest class it may be taught; ``None`` skips the risk check, ``"Critical"`` disables it.
+    - ``max_risk_class``: the riskiest class it may be taught; ``None`` skips the risk check, and ``"Critical"``
+      disables it.
     - ``tool_risk_classes``: the host's class per tool (a tool not listed is ``Critical``); read only with
       ``max_risk_class``.
     - ``use_run_tools``: check against the tools the invocation offers, intersected with ``available_tools`` when set.
@@ -68,7 +70,9 @@ class ReceivingAgent:
                 raise ValueError("ReceivingAgent.available_tools must be a collection of tool names, not a string.")
             tools = frozenset(self.available_tools)
             if any(not isinstance(tool, str) or is_null_or_whitespace(tool) for tool in tools):
-                raise ValueError("ReceivingAgent.available_tools may not contain a null, empty or whitespace tool name.")
+                raise ValueError(
+                    "ReceivingAgent.available_tools may not contain a null, empty or whitespace tool name."
+                )
             object.__setattr__(self, "available_tools", tools)
         if self.max_risk_class is not None and self.max_risk_class not in TOOL_RISK_CLASSES:
             raise ValueError(f"ReceivingAgent.max_risk_class {self.max_risk_class!r} is not a defined ToolRiskClass.")
@@ -79,7 +83,9 @@ class ReceivingAgent:
                     "ReceivingAgent.tool_risk_classes may not contain a null, empty or whitespace tool name."
                 )
             if risk not in TOOL_RISK_CLASSES:
-                raise ValueError(f"ReceivingAgent.tool_risk_classes holds {risk!r}, which is not a defined ToolRiskClass.")
+                raise ValueError(
+                    f"ReceivingAgent.tool_risk_classes holds {risk!r}, which is not a defined ToolRiskClass."
+                )
             classes[tool] = risk
         object.__setattr__(self, "tool_risk_classes", MappingProxyType(classes))
         if not isinstance(self.use_run_tools, bool):

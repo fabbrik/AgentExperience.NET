@@ -80,8 +80,10 @@ from agent_framework import (
 )
 
 from . import __version__
+from ._text import is_null_or_whitespace, utf16_len
 from .benefit_policy import BenefitCache, BenefitPolicy, OmittedRecord, select_block
-from .block import BlockOptions
+from .block import BlockOptions, RankedRecord
+from .capabilities import ModelAuthoredLessonPolicy, ReceivingAgent, active_gate, gated_window
 from .capture import RawAttempt, RawToolCall, RunCapture, RunExecutionStatus
 from .classifiers import (
     TOOL_REPORTED_ERROR_CLASS,
@@ -141,11 +143,12 @@ from .lessons import ExperienceLessons
 from .model import MODEL_METADATA_KEY, reported_model, with_model
 from .observer import classify as _classify_error
 from .observer import observe
-from .records import EnvironmentFingerprint, Provenance, RunExposure, Scope
+from .records import EnvironmentFingerprint, ExperienceRecord, Provenance, RunExposure, Scope
+from .reflector import is_model_authored
 from .retrieval import ConfidenceDecayPolicy, RetrievalPolicy
 from .sanitization import Sanitization
 from .search import AuthorizationBounds, ExcludedRecord, SearchParameters, SearchRow, rank
-from .task_text import CHAT_HISTORY, EXTERNAL, derive_task_text
+from .task_text import CHAT_HISTORY, EXTERNAL, MAX_TASK_TEXT_LENGTH, derive_task_text
 from .task_text import Message as TaskMessage
 from .task_text import MessagePart as TaskMessagePart
 from .verification import ClosedVerificationRound
@@ -304,6 +307,85 @@ class IdentityContext:
 IdentityResolver = Callable[[IdentityContext], "ExperienceIdentity | Awaitable[ExperienceIdentity | None] | None"]
 
 
+@dataclass(frozen=True)
+class InjectionRequest:
+    """
+    What one invocation retrieves (contract 1.13): the request a :data:`RequestResolver` returns, .NET's
+    ``RetrieveExperienceRequest`` less the authorization and scope, which this port takes from the identity.
+
+    - ``task_text``: what retrieval matches on; blank, or longer than 4096 UTF-16 code units, is refused by retrieval
+      (``RetrievalFailed``).
+    - ``preferred_environment``: replaces the agent's ``preferred_environment`` for this invocation when given.
+    - ``limit``: the request's own limit (1 to the retrieval policy's ``candidate_limit``; anything else is refused by
+      retrieval): the ranking is cut to it, and at most this many records are injected.
+    - ``exclude_model_authored``: also leaves model-authored lessons out for this invocation (it never clears the
+      agent's ``model_authored_lessons="Exclude"``).
+    - ``correlation_id``: set on the ``inject`` span as ``agentexperience.correlation_id``.
+    """
+
+    task_text: str
+    preferred_environment: Mapping[str, str] | None = None
+    limit: int | None = None
+    exclude_model_authored: bool = False
+    correlation_id: str | None = None
+
+
+@dataclass(frozen=True)
+class RequestContext:
+    """What a request resolver is given (.NET's ``ExperienceInjectionContext``): the agent, the caller's session, the
+    invocation's new input messages, the derived task text (``None`` when no user message qualifies) and the identity
+    the invocation runs for."""
+
+    agent: Any
+    session: Any
+    messages: Sequence[Any]
+    derived_task_text: str | None
+    identity: ExperienceIdentity
+
+
+RequestResolver = Callable[[RequestContext], "InjectionRequest | Awaitable[InjectionRequest | None] | None"]
+"""Turns one invocation into its :class:`InjectionRequest`, synchronously or asynchronously (.NET's ``ResolveRequest``
+and ``ResolveRequestAsync``). ``None`` skips the invocation (``Skipped``); an exception injects nothing (``Failed``)."""
+
+
+@dataclass(frozen=True)
+class InjectionDecision:
+    """The host's decision on one record (.NET's ``InjectionDecision``): permitted or not, and a content-free reason
+    (the ``HostDenied`` omission's detail)."""
+
+    permitted: bool
+    reason: str | None = None
+
+    @staticmethod
+    def permit() -> InjectionDecision:
+        """A decision that permits the record."""
+        return InjectionDecision(True)
+
+    @staticmethod
+    def deny(reason: str | None = None) -> InjectionDecision:
+        """A decision that denies the record, with a content-free reason."""
+        return InjectionDecision(False, reason)
+
+
+@dataclass(frozen=True)
+class DecisionContext:
+    """What the host's decision is given (.NET's ``ExperienceInjectionDecisionContext``): the record as retrieval ranked
+    it, the record that would be rendered (this port has no re-read, so the same record), and whether the provider
+    treats it as model-authored (decide on this, never on the reflection's declared authorship)."""
+
+    candidate: RankedRecord
+    current: ExperienceRecord
+    model_authored: bool
+
+
+DecideInjection = Callable[[DecisionContext], "InjectionDecision | None"]
+"""The host's per-record decision (.NET's ``DecideInjection``): synchronous, asked once per selected record after the
+selection and before the byte budget. Fail-closed: raising or returning ``None`` denies (``HostDenied``)."""
+
+HOST_DENIED_DETAIL = "The host injection decision denied the record."
+"""The ``HostDenied`` detail of a denial that gives no reason (.NET's, byte for byte)."""
+
+
 def default_environment() -> EnvironmentFingerprint:
     """The environment a run is recorded under by default: this host, this Python, this operating system."""
     import platform
@@ -343,7 +425,17 @@ class ExperienceSettings:
     environment: EnvironmentFingerprint = field(default_factory=default_environment)
     preferred_environment: Mapping[str, str] = field(default_factory=dict)
     exclude_model_authored: bool = False
+    """Leaves model-authored lessons out: the same as ``model_authored_lessons="Exclude"`` (either excludes)."""
     message_role: Literal["user", "system"] = "user"
+    model_authored_lessons: ModelAuthoredLessonPolicy = "Include"
+    """.NET's ``ModelAuthoredLessons`` (contract 1.13): ``Include`` injects them fenced and labelled; ``Exclude`` asks
+    retrieval to leave them out and omits any that arrives as ``ModelAuthored``."""
+    receiving_agent: ReceivingAgent | None = None
+    """.NET's ``ReceivingAgent`` (contract 1.13): the capability gate; ``None`` gates nothing."""
+    resolve_request: RequestResolver | None = None
+    """.NET's ``ResolveRequest``/``ResolveRequestAsync`` (contract 1.13); ``None``: the derived task text."""
+    decide_injection: DecideInjection | None = None
+    """.NET's ``DecideInjection`` (contract 1.13); ``None`` permits every record."""
     on_capture_failure: Callable[[CaptureFailure], None] | None = None
     on_injection_failure: Callable[[InjectionFailure], None] | None = None
     on_injected: Callable[[InjectionResult], None] | None = None
@@ -406,6 +498,8 @@ class ExperienceSettings:
             "on_injection_recorded",
             "on_vector_fallback",
             "on_holdout_recorded",
+            "resolve_request",
+            "decide_injection",
             "clock",
             "new_id",
         ):
@@ -436,6 +530,10 @@ class ExperienceSettings:
             raise TypeError("benefit must be a BenefitPolicy.")
         if self.message_role not in ("user", "system"):
             raise ValueError("message_role must be 'user' or 'system'.")
+        if self.model_authored_lessons not in ("Include", "Exclude"):
+            raise ValueError("model_authored_lessons must be 'Include' or 'Exclude'.")
+        if self.receiving_agent is not None and not isinstance(self.receiving_agent, ReceivingAgent):
+            raise TypeError("receiving_agent must be a ReceivingAgent or None.")
         if self.task_id is not None and not self.task_id.strip():
             raise ValueError("task_id must not be blank; pass None to use the agent's name.")
 
@@ -450,6 +548,12 @@ class ExperienceSettings:
             # reported) outside a development or test environment.
             ensure_development_environment(resolved.environment_name)
         return resolved
+
+    @property
+    def excludes_model_authored(self) -> bool:
+        """Whether model-authored lessons are left out: ``model_authored_lessons="Exclude"`` or
+        ``exclude_model_authored``."""
+        return self.exclude_model_authored or self.model_authored_lessons == "Exclude"
 
     @property
     def vector_floor(self) -> float | None:
@@ -1196,7 +1300,7 @@ class ExperienceContextProvider(ContextProvider):
         await self.settings.wait_for_index_writes()
 
     async def _vector_channel(
-        self, task_text: str, identity: ExperienceIdentity
+        self, task_text: str, identity: ExperienceIdentity, exclude_model_authored: bool
     ) -> tuple[list[SearchRow], VectorFallback | None]:
         """
         The vector channel (contract 1.6): embed the task text, search the stored vectors, both within
@@ -1233,7 +1337,7 @@ class ExperienceContextProvider(ContextProvider):
                 model_id,
                 vector,
                 settings.retrieval_policy,
-                exclude_model_authored=settings.exclude_model_authored,
+                exclude_model_authored=exclude_model_authored,
             )
         except (asyncio.TimeoutError, TimeoutError) as ex:
             return [], VectorFallback("ProviderUnavailable", "The embedder did not answer in time.", ex)
@@ -1303,14 +1407,59 @@ class ExperienceContextProvider(ContextProvider):
                 (CHAT_HISTORY if source in history else source, batch)
                 for source, batch in context.context_messages.items()
             ]
-            task_text = derive_task_text(_task_messages(context.input_messages, earlier))
+            derived = derive_task_text(_task_messages(context.input_messages, earlier))
+        except Exception as ex:
+            settings.report_injection(InjectionFailure(f"Injection raised {_type_name(ex)}; no block was added.", ex))
+            return "Failed"
+        policy = settings.retrieval_policy
+        exclude = settings.excludes_model_authored
+        preferred: Mapping[str, str] = settings.preferred_environment
+        request_limit: int | None = None
+        if settings.resolve_request is not None:
+            # Contract 1.13: the host's request resolver, sync or async. None skips this invocation; a raise injects
+            # nothing (Failed); the invocation's own cancellation propagates.
+            try:
+                request = await resolve(
+                    settings.resolve_request(
+                        RequestContext(agent, session, list(context.input_messages), derived, identity)
+                    )
+                )
+                if request is not None and not isinstance(request, InjectionRequest):
+                    raise TypeError("The request resolver must return an InjectionRequest or None.")
+            except Exception as ex:
+                settings.report_injection(
+                    InjectionFailure(f"The injection request resolver (resolve_request) raised {_type_name(ex)}.", ex)
+                )
+                return "Failed"
+            if request is None:
+                return "Skipped"
+            if request.correlation_id is not None and op is not None:
+                op.set("agentexperience.correlation_id", request.correlation_id)
+            refusal = _refused(request, policy)
+            if refusal is not None:
+                # As .NET's retrieval refuses such a request: nothing is searched, and retrieval failed.
+                settings.report_injection(InjectionFailure(refusal))
+                return "RetrievalFailed"
+            task_text: str | None = request.task_text
+            exclude = exclude or request.exclude_model_authored
+            if request.preferred_environment is not None:
+                preferred = dict(request.preferred_environment)
+            request_limit = request.limit
+        else:
+            task_text = derived
+        # The capability gate this invocation runs under (contract 1.13), with use_run_tools over the tools it offers.
+        gate = active_gate(
+            settings.receiving_agent,
+            _run_tools(agent, context)
+            if settings.receiving_agent is not None and settings.receiving_agent.use_run_tools
+            else None,
+        )
+        window = gated_window(request_limit, gate, settings.block_options.max_records, policy.candidate_limit)
+        try:
             if task_text is None:
                 settings.report_injected(InjectionResult((), 0, False, outcome="NothingToInject"))
                 return "NothingToInject"
-            policy = settings.retrieval_policy
-            parameters = SearchParameters.for_policy(
-                identity.scope, task_text, policy, exclude_model_authored=settings.exclude_model_authored
-            )
+            parameters = SearchParameters.for_policy(identity.scope, task_text, policy, exclude_model_authored=exclude)
             stopped: Literal["RetrievalTimedOut", "RetrievalDenied"] | None = None
             with observe("retrieve") as retrieval:
                 if not identity.authorization.permits(identity.scope):
@@ -1336,7 +1485,7 @@ class ExperienceContextProvider(ContextProvider):
                         functools.partial(settings.store.search, identity.authorization, parameters)
                     )
                     text_search = asyncio.ensure_future(search.answer())
-                    vector_search = asyncio.ensure_future(self._vector_channel(task_text, identity))
+                    vector_search = asyncio.ensure_future(self._vector_channel(task_text, identity, exclude))
                     try:
                         # Both channels run together, bounded together by the policy's timeout; the vector channel
                         # never raises (it answers with a fallback instead).
@@ -1378,9 +1527,9 @@ class ExperienceContextProvider(ContextProvider):
                                     vector_rows,
                                     identity.scope,
                                     now,
-                                    settings.preferred_environment,
+                                    preferred,
                                     minimum_vector_relevance=settings.vector_floor,
-                                    exclude_model_authored=settings.exclude_model_authored,
+                                    exclude_model_authored=exclude,
                                     policy=policy,
                                     confidence_decay=settings.confidence_decay,
                                 )
@@ -1389,11 +1538,14 @@ class ExperienceContextProvider(ContextProvider):
                                     rows,
                                     identity.scope,
                                     now,
-                                    settings.preferred_environment,
-                                    exclude_model_authored=settings.exclude_model_authored,
+                                    preferred,
+                                    exclude_model_authored=exclude,
                                     policy=policy,
                                     confidence_decay=settings.confidence_decay,
                                 )
+                            if window is not None:
+                                # .NET's cut to the request's own limit, widened for the capability gate.
+                                ranked = dataclasses.replace(ranked, ranked=ranked.ranked[:window])
                             if retrieval is not None:
                                 retrieval.outcome("Completed")
             if stopped is not None:
@@ -1411,8 +1563,13 @@ class ExperienceContextProvider(ContextProvider):
                 ranked.ranked,
                 view,
                 settings.block_options,
-                exclude_model_authored=settings.exclude_model_authored,
+                request_limit=request_limit,
+                exclude_model_authored=exclude,
                 prefer_measured_helpful=settings.benefit.prefer_measured_helpful,
+                gate=gate,
+                decide=None
+                if settings.decide_injection is None
+                else functools.partial(_decide, settings.decide_injection),
             )
             block = selection.block
             if op is not None:
@@ -1508,6 +1665,66 @@ class ExperienceContextProvider(ContextProvider):
         if assignment is not None:
             self._start_recording_holdout(identity, assignment)
         return "Injected"
+
+
+def _refused(request: InjectionRequest, policy: RetrievalPolicy) -> str | None:
+    """Why retrieval refuses ``request`` (.NET's ``RetrieveAsync`` argument checks), or ``None``."""
+    if not isinstance(request.task_text, str) or is_null_or_whitespace(request.task_text):
+        return "Retrieval refused the request: the task text is blank."
+    if utf16_len(request.task_text) > MAX_TASK_TEXT_LENGTH:
+        return f"Retrieval refused the request: the task text is longer than {MAX_TASK_TEXT_LENGTH} characters."
+    limit = request.limit
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0):
+        return "Retrieval refused the request: Limit must be strictly positive when specified."
+    if limit is not None and limit > policy.candidate_limit:
+        return (
+            "Retrieval refused the request: Limit must be at most the policy's candidate limit "
+            f"({policy.candidate_limit}); a larger limit could never be satisfied."
+        )
+    return None
+
+
+def _decide(decide: DecideInjection, candidate: RankedRecord) -> OmittedRecord | None:
+    """The host's decision on one selected record (contract 1.13): ``None`` when permitted, otherwise its ``HostDenied``
+    omission. Fail-closed: a raise, ``None`` or anything but an :class:`InjectionDecision` denies."""
+    record = candidate.record
+    try:
+        decision = decide(DecisionContext(candidate, record, is_model_authored(record.reflection)))
+    except Exception as ex:
+        return OmittedRecord(
+            record.experience_id,
+            "HostDenied",
+            f"The host injection decision threw {_type_name(ex)}, so the record was denied.",
+        )
+    if isinstance(decision, InjectionDecision) and decision.permitted is True:
+        return None
+    reason = decision.reason if isinstance(decision, InjectionDecision) else None
+    return OmittedRecord(record.experience_id, "HostDenied", HOST_DENIED_DETAIL if reason is None else reason)
+
+
+def _tool_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def _run_tools(agent: Any, context: Any) -> list[Any]:
+    """The tools this invocation offers the model, as a context provider sees them (contract 1.13's ``use_run_tools``):
+    the agent's own (``default_options["tools"]``), the run's (``options["tools"]``) and those an earlier context
+    provider added (``context.tools``). A tool a later provider or middleware adds, and an MCP server's tools, are not
+    seen. Each is a name, or an object with a ``name`` (a plain function: its ``__name__``)."""
+    tools: list[Any] = []
+    try:
+        tools += _tool_list((getattr(agent, "default_options", None) or {}).get("tools"))
+        tools += _tool_list((getattr(context, "options", None) or {}).get("tools"))
+        tools += _tool_list(getattr(context, "tools", None))
+    except Exception:
+        return []
+    return [
+        tool if isinstance(tool, str) or hasattr(tool, "name") else getattr(tool, "__name__", None) for tool in tools
+    ]
 
 
 def _invoking_model(settings: ExperienceSettings, agent: Any, captured: bool) -> str | None:
@@ -1703,7 +1920,7 @@ def agent_experience_lessons(source: Any) -> ExperienceLessons:
     return ExperienceLessons(
         cast("LessonsReader", settings.store),
         block_options=settings.block_options,
-        exclude_model_authored=settings.exclude_model_authored,
+        exclude_model_authored=settings.excludes_model_authored,
         clock=settings.clock,
         identity=settings.identity if isinstance(settings.identity, ExperienceIdentity) else None,
         benefit=settings.benefit,
