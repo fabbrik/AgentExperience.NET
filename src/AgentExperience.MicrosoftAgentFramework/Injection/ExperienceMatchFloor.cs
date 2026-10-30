@@ -32,7 +32,7 @@ public sealed record ExperienceMatchFloor
 {
     /// <summary>
     /// The <see cref="MinimumTextCoverage"/> a new floor starts with: the lowest floor at which the retrieval benchmark's noise
-    /// stops falling (story 28.5). No floor met the benchmark's precision target, so none is on by default.
+    /// stops falling. No floor met the benchmark's precision target, so none is on by default.
     /// </summary>
     public const double DefaultMinimumTextCoverage = 0.3;
 

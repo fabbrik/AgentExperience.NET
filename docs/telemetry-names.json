@@ -45,6 +45,7 @@
     "agentexperience.feedback_id",
     "agentexperience.history_read",
     "agentexperience.independence.refusal",
+    "agentexperience.nothing_reason",
     "agentexperience.omitted_count",
     "agentexperience.operation",
     "agentexperience.outcome",

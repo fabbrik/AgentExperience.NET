@@ -171,7 +171,7 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
     private readonly CapabilityGate? _capabilityGate;
     private readonly bool _excludeModelAuthored;
 
-    /// <summary>The match-strength floor (story 28.5), or <see langword="null"/> when it is off.</summary>
+    /// <summary>The match-strength floor, or <see langword="null"/> when it is off.</summary>
     private readonly ExperienceMatchFloor? _minimumMatch;
     private readonly string _stateKey;
     private readonly IReadOnlyList<string> _stateKeys;
