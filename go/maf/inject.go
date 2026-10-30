@@ -32,6 +32,9 @@ type ContextProvider struct {
 	running   int
 	idle      chan struct{}
 	abandoned atomic.Int64
+	// searches counts the text searches retrieval abandoned (past the policy's Timeout, or on the caller's
+	// cancellation) that are still running against the store: at the policy's MaxAbandonedSearches no new one starts.
+	searches atomic.Int64
 }
 
 var _ agent.ContextProvider = (*ContextProvider)(nil)
@@ -91,51 +94,11 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		op.Done("NothingToInject")
 		return messages
 	}
-	parameters := ae.NewSearchParameters(identity.Scope, taskText)
-	parameters.ExcludeModelAuthored = s.ExcludeModelAuthored
-	// Both channels run together; the vector channel never fails (it answers with a fallback instead), and is bounded
-	// by VectorTimeout, so waiting for it after the text search is bounded too.
-	type vectorAnswer struct {
-		rows     []ae.SearchRow
-		fallback *ae.VectorFallback
-	}
-	vectorDone := make(chan vectorAnswer, 1)
-	if _, fallback := s.indexOf(); fallback != nil {
-		vectorDone <- vectorAnswer{fallback: fallback}
-	} else {
-		go func() {
-			vectorRows, fallback := s.vectorChannel(ctx, identity, taskText)
-			vectorDone <- vectorAnswer{vectorRows, fallback}
-		}()
-	}
-	retrieveCtx, retrieval := ae.Observe(ctx, "retrieve", false)
-	defer retrieval.End()
-	rows, err := s.Store.Search(retrieveCtx, identity.Authorization(), parameters)
-	vector := <-vectorDone
-	s.reportVectorFallback(vector.fallback)
-	if err != nil {
-		// Retrieval reports its failure as its outcome, as .NET does; it is not an error it raised.
-		retrieval.Done("Failed")
-		s.reportInjection(InjectionFailure{Reason: "The search failed; no block was added.", Err: err})
-		op.Done("RetrievalFailed")
+	retrieved, ok := p.retrieve(ctx, op, identity, taskText)
+	if !ok {
 		return messages
 	}
-	// The instant the block is built at: ranking's "now", and the injection's instant.
-	now := s.Clock()
-	var ranked ae.RankedResult
-	if len(vector.rows) > 0 {
-		ranked, err = ae.RankHybrid(rows, vector.rows, identity.Scope, now, s.PreferredEnvironment,
-			s.MinVectorRelevance, s.ExcludeModelAuthored)
-	} else {
-		ranked, err = ae.Rank(rows, identity.Scope, now, s.PreferredEnvironment, s.ExcludeModelAuthored)
-	}
-	if err != nil {
-		retrieval.Fail(err)
-		s.reportInjection(InjectionFailure{Reason: "Ranking failed; no block was added.", Err: err})
-		op.Done("Failed")
-		return messages
-	}
-	retrieval.Done("Completed")
+	ranked, vector, now := retrieved.ranked, retrieved.vector, retrieved.now
 	// Contract 1.10: acting on measured benefit (off by default), from the cached view, which never waits on the store.
 	var view *ae.BenefitView
 	if s.benefit != nil {
@@ -157,7 +120,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 	if block.IsEmpty() {
 		// As .NET reports it: nothing injected, and every omission (a scope measured Hurts omits them all).
 		s.reportInjected(InjectionResult{Outcome: "NothingToInject", Truncated: ranked.Truncated,
-			VectorFallback: vector.fallback, Omitted: omitted})
+			VectorFallback: vector.fallback, Omitted: omitted, Excluded: ranked.Excluded})
 		op.Done("NothingToInject")
 		return messages
 	}
@@ -182,6 +145,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 	}
 	if assignment != nil && assignment.Arm == ae.HoldoutWithheld {
 		s.reportWithheld(InjectionResult{Outcome: "Withheld", Truncated: ranked.Truncated, VectorFallback: vector.fallback,
+			Excluded:              ranked.Excluded,
 			WithheldExperienceIDs: append([]ae.UUID(nil), ids...), Omitted: omitted})
 		p.startHoldout(ctx, identity, *assignment)
 		op.Done("Withheld")
@@ -205,7 +169,7 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		scope.recordExposures(exposures)
 	}
 	s.reportInjected(InjectionResult{Outcome: "Injected", ExperienceIDs: ids, ByteCount: block.ByteCount,
-		Truncated: ranked.Truncated, VectorFallback: vector.fallback, Omitted: omitted})
+		Truncated: ranked.Truncated, VectorFallback: vector.fallback, Omitted: omitted, Excluded: ranked.Excluded})
 
 	// When each delivered record was injected, for the .NET lessons view: started last, in the background, so the
 	// block is handed over and the model called without waiting for the store.

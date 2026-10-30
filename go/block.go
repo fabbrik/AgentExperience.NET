@@ -155,6 +155,9 @@ type RankingComponent struct {
 	Kind   RankingComponentKind
 	Value  float64
 	Weight float64
+	// UndecayedValue is the stored confidence when a confidence decay half-life applied to the Confidence component
+	// (contract 1.12: Value is then the decayed value ranked on), and nil otherwise.
+	UndecayedValue *float64
 }
 
 // Contribution is the component's value times its weight.

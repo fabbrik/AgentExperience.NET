@@ -195,6 +195,7 @@ func (s *settings) vectorChannel(ctx context.Context, identity *ae.Identity, tas
 			return ae.VectorQuery{}, err
 		}
 		query := ae.VectorQuery{Scope: identity.Scope, ModelID: e.modelID, Vector: e.vector,
+			MinConfidence: s.retrieval.MinimumConfidence, Limit: s.retrieval.CandidateLimit + 1,
 			ExcludeModelAuthored: s.ExcludeModelAuthored}
 		return query, query.Validate()
 	})

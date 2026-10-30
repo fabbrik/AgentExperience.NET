@@ -3,7 +3,6 @@ package agentexperience
 import (
 	"errors"
 	"math"
-	"sort"
 	"strconv"
 )
 
@@ -16,7 +15,6 @@ const (
 	CandidateLimit             = 50
 	StatementLimit             = CandidateLimit + 1
 	DefaultMinimumMatchedTerms = 3
-	recencyHalfLifeSeconds     = 30 * 86_400.0
 	weightRelevance            = 0.35
 	weightConfidence           = 0.25
 	weightRecency              = 0.15
@@ -93,8 +91,9 @@ type SearchParameters struct {
 	Statuses []ExperienceStatus
 	// MinConfidence is DefaultMinConfidence when nil; when set, a finite number from 0 to 1.
 	MinConfidence *float64
-	// Limit is StatementLimit when 0, and may be nothing else: ranking detects truncation by the statement returning
-	// one row more than the candidate limit, so another limit would break it.
+	// Limit is StatementLimit when 0; when set, 1 to MaxStatementLimit. Ranking detects truncation by the statement
+	// returning one row more than the candidate limit, so retrieval asks for the policy's CandidateLimit + 1
+	// (RetrievalPolicy.SearchParameters); a limit of 1 can never report truncation.
 	Limit                int
 	ExcludeModelAuthored bool
 	// WithGrants must be false: grants are outside contract 1.x.
@@ -109,8 +108,8 @@ func NewSearchParameters(scope Scope, taskText string) SearchParameters {
 	return SearchParameters{Scope: scope, TaskText: taskText}
 }
 
-// Validate refuses a blank or overlong task text (longer text is refused, not cut), grants, a limit other than
-// StatementLimit, a minimum matched terms outside 1 to math.MaxInt32, a minimum confidence outside 0 to 1, and an
+// Validate refuses a blank or overlong task text (longer text is refused, not cut), grants, a limit outside 1 to
+// MaxStatementLimit, a minimum matched terms outside 1 to math.MaxInt32, a minimum confidence outside 0 to 1, and an
 // empty or unknown status.
 func (p SearchParameters) Validate() error {
 	if isNullOrWhitespace(p.TaskText) {
@@ -123,9 +122,8 @@ func (p SearchParameters) Validate() error {
 	if p.WithGrants {
 		return errors.New("grants are outside contract 1.x: WithGrants must be false")
 	}
-	if p.Limit != 0 && p.Limit != StatementLimit {
-		return errors.New("the limit must be " + strconv.Itoa(StatementLimit) +
-			" (the candidate limit plus one, which ranking uses to detect truncation)")
+	if p.Limit < 0 || p.Limit > MaxStatementLimit {
+		return errors.New("the limit must be from 1 to " + strconv.Itoa(MaxStatementLimit))
 	}
 	if p.MinimumMatchedTerms < 0 || p.MinimumMatchedTerms > math.MaxInt32 {
 		return errors.New("the minimum matched terms must be from 1 to 2147483647")
@@ -210,6 +208,9 @@ type SearchRow struct {
 type RankedResult struct {
 	Ranked    []RankedRecord
 	Truncated bool
+	// Excluded are the candidates an eligibility check left out, in the candidates' order, each with .NET's reason
+	// (contract 1.12). Not a complete account: what the search's own predicates filtered never reaches ranking.
+	Excluded []Exclusion
 }
 
 // ErrSearchSafety is a result that failed a safety check: a row outside the requested scope, or one record twice.
@@ -240,14 +241,6 @@ func normalizeScore(value float64) float64 {
 	return math.Min(math.Max(value, 0), 1)
 }
 
-func recency(updatedAt, now Instant) float64 {
-	age := now.Sub(updatedAt)
-	if age.Ticks() <= 0 {
-		return 1.0
-	}
-	return normalizeScore(math.Pow(2.0, -age.TotalSeconds()/recencyHalfLifeSeconds))
-}
-
 func statusScore(status ExperienceStatus) float64 {
 	switch status {
 	case StatusReinforced:
@@ -258,63 +251,16 @@ func statusScore(status ExperienceStatus) float64 {
 	return 0
 }
 
-// Score scores one row with the default weights, components in the contract's order.
+// Score scores one row with the default weights and the default policy, components in the contract's order.
 func Score(row *SearchRow, now Instant, preferredEnvironment map[string]string) RankedRecord {
-	record := row.Record
-	components := []RankingComponent{
-		{ComponentRelevance, normalizeScore(row.Relevance), weightRelevance},
-		{ComponentConfidence, normalizeScore(record.ReuseConfidence), weightConfidence},
-		{ComponentRecency, recency(record.UpdatedAt, now), weightRecency},
-		{ComponentStatus, statusScore(record.Status), weightStatus},
-		{ComponentEnvironmentCompatibility,
-			normalizeScore(EnvironmentCompatibility(record.Environment.Metadata, preferredEnvironment)), weightEnvironment},
-	}
-	total := 0.0
-	for _, component := range components {
-		total += component.Contribution()
-	}
-	return RankedRecord{Record: record, Score: total, Components: components}
+	r, _ := RankOptions{}.resolve()
+	return r.score(row, now, preferredEnvironment)
 }
 
-// Rank turns rows into ranked records: the safety checks over the first 50 rows (an error wrapping
-// ErrSearchSafety), truncation to 50, filtering, then scoring and ordering by score, descending, ties by
-// experience_id as text, ascending, ordinal.
+// Rank turns rows into ranked records under the default policy (RankWith with zero options but the model-authored
+// exclusion): the safety checks over the first 50 rows (an error wrapping ErrSearchSafety), truncation to 50,
+// filtering, then scoring and ordering by score, descending, ties by experience_id as text, ascending, ordinal.
 func Rank(rows []SearchRow, scope Scope, now Instant, preferredEnvironment map[string]string,
 	excludeModelAuthored bool) (RankedResult, error) {
-	considered := rows
-	if len(considered) > CandidateLimit {
-		considered = considered[:CandidateLimit]
-	}
-	seen := map[UUID]bool{}
-	for i := range considered {
-		row := &considered[i]
-		if row.SharedByGrant || !row.Record.Scope.Equal(scope) {
-			return RankedResult{}, errors.Join(ErrSearchSafety,
-				errors.New("a row lies outside the requested scope; nothing is returned"))
-		}
-		if seen[row.Record.ExperienceID] {
-			return RankedResult{}, errors.Join(ErrSearchSafety,
-				errors.New("the same record came back more than once; nothing is returned"))
-		}
-		seen[row.Record.ExperienceID] = true
-	}
-
-	ranked := []RankedRecord{}
-	for i := range considered {
-		row := &considered[i]
-		if row.Record.Status != StatusValidated && row.Record.Status != StatusReinforced {
-			continue
-		}
-		if excludeModelAuthored && IsModelAuthored(row.Record.Reflection) {
-			continue
-		}
-		ranked = append(ranked, Score(row, now, preferredEnvironment))
-	}
-	sort.SliceStable(ranked, func(i, j int) bool {
-		if ranked[i].Score != ranked[j].Score {
-			return ranked[i].Score > ranked[j].Score
-		}
-		return ranked[i].Record.ExperienceID.String() < ranked[j].Record.ExperienceID.String()
-	})
-	return RankedResult{Ranked: ranked, Truncated: len(rows) > CandidateLimit}, nil
+	return RankWith(rows, scope, now, preferredEnvironment, RankOptions{ExcludeModelAuthored: excludeModelAuthored})
 }

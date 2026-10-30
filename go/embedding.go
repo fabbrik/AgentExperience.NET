@@ -447,70 +447,14 @@ func MergeChannels[T any](text, vector []T, key func(T) UUID, relevance func(T) 
 // CheckChannel is contract 1.6's step 2 for one channel: over its first CandidateLimit candidates, one outside scope
 // or a repeated experience ID is an error wrapping ErrSearchSafety; it returns those first candidates.
 func CheckChannel(rows []SearchRow, scope Scope) ([]SearchRow, error) {
-	considered := rows
-	if len(considered) > CandidateLimit {
-		considered = considered[:CandidateLimit]
-	}
-	seen := map[UUID]bool{}
-	for i := range considered {
-		row := &considered[i]
-		if row.SharedByGrant || !row.Record.Scope.Equal(scope) {
-			return nil, errors.Join(ErrSearchSafety,
-				errors.New("a row lies outside the requested scope; nothing is returned"))
-		}
-		if seen[row.Record.ExperienceID] {
-			return nil, errors.Join(ErrSearchSafety,
-				errors.New("the same record came back more than once; nothing is returned"))
-		}
-		seen[row.Record.ExperienceID] = true
-	}
-	return considered, nil
+	return checkChannel(rows, scope, CandidateLimit)
 }
 
-// RankHybrid is the whole of contract 1.6's steps 1 to 4: the floor, the per-channel checks and truncation, the
-// merge, then Rank's scoring over the merged candidates (each with the relevance kept). Rank looks at 50 rows, so
-// the merged list (up to 100) is ranked in slices of 50: a row's score does not depend on the others, and the
-// slices are put back in the order Rank itself uses (score descending, then experience ID).
+// RankHybrid is the whole of contract 1.6's steps 1 to 4 under the default policy with minimumVectorRelevance as
+// the vector floor: RankHybridWith.
 func RankHybrid(textRows, vectorRows []SearchRow, scope Scope, now Instant, preferredEnvironment map[string]string,
 	minimumVectorRelevance *float64, excludeModelAuthored bool) (RankedResult, error) {
-	var floored []SearchRow
-	for i := range vectorRows {
-		if i > CandidateLimit {
-			break
-		}
-		if minimumVectorRelevance == nil || vectorRows[i].Relevance >= *minimumVectorRelevance {
-			floored = append(floored, vectorRows[i])
-		}
-	}
-	// The checks are over each channel's first 50 candidates as returned (the floor only drops vector candidates).
-	text, err := CheckChannel(textRows, scope)
-	if err != nil {
-		return RankedResult{}, err
-	}
-	vector, err := CheckChannel(floored, scope)
-	if err != nil {
-		return RankedResult{}, err
-	}
-	merged := MergeChannels(text, vector, func(row SearchRow) UUID { return row.Record.ExperienceID },
-		func(row SearchRow) float64 { return row.Relevance }, nil)
-	rows := make([]SearchRow, len(merged))
-	for i, entry := range merged {
-		rows[i] = SearchRow{Record: entry.Item.Record, Relevance: entry.Relevance}
-	}
-	ranked := []RankedRecord{}
-	for start := 0; start < len(rows); start += CandidateLimit {
-		result, err := Rank(rows[start:min(len(rows), start+CandidateLimit)], scope, now, preferredEnvironment,
-			excludeModelAuthored)
-		if err != nil {
-			return RankedResult{}, err
-		}
-		ranked = append(ranked, result.Ranked...)
-	}
-	sort.SliceStable(ranked, func(i, j int) bool {
-		if ranked[i].Score != ranked[j].Score {
-			return ranked[i].Score > ranked[j].Score
-		}
-		return ranked[i].Record.ExperienceID.String() < ranked[j].Record.ExperienceID.String()
-	})
-	return RankedResult{Ranked: ranked, Truncated: len(textRows) > CandidateLimit || len(floored) > CandidateLimit}, nil
+	return RankHybridWith(textRows, vectorRows, scope, now, preferredEnvironment, RankOptions{
+		ExcludeModelAuthored: excludeModelAuthored,
+		Policy:               RetrievalPolicy{MinimumVectorRelevance: minimumVectorRelevance}})
 }

@@ -786,8 +786,8 @@ func TestSearchParametersAcceptOnlyTheContractsShapes(t *testing.T) {
 	}
 	nan, high, negative := math.NaN(), 1.5, -0.1
 	for name, p := range map[string]SearchParameters{
-		"limit 50":           invalid(func(p *SearchParameters) { p.Limit = 50 }),
-		"limit 52":           invalid(func(p *SearchParameters) { p.Limit = 52 }),
+		"limit 201":          invalid(func(p *SearchParameters) { p.Limit = 201 }),
+		"negative limit":     invalid(func(p *SearchParameters) { p.Limit = -1 }),
 		"terms beyond int32": invalid(func(p *SearchParameters) { p.MinimumMatchedTerms = math.MaxInt32 + 1 }),
 		"negative terms":     invalid(func(p *SearchParameters) { p.MinimumMatchedTerms = -1 }),
 		"NaN confidence":     invalid(func(p *SearchParameters) { p.MinConfidence = &nan }),
