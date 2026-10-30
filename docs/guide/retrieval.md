@@ -296,6 +296,33 @@ collect one registration per search that never ends.
 port threw — a driver message can quote SQL text or connection detail, so treat it as local diagnostics rather than
 something to pass on.
 
+## In Python and Go
+
+From contract 1.12 ([what it adds](../../contract/README-1.12.md)) the Python and Go ports take the same retrieval
+policy, with the same defaults and the same validation, and a port agent configured like a .NET one ranks exactly as
+it does: the `retrieval-policy` fixtures are generated from this service, and a PostgreSQL test runs one seed under
+`MaxAge` plus per-domain decay through all three languages and gets the same ordered IDs and scores within 1e-12.
+
+| .NET | Python | Go |
+| --- | --- | --- |
+| `RetrievalPolicy` | `RetrievalPolicy` (`timeout`, `minimum_confidence`, `max_age`, ... as `timedelta`) | `ae.RetrievalPolicy` (`time.Duration`; zero means the default, negatives are refused) |
+| `ConfidenceDecayPolicy` | `ConfidenceDecayPolicy` (`domain_key`, `half_lives`, `default_half_life`) | `ae.ConfidenceDecayPolicy` (`HalfLives map[string]*time.Duration`, nil: never decays) |
+| wiring | `use_agent_experience(..., retrieval_policy=, confidence_decay=)` | `maf.Options.RetrievalPolicy`, `maf.Options.ConfidenceDecay` |
+| invalid value | `RetrievalPolicyError` (a `ValueError`) naming the option | `*ae.PolicyError` naming the option |
+| `ExperienceRetrievalResult.Excluded` | `RankedResult.excluded`, `InjectionResult.excluded` | `RankedResult.Excluded`, `maf.InjectionResult.Excluded` |
+| `RankingComponent.UndecayedValue` | `RankingComponent.undecayed_value` | `RankingComponent.UndecayedValue` |
+
+- **The ports bound retrieval the same way.** The text search and the vector channel together run under `Timeout`;
+  past it the injection is `RetrievalTimedOut` with no block, and the search is abandoned and counted until it ends.
+  Each agent's context provider has its own abandoned-search count and cap (`MaxAbandonedSearches`). A scope outside
+  the identity's bounds is `RetrievalDenied` before anything is searched or embedded.
+- **What the ports do not do:** required environment attributes (so never `EnvironmentMismatch`), provenance signing
+  (never `UnconfirmedContent`), and a custom environment scorer. Their lessons views do not apply `MaxAge` or a custom
+  confidence floor.
+- **Go reads a zero as the default** (`Timeout`, `RecencyHalfLife`, `CandidateLimit`, `MaxAbandonedSearches`,
+  `MinimumMatchedTerms`; a zero `MaxAge` is no expiry; an empty `DomainKey` is `domain`), because it cannot tell an
+  unset field from an explicit zero. Python refuses a zero, as .NET does.
+
 Retrieval returns ranked records and the evidence for their ranking. Turning them into a labeled Historical Reference
 and injecting it into an agent is a separate step — see [Injection into MAF](injection.md) — and retrieved content
 never becomes authority.

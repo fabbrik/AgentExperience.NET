@@ -66,6 +66,39 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   database and checks that the three estimates agree. On PostgreSQL, apply the 1.11 privileges file after the others, or
   run the .NET privileges call last.
 
+### The retrieval policy in Python and Go: contract 1.12 (story 27.4)
+
+- **Contract 1.12** ([what it adds](contract/README-1.12.md)) brings `RetrievalPolicy` and `ConfidenceDecayPolicy`
+  into the language-neutral contract, add-only: `retrieval-policy` fixtures generated through
+  `ExperienceRetrievalService` (candidates, the instant and the policy in; what the store is asked for, the outcome,
+  truncation, the ranked records with every component and the exclusions with their reasons out), covering `MaxAge`
+  at, under and over the limit, decay by one domain, several, an unlisted one and a custom domain key, decay against
+  the confidence floor, a custom recency half-life, the candidate limit and the default policy, plus
+  `policy-validation.json` for every rule .NET refuses. Every 1.0-1.11 file is unchanged.
+- **The Python and Go agents take the same policy**, with .NET's defaults and validation: Python
+  `use_agent_experience(..., retrieval_policy=RetrievalPolicy(...), confidence_decay=ConfidenceDecayPolicy(...))`, Go
+  `maf.Options.RetrievalPolicy` and `maf.Options.ConfidenceDecay` (zero means the default; negatives are refused).
+  With the defaults they rank exactly as before. A PostgreSQL test runs one seed under `MaxAge` plus per-domain decay
+  through .NET, Python and Go and gets the same ordered IDs and scores within 1e-12.
+- **Behaviour change in both ports: retrieval is bounded.** The text search and the vector channel together now run
+  under the policy's `Timeout` (500 ms by default); before, an injection waited on the store indefinitely. Past it
+  nothing is injected and the outcome is `RetrievalTimedOut` (`retrieve`: `TimedOut`). The search is abandoned and
+  counted until it ends, and while `MaxAbandonedSearches` (16) are still running an injection is `RetrievalTimedOut`
+  at once, without searching, with a failure naming the cap. A host with a slow store should raise `Timeout`.
+- **Behaviour change in both ports: a scope outside the identity's bounds is `RetrievalDenied`** (`retrieve`:
+  `Denied`) before anything is searched or embedded; before, the store refused it and the injection was
+  `RetrievalFailed`. Python's `on_injected` now also receives `RetrievalTimedOut` and `RetrievalDenied`.
+- **Exclusions are reported.** `RankedResult` and the injection result carry `excluded` / `Excluded` with .NET's
+  reasons (`IneligibleStatus`, `ModelAuthored`, `Expired`); a record a store returned with an ineligible status, or a
+  model-authored one under the exclusion, was dropped silently before. The `Confidence` component carries the stored
+  value as `undecayed_value` / `UndecayedValue` when a half-life applied. The `retrieve` and `inject` telemetry
+  operations gain the outcomes `TimedOut`, `Denied`, `RetrievalTimedOut` and `RetrievalDenied`.
+- **Go: `SearchParameters.Validate` accepts a limit from 1 to 200**, not only 51, the in-memory store's `Search`
+  honours it, and `RankHybrid` refuses a vector floor outside 0 to 1. Python's text search runs on its own daemon
+  thread, so a hung search no longer holds the event loop's shutdown.
+- Still .NET-only: required environment attributes, a custom environment scorer, and `MaxAge` in the lessons view.
+  The injection options (deciding and resolving the request, capabilities and tool risk) are story 27.4b.
+
 ## 0.1.0-preview.17
 
 This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of
