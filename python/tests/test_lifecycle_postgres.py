@@ -7,10 +7,14 @@ revision on separate connections, a sealed record, and the service end to end ov
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
+import sys
 import threading
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -44,6 +48,7 @@ pytestmark = pytest.mark.postgres
 
 TOLERANCE = 1e-12
 FAMILY = "lifecycle-sql"
+WRITER = Path(__file__).resolve().parent / "cross-language" / "lifecycle_race.py"
 
 
 def _columns(statement: str) -> list[str]:
@@ -296,3 +301,84 @@ def test_the_service_applies_evidence_and_reads_confidence_over_postgres(pg_serv
     assert verified.report.contradictions == record.contradictions
     history = store.get_history(authorization, HistoryQuery(record.scope, record.experience_id))
     assert history.events[-1].recorded_at == Instant.parse("2026-03-02T10:00:00.123456+00:00")
+
+
+def test_the_cross_language_race_writer_speaks_its_protocol(pg_server: Server, tmp_path: Path) -> None:
+    """The writer the .NET suite spawns: two of them race one round behind an advisory lock, then read the history."""
+    conninfo, record, _, owner = _seeded(pg_server, "lifecycle_writer")
+    dsn = conninfo
+    bounds = {
+        "principalId": "python-writer",
+        "tenantId": record.scope.tenant_id,
+        "applicationId": record.scope.application_id,
+        "projectId": record.scope.project_id,
+        "teamId": record.scope.team_id,
+        "agentId": record.scope.agent_id,
+        "userId": record.scope.user_id,
+    }
+    scope = {key: value for key, value in bounds.items() if key != "principalId"}
+    lock_key = 1160
+    inputs = []
+    for writer, status in enumerate(("Stale", "Revoked")):
+        request = {
+            "eventId": str(uuid.UUID(int=0x7300 + writer)),
+            "experienceId": str(record.experience_id),
+            "scope": scope,
+            "priorStatus": record.status,
+            "currentStatus": status,
+            "reason": f"writer {writer}",
+            "producer": "python-writer/1.0",
+            "occurredAt": "2026-03-02T09:00:00+00:00",
+            "expectedRevision": record.revision,
+            "replacementExperienceId": None,
+        }
+        path = tmp_path / f"writer-{writer}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "dsn": dsn,
+                    "mode": "commit",
+                    "rounds": [{"lockKey": lock_key, "authorization": bounds, "request": request}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        inputs.append(path)
+
+    with psycopg.connect(owner, autocommit=True) as gate:
+        gate.execute("SELECT pg_advisory_lock(%s::bigint)", (lock_key,))
+        writers = [
+            subprocess.Popen(
+                [sys.executable, str(WRITER), str(path)],
+                cwd=WRITER.parents[2],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for path in inputs
+        ]
+        gate.execute("SELECT pg_advisory_unlock(%s::bigint)", (lock_key,))
+    outputs = [writer.communicate(timeout=120) for writer in writers]
+    assert all(writer.returncode == 0 for writer in writers), outputs
+    results = [json.loads(stdout)["results"][0] for stdout, _ in outputs]
+    assert sorted(result["outcome"] for result in results) == ["Committed", "StaleRevision"], results
+    assert all(result["revision"] == record.revision + 1 for result in results), results
+
+    history_input = tmp_path / "history.json"
+    query = {"scope": scope, "experienceId": str(record.experience_id), "limit": 10, "startAfterRevision": None}
+    history_input.write_text(
+        json.dumps({"dsn": dsn, "mode": "history", "histories": [{"authorization": bounds, "query": query}]}),
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [sys.executable, str(WRITER), str(history_input)],
+        cwd=WRITER.parents[2],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+    (history,) = json.loads(completed.stdout)["histories"]
+    assert history["outcome"] == "Found" and history["revision"] == record.revision + 1
+    assert [event["applied_revision"] for event in history["events"]] == [record.revision + 1]
+    assert history["events"][0]["actor"] == "python-writer"

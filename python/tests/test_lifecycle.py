@@ -42,6 +42,7 @@ from agentexperience import (
 )
 from agentexperience.inmemory import InMemoryExperienceStore
 from agentexperience.observer import AttributeValue, set_observer
+from agentexperience.records import ExperienceStatus
 
 TOLERANCE = 1e-12
 
@@ -191,7 +192,7 @@ def test_writers_racing_at_one_revision_commit_exactly_once() -> None:
     store, record, authorization = _seed()
     assert record.status == "Validated"
     service = ExperienceLifecycleService(store)
-    targets = ["Reinforced", "Contested", "Stale", "Revoked"] * 4
+    targets: list[ExperienceStatus] = ["Reinforced", "Contested", "Stale", "Revoked"] * 4
 
     def attempt(index: int) -> Any:
         return service.commit(

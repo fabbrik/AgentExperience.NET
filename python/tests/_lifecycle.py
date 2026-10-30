@@ -125,7 +125,7 @@ def commit_request_of(value: dict[str, Any]) -> CommitLifecycleTransitionRequest
         producer=value["producer"],
         occurred_at=Instant.parse(value["occurredAt"]),
         expected_revision=value["expectedRevision"],
-        replacement_experience_id=uuid_of(value["replacementExperienceId"]),
+        replacement_experience_id=uuid_of(value.get("replacementExperienceId")),
     )
 
 
