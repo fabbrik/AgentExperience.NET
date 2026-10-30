@@ -320,8 +320,14 @@ Contract 1.16. `ae.LifecycleService` is .NET's `ExperienceLifecycleService` over
 evidence to it, and reads its confidence back, writing the same events, evidence rows, counters and revisions .NET
 writes, so a .NET, a Python and a Go writer can share one database.
 
+> **By default the Go port records evidence without counting it.** Until it verifies independence (story 27.7),
+> everything it admits is host-trusted, so the zero `LifecycleOptions` is `HostTrustedEvidence: ae.HostTrustedRecordedOnly`:
+> each piece of evidence is committed on an event that moves the record's revision and nothing else (no counter, score,
+> status or `updated_at`). Counting it, as .NET does under `TrustHostSuppliedIdentifiers` by default, is an explicit
+> opt-in: `ae.LifecycleOptions{HostTrustedEvidence: ae.HostTrustedCounted}`.
+
 ```go
-lifecycle, err := ae.NewLifecycleService(store, ae.LifecycleOptions{}) // the default engine, evidence counted
+lifecycle, err := ae.NewLifecycleService(store, ae.LifecycleOptions{}) // the default engine, evidence recorded only
 authorization := ae.AuthorizationContext{PrincipalID: "governance-review", Bounds: ae.BoundsOf(scope)}
 
 validated := ae.StatusValidated
@@ -337,7 +343,7 @@ applied, err := lifecycle.ApplyEvidence(ctx, authorization, ae.ApplyConfidenceEv
 	Kind: ae.EvidenceContradicting, Source: ae.EvidenceMachine, RunID: runID, VerificationRoundID: &roundID,
 	Reason: "The lesson was reused and the checks failed.", Producer: "verification-aggregator/1.0",
 	OccurredAt: ae.Now(),
-}) // Applied (applied.Counted() false for an observation already counted), Ineligible, Unverified, ...
+}) // Applied (applied.Counted() false when recorded only, or for an observation already counted), Ineligible, ...
 
 report, err := lifecycle.ReadConfidence(ctx, authorization, scope, record.ExperienceID, ae.FilterAll)
 ```
@@ -352,9 +358,8 @@ report, err := lifecycle.ReadConfidence(ctx, authorization, scope, record.Experi
   `IndependenceVerification.TrustHostSuppliedIdentifiers`. Only the own-run rule is checked (`Unverified`, `OwnRun`);
   every other identifier is taken as given, an assessment token is neither checked nor spent, and every update is
   admitted **`HostTrusted`** and stored so. A .NET reader therefore sees Go evidence for what it is: `ReadConfidence`
-  with `FilterExcludeHostTrusted` or `FilterVerifiedOnly` leaves it out. To keep it out of the stored score too, set
-  `LifecycleOptions.HostTrustedEvidence` to `ae.HostTrustedRecordedOnly`: each piece of evidence then rides an event
-  that moves the revision and nothing else.
+  with `FilterExcludeHostTrusted` or `FilterVerifiedOnly` leaves it out, and `FilterAll` adds recorded-only evidence
+  back, once per independence key.
 - **What it does not do yet:** no embedding is removed when a commit takes a record out of eligibility (story 27.6d;
   a vector search already excludes it by status), no reuse feedback (27.6c), no provenance signing or verification
   (27.7). A sealed record (`payload_version` 2), which a port cannot open, is `NotFound` to the read, the history and
@@ -362,8 +367,11 @@ report, err := lifecycle.ReadConfidence(ctx, authorization, scope, record.Experi
 - **The stores.** The in-memory store (`inmemory.New`) keeps a full event log per record (a finalized record's initial
   event first, at revision 1), the evidence ledger and its key sets, and stamps its `Clock` (`SetClock`) on each
   commit. The PostgreSQL store runs [`contract/sql/lifecycle.sql`](../contract/sql/lifecycle.sql) as written, each
-  commit in one `READ COMMITTED` transaction (pinned on a pool or a connection; a `pgx.Tx` source keeps its own
-  isolation), with the 1.0 privileges only; `SetClock` sets the clock it stamps. `GetHistory` pages a history by
+  commit in one `READ COMMITTED` transaction, with the 1.0 privileges only. On a pool or a connection the level is
+  pinned; given your own transaction (a `pgx.Tx`), the commit runs in a savepoint inside it and refuses
+  (`postgres.ErrHostIsolation`) unless that transaction is `READ COMMITTED`, because under a snapshot isolation a lost
+  race would re-read your stale snapshot and never see the revision move. A record sealed while a commit waits for its
+  row is still `NotFound`: the seal is checked only once the commit holds the row lock; `SetClock` sets the clock it stamps. `GetHistory` pages a history by
   applied revision, and `CheckSupersession` asks the supersession rules before a commit decides them again.
 
 ### What the one call wires
