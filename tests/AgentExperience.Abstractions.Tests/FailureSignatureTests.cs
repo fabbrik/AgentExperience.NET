@@ -30,10 +30,76 @@ public class FailureSignatureTests
     [InlineData("a   b \t c", "a b c")]
     [InlineData("and/or", "<path>")]
     [InlineData("a / b", "a / b")]
+    [InlineData("can't find module 'requests'", "can't find module <str>")]
+    [InlineData("Don't retry: 'job-7' isn't idempotent", "don't retry: <str> isn't idempotent")]
+    [InlineData("it's the users' fault", "it's the users' fault")]
+    [InlineData("deadbeef12x is part of a word", "deadbeef<n>x is part of a word")]
+    [InlineData("Error:\nNullReferenceException at line 3", "nullreferenceexception at line <n>")]
+    [InlineData("Error: something broke at line 3", "error: something broke at line <n>")]
+    [InlineData("Error:", "error:")]
     [InlineData("", "")]
     public void Each_normalization_rule_does_what_it_says(string error, string expected)
     {
         Assert.Equal(expected, ExperienceFailureSignature.NormalizeExcerpt(error));
+    }
+
+    [Fact]
+    public void The_excerpt_is_normalized_before_it_is_cut_so_text_past_500_raw_characters_still_counts()
+    {
+        var guids = string.Join(" ", Enumerable.Range(0, 14).Select(i => new Guid(i, 0, 0, new byte[8]).ToString()));
+        Assert.True(guids.Length > ExperienceFailureSignature.MaxExcerptLength);
+
+        Assert.NotEqual(
+            ExperienceFailureSignature.FingerprintOf(guids + " tail-a"),
+            ExperienceFailureSignature.FingerprintOf(guids + " tail-b"));
+        Assert.EndsWith("tail-a", ExperienceFailureSignature.NormalizeExcerpt(guids + " tail-a"), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A Python traceback's first line is boilerplate: the failure is on its last line, which is what the excerpt
+    /// takes, so two different exceptions stay apart and the same one, raised from other files and lines, collides.
+    /// </summary>
+    [Fact]
+    public void A_traceback_is_fingerprinted_by_its_last_line()
+    {
+        static string Traceback(string file, int line, string last) =>
+            $"Traceback (most recent call last):\n  File \"{file}\", line {line}, in <module>\n    main()\n{last}\n";
+
+        var notANumber = Traceback("/srv/app/main.py", 12, "ValueError: invalid literal for int() with base 10: 'abc'");
+        var notANumberElsewhere = Traceback("/home/ci/work/app/main.py", 97, "ValueError: invalid literal for int() with base 10: 'xyz'");
+        var tooManyValues = Traceback("/srv/app/main.py", 12, "ValueError: too many values to unpack (expected 2)");
+
+        Assert.Equal("valueerror: invalid literal for int() with base <n>: <str>", ExperienceFailureSignature.NormalizeExcerpt(notANumber));
+        Assert.Equal(ExperienceFailureSignature.From("run", notANumber), ExperienceFailureSignature.From("run", notANumberElsewhere));
+        Assert.NotEqual(ExperienceFailureSignature.FingerprintOf(notANumber), ExperienceFailureSignature.FingerprintOf(tooManyValues));
+        Assert.Equal("ValueError", ExperienceFailureSignature.From("run", notANumber)!.ErrorClass);
+
+        // .NET's unhandled-exception header likewise.
+        Assert.Equal(
+            "invalidoperationexception: bad state <n>",
+            ExperienceFailureSignature.NormalizeExcerpt("Unhandled exception.\r\n   at Program.Main()\r\nInvalidOperationException: Bad state 7"));
+    }
+
+    /// <summary>
+    /// Golden vectors for ports: input, normalized excerpt, fingerprint. The fingerprints were computed outside .NET
+    /// (Python's hashlib over the UTF-8 excerpt), and every rule is ASCII-only: non-ASCII letters, digits and spaces
+    /// are left exactly as they are, and only <c>A-Z</c> is lowercased.
+    /// </summary>
+    [Theory]
+    [InlineData("ValueError: Invalid literal 'ABC' at /Users/Me/app.py:42", "valueerror: invalid literal <str> at <path>.py:<n>", "9def9d4d9e407fb1d6cb91239bb3b9b2")]
+    [InlineData("Ошибка: Файл 'Данные.CSV' не найден", "Ошибка: Файл <str> не найден", "40c02a253f48c72e5f8cbc061fdc56ec")]
+    [InlineData("İNVALID Input", "İnvalid input", "481c7c5716427604ebf752ae2e482823")]
+    [InlineData("Emoji \U0001F600 failed at step 3", "emoji \U0001F600 failed at step <n>", "23df911e70ba3a5caf26a04fbb48ceea")]
+    [InlineData("a\u00A0b\u2003c \t d", "a\u00A0b\u2003c d", "0ce20c8826f4e16507f7d61e5507978b")]
+    [InlineData("Error:\r\n  at Foo()\r\nInvalidOperationException: Bad state 7\r\n", "invalidoperationexception: bad state <n>", "104da502092ddf11db95ffe4a7dd9063")]
+    [InlineData("Traceback (most recent call last):\n  File \"/srv/app/main.py\", line 12, in <module>\nValueError: invalid literal for int() with base 10: 'x'", "valueerror: invalid literal for int() with base <n>: <str>", "cba225dc6c0a5ce3d2cd6fa2f6fdd491")]
+    [InlineData("Can't find module 'requests'", "can't find module <str>", "7c58646fe6863baf3ead34adacfebf0b")]
+    [InlineData("Port \uFF18\uFF10\uFF18\uFF10 busy", "port \uFF18\uFF10\uFF18\uFF10 busy", "00499012e8ade4a654a4c5eeb27ea315")]
+    [InlineData("  \r\n ", "", "e3b0c44298fc1c149afbf4c8996fb924")]
+    public void Golden_vectors_hold(string error, string excerpt, string fingerprint)
+    {
+        Assert.Equal(excerpt, ExperienceFailureSignature.NormalizeExcerpt(error));
+        Assert.Equal(fingerprint, ExperienceFailureSignature.FingerprintOf(error));
     }
 
     [Fact]

@@ -51,7 +51,7 @@ public sealed record ExperienceFailureSignature(string ToolName, string ErrorCla
     /// <summary>The longest error class a signature carries: an error class token is at most 40 characters.</summary>
     public const int MaxErrorClassLength = 64;
 
-    /// <summary>How many characters of the error's trimmed first line are normalized and hashed.</summary>
+    /// <summary>The most characters of the normalized excerpt that are hashed.</summary>
     public const int MaxExcerptLength = 500;
 
     /// <summary>The length of <see cref="Fingerprint"/>: 16 bytes, as lowercase hexadecimal.</summary>
@@ -81,27 +81,60 @@ public sealed record ExperienceFailureSignature(string ToolName, string ErrorCla
     /// <summary>The placeholder a number becomes in a normalized excerpt.</summary>
     public const string NumberPlaceholder = "<n>";
 
-    private const RegexOptions Options = RegexOptions.CultureInvariant | RegexOptions.NonBacktracking;
+    /// <summary>The most characters of the selected line that are normalized; the rest is never read.</summary>
+    public const int MaxScannedLength = 4096;
 
-    // NonBacktracking: every rule is linear in the (capped) excerpt, so normalization needs no timeout and always
-    // finishes with the same answer. Every rule runs over invariant-lowercase text.
-    private static readonly Regex Guids = new(@"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", Options);
+    // ASCII semantics throughout, so a port in any language derives the same fingerprint: every class below is an
+    // explicit ASCII set (never \w, \s, \d or \b, which are Unicode-aware in .NET), lowercasing maps A-Z only, and a
+    // non-ASCII character is just a character that is in none of the sets. Every rule runs over the selected line, at
+    // most MaxScannedLength characters, after ASCII lowercasing. "Word character" below means [a-z0-9_].
+    private const RegexOptions Options = RegexOptions.CultureInvariant;
 
-    private static readonly Regex HexRuns = new(@"\b(0x)?[0-9a-f]{8,}\b", Options);
+    private const string NotWordBefore = "(?<![a-z0-9_])";
 
-    private static readonly Regex Paths = new(@"([a-z]:)?[\w.~<>-]*([/\\][\w.~<>-]*)+", Options);
+    private const string NotWordAfter = "(?![a-z0-9_])";
 
-    private static readonly Regex Quoted = new("'[^']*'|\"[^\"]*\"|‘[^’]*’|“[^”]*”", Options);
+    private static readonly TimeSpan NoTimeout = Regex.InfiniteMatchTimeout;
+
+    private static readonly Regex Guids = new(
+        NotWordBefore + "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" + NotWordAfter, Options, NoTimeout);
+
+    private static readonly Regex HexRuns = new(NotWordBefore + "(?:0x)?[0-9a-f]{8,}" + NotWordAfter, Options, NoTimeout);
+
+    private static readonly Regex Paths = new(@"(?:[a-z]:)?[a-z0-9_.~<>-]*(?:[/\\][a-z0-9_.~<>-]*)+", Options, NoTimeout);
+
+    // A quote opens only where no word character precedes it and closes only where none follows it, so the
+    // apostrophe of a contraction ("can't") neither opens nor closes a literal.
+    private static readonly Regex Quoted = new(
+        NotWordBefore + "(?:'[^']*'|\"[^\"]*\"|‘[^’]*’|“[^”]*”)" + NotWordAfter, Options, NoTimeout);
 
     private static readonly Regex Timestamps = new(
-        @"\b[0-9]{4}-[0-9]{2}-[0-9]{2}([t ][0-9]{2}:[0-9]{2}(:[0-9]{2}([.,][0-9]+)?)?(z|[+-][0-9]{2}(:?[0-9]{2})?)?)?",
-        Options);
+        NotWordBefore + "[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[t ][0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:[.,][0-9]+)?)?(?:z|[+-][0-9]{2}(?::?[0-9]{2})?)?)?",
+        Options,
+        NoTimeout);
 
-    private static readonly Regex Numbers = new(@"[0-9]+(\.[0-9]+)?", Options);
+    private static readonly Regex Numbers = new("[0-9]+(?:\\.[0-9]+)?", Options, NoTimeout);
 
-    private static readonly Regex Whitespace = new(@"\s+", Options);
+    private static readonly Regex Whitespace = new("[ \\t\\f\\v]+", Options, NoTimeout);
 
-    private static readonly Regex Extension = new(@"^[a-z0-9]{1,10}$", Options);
+    /// <summary>A bare header line that names no failure of its own: a word or two and a colon (<c>Error:</c>, <c>Stack trace:</c>).</summary>
+    private static readonly Regex BareLabel = new("^[a-z][a-z ]{0,39}:$", Options, NoTimeout);
+
+    /// <summary>Header lines whose failure is on the error's last non-blank line, matched after ASCII lowercasing and trimming.</summary>
+    private static readonly string[] KnownHeaders =
+    [
+        "traceback (most recent call last):",
+        "unhandled exception.",
+        "unhandled exception:",
+        "error",
+        "failed",
+        "failure",
+        "exception",
+    ];
+
+    private static readonly char[] AsciiWhitespace = [' ', '\t', '\n', '\v', '\f', '\r'];
+
+    private static readonly Regex Extension = new("^[a-z0-9]{1,10}$", Options, NoTimeout);
 
     /// <summary>
     /// The single canonical string both stores index: <see cref="ToolName"/>, <see cref="ErrorClass"/> and
@@ -192,17 +225,20 @@ public sealed record ExperienceFailureSignature(string ToolName, string ErrorCla
 
     /// <summary>
     /// The normalized excerpt of <paramref name="error"/> that <see cref="Fingerprint"/> hashes, by the rule of
-    /// <see cref="SignatureVersion"/> 1, applied in this order:
+    /// <see cref="SignatureVersion"/> 1. Everything uses ASCII semantics: lowercasing maps <c>A-Z</c> only, whitespace is
+    /// ASCII whitespace, a "word character" is <c>[a-z0-9_]</c>, and any other character (non-ASCII included) is left as it
+    /// is, so another runtime derives the same excerpt byte for byte. In this order:
     /// <list type="number">
-    /// <item><description>The error is trimmed and its first line taken (up to the first line feed or carriage return), trimmed again, and cut to <see cref="MaxExcerptLength"/> characters (never inside a surrogate pair).</description></item>
-    /// <item><description>It is lowercased with the invariant culture.</description></item>
-    /// <item><description>GUIDs (<c>8-4-4-4-12</c> hexadecimal) become <see cref="GuidPlaceholder"/>.</description></item>
-    /// <item><description>Runs of 8 or more hexadecimal characters between word boundaries become <see cref="HexPlaceholder"/> when they hold both a digit and a letter, or follow <c>0x</c>; a run of digits alone is left for the number rule, and a word of letters alone is left as it is.</description></item>
-    /// <item><description>File paths -- absolute or relative, POSIX or Windows, any token of word characters, dots, tildes, minus signs and placeholders with at least one <c>/</c> or <c>\</c> and at least one letter or digit -- become <see cref="PathPlaceholder"/>, followed by the final file name's extension (a dot and 1 to 10 letters or digits) when it has one: <c>&lt;path&gt;.py</c>.</description></item>
-    /// <item><description>Quoted literals (<c>'…'</c>, <c>"…"</c>, and their typographic forms) become <see cref="StringPlaceholder"/>.</description></item>
+    /// <item><description><b>Line.</b> The error is split into lines at every line feed and carriage return. The selected line is the first non-blank one -- unless that line is a bare header that names no failure of its own (Python's <c>Traceback (most recent call last):</c>, .NET's <c>Unhandled exception.</c>, a lone <c>Error</c>, <c>Failed</c>, <c>Failure</c> or <c>Exception</c>, or a label of letters and spaces ending in a colon such as <c>Error:</c>), in which case it is the last non-blank line, where such output names the failure. At most <see cref="MaxScannedLength"/> characters of it are read.</description></item>
+    /// <item><description>It is lowercased (ASCII <c>A-Z</c> only).</description></item>
+    /// <item><description>GUIDs (<c>8-4-4-4-12</c> hexadecimal), not inside a longer word, become <see cref="GuidPlaceholder"/>.</description></item>
+    /// <item><description>Runs of 8 or more hexadecimal characters, not inside a longer word, become <see cref="HexPlaceholder"/> when they hold both a digit and a letter, or follow <c>0x</c>; a run of digits alone is left for the number rule, and a word of letters alone is left as it is.</description></item>
+    /// <item><description>File paths -- a token of <c>[a-z0-9_.~&lt;&gt;-]</c> with at least one <c>/</c> or <c>\</c> and at least one letter or digit, optionally after a drive letter -- become <see cref="PathPlaceholder"/>, followed by the final file name's extension (a dot and 1 to 10 letters or digits) when it has one: <c>&lt;path&gt;.py</c>.</description></item>
+    /// <item><description>Quoted literals (<c>'…'</c>, <c>"…"</c>, and their typographic forms) become <see cref="StringPlaceholder"/>, where the opening quote follows no word character and the closing quote is followed by none, so a contraction's apostrophe (<c>can't</c>) is not a quote.</description></item>
     /// <item><description>ISO 8601 dates and timestamps (<c>2026-10-30</c>, <c>2026-10-30T12:00:01.5Z</c>, with an offset or without) become <see cref="TimePlaceholder"/>.</description></item>
     /// <item><description>Numbers (integers and decimals, digits <c>0-9</c> anywhere, so <c>line 42</c> and <c>python3</c> alike) become <see cref="NumberPlaceholder"/>.</description></item>
-    /// <item><description>Every run of whitespace becomes one space, and the result is trimmed.</description></item>
+    /// <item><description>Every run of ASCII spaces and tabs becomes one space, and the result is trimmed of ASCII whitespace.</description></item>
+    /// <item><description>Only then is it cut to <see cref="MaxExcerptLength"/> characters, never inside a surrogate pair.</description></item>
     /// </list>
     /// </summary>
     /// <param name="error">An error text.</param>
@@ -212,29 +248,55 @@ public sealed record ExperienceFailureSignature(string ToolName, string ErrorCla
     {
         ArgumentNullException.ThrowIfNull(error);
 
-        var text = error.Trim();
-        var end = text.AsSpan().IndexOfAny('\n', '\r');
-        if (end >= 0)
-        {
-            text = text[..end];
-        }
-
-        text = text.Trim();
-        if (text.Length > MaxExcerptLength)
-        {
-            var cut = char.IsHighSurrogate(text[MaxExcerptLength - 1]) ? MaxExcerptLength - 1 : MaxExcerptLength;
-            text = text[..cut];
-        }
-
-        text = text.ToLowerInvariant();
+        var text = AsciiLower(Cut(SelectLine(error), MaxScannedLength));
         text = Guids.Replace(text, GuidPlaceholder);
         text = HexRuns.Replace(text, HexRun);
         text = Paths.Replace(text, PathOf);
         text = Quoted.Replace(text, StringPlaceholder);
         text = Timestamps.Replace(text, TimePlaceholder);
         text = Numbers.Replace(text, NumberPlaceholder);
-        return Whitespace.Replace(text, " ").Trim();
+        text = Whitespace.Replace(text, " ").Trim(AsciiWhitespace);
+        return Cut(text, MaxExcerptLength);
     }
+
+    /// <summary>The line the excerpt is taken from: the first non-blank one, or the last when the first is a bare header.</summary>
+    private static string SelectLine(string error)
+    {
+        var lines = error.Split(['\n', '\r'])
+            .Select(line => line.Trim(AsciiWhitespace))
+            .Where(line => line.Length > 0)
+            .ToList();
+        if (lines.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var first = AsciiLower(Whitespace.Replace(lines[0], " "));
+        var header = KnownHeaders.Contains(first, StringComparer.Ordinal) || BareLabel.IsMatch(first);
+        return header && lines.Count > 1 ? lines[^1] : lines[0];
+    }
+
+    /// <summary>At most <paramref name="length"/> characters, one fewer when the cut would split a surrogate pair.</summary>
+    private static string Cut(string text, int length)
+    {
+        if (text.Length <= length)
+        {
+            return text;
+        }
+
+        return text[..(char.IsHighSurrogate(text[length - 1]) ? length - 1 : length)];
+    }
+
+    /// <summary>Lowercases <c>A-Z</c> and nothing else.</summary>
+    private static string AsciiLower(string text) =>
+        string.Create(text.Length, text, static (span, source) =>
+        {
+            for (var i = 0; i < source.Length; i++)
+            {
+                var c = source[i];
+                span[i] = c is >= 'A' and <= 'Z' ? (char)(c + 32) : c;
+            }
+        });
 
     /// <summary>The first token of an error class, whose tokens are joined with <c>", "</c>.</summary>
     private static string FirstToken(string errorClass)
@@ -251,13 +313,13 @@ public sealed record ExperienceFailureSignature(string ToolName, string ErrorCla
             return HexPlaceholder;
         }
 
-        return value.Any(char.IsAsciiDigit) && value.Any(char.IsAsciiLetter) ? HexPlaceholder : value;
+        return value.Any(char.IsAsciiDigit) && value.Any(char.IsAsciiLetterLower) ? HexPlaceholder : value;
     }
 
     private static string PathOf(Match match)
     {
         var value = match.Value;
-        if (!value.Any(char.IsLetterOrDigit))
+        if (!value.Any(char.IsAsciiLetterOrDigit))
         {
             // Separators alone ("/", " / ", "\\"): punctuation, not a path.
             return value;
