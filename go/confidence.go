@@ -1,6 +1,7 @@
 package agentexperience
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -386,15 +387,38 @@ func (r *ConfidenceEngineRule) Recorded() string {
 	return r.recorded
 }
 
-// Score is the engine's score for record with these counters. An error the engine returns is passed on unchanged; a
-// value that is NaN, infinite or outside [0, 1] is refused with a *ConfidenceEngineError, never clamped.
+// ConfidenceEngineFailure is an error a confidence engine returned, marked as the engine's (.NET marks the exception
+// for ConfidenceEngineRule.IsEngineFailure). It unwraps to the engine's own error and reads as it.
+type ConfidenceEngineFailure struct{ Err error }
+
+func (e *ConfidenceEngineFailure) Error() string { return e.Err.Error() }
+
+// Unwrap is the engine's own error.
+func (e *ConfidenceEngineFailure) Unwrap() error { return e.Err }
+
+// IsConfidenceEngineFailure reports whether err is a confidence engine's failure: an error the engine returned (a
+// *ConfidenceEngineFailure) or a value that is not a score (a *ConfidenceEngineError). .NET's
+// ConfidenceEngineRule.IsEngineFailure.
+func IsConfidenceEngineFailure(err error) bool {
+	var failure *ConfidenceEngineFailure
+	var refused *ConfidenceEngineError
+	return errors.As(err, &failure) || errors.As(err, &refused)
+}
+
+// Score is the engine's score for record with these counters. An error the engine returns is passed on marked as the
+// engine's (*ConfidenceEngineFailure, which unwraps to it; a cancellation is passed on as it is); a value that is NaN,
+// infinite or outside [0, 1] is refused with a *ConfidenceEngineError, never clamped.
 func (r *ConfidenceEngineRule) Score(record ExperienceRecord, supportingValidations, contradictions int64) (float64, error) {
 	if r == nil || r.engine == nil {
 		return 0, errNoEngine
 	}
 	score, err := r.engine.Score(ExperienceConfidenceInput{record, supportingValidations, contradictions})
 	if err != nil {
-		return 0, err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			// A cancellation is the caller's, and is handled as one: left unmarked, as .NET leaves it.
+			return 0, err
+		}
+		return 0, &ConfidenceEngineFailure{Err: err}
 	}
 	if math.IsNaN(score) || math.IsInf(score, 0) || score < 0 || score > 1 {
 		return 0, &ConfidenceEngineError{Rule: r.recorded, Score: score}

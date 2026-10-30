@@ -232,7 +232,14 @@ func toConfidenceOutcome(outcome ExperienceStoreOutcome) (ConfidenceUpdateOutcom
 // reported as the confidence.apply operation.
 func (s *LifecycleService) ApplyEvidence(ctx context.Context, authorization AuthorizationContext,
 	request ApplyConfidenceEvidenceRequest) (ApplyConfidenceEvidenceResult, error) {
-	ctx, op := Observe(ctx, OperationConfidenceApply, false)
+	return s.applyEvidenceObserved(ctx, authorization, request, false)
+}
+
+// applyEvidenceObserved is ApplyEvidence reported with nested set: true when reuse_feedback runs it (as .NET reports
+// the confidence.apply a feedback submission makes), false for a host's own call.
+func (s *LifecycleService) applyEvidenceObserved(ctx context.Context, authorization AuthorizationContext,
+	request ApplyConfidenceEvidenceRequest, nested bool) (ApplyConfidenceEvidenceResult, error) {
+	ctx, op := Observe(ctx, OperationConfidenceApply, nested)
 	defer op.End()
 	op.Set(AttributeExperienceID, request.ExperienceID.String())
 	op.Set(AttributeEventID, request.EventID.String())
@@ -387,8 +394,11 @@ func (s *LifecycleService) applyEvidence(ctx context.Context, authorization Auth
 	} else {
 		stored = update.AsRecordedOnly()
 	}
+	// A store reports no status exactly when an event moved the record (this call's, or the one an event-ID replay
+	// reports); an uncounted update on such an event is evidence recorded only, not a duplicate.
 	return ApplyConfidenceEvidenceResult{Outcome: ConfidenceApplied, Event: &event, Update: &stored,
-		Revision: result.Revision, Status: &settled, Errors: nonNilErrors(result.Errors)}, nil
+		Revision: result.Revision, Status: &settled, Errors: nonNilErrors(result.Errors),
+		RecordedOnEvent: !stored.Counted() && result.CurrentStatus == nil}, nil
 }
 
 func storedCounterErrors(record ExperienceRecord) []StoreValidationError {

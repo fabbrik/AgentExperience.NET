@@ -148,7 +148,7 @@ proves it on PostgreSQL in CI.
 
 What a port does differently:
 
-- **Attribution is not verified** (story 27.7): a port runs as .NET does under `TrustHostSuppliedIdentifiers`, so it
+- **Attribution is not verified** yet: a port runs as .NET does under `TrustHostSuppliedIdentifiers`, so it
   checks no run, round, assessment token or exposure before the ledger is written, and the evidence it submits is
   admitted `HostTrusted`. By default (`RecordedOnly`) that evidence is recorded without moving the record: an
   attribution is stored on the ledger and on an event, and no score, counter or status moves until the host opts into

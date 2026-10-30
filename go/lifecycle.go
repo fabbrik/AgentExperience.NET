@@ -371,6 +371,10 @@ type ApplyConfidenceEvidenceResult struct {
 	Errors   []StoreValidationError
 	Reason   *string
 	Refusal  *IndependenceRefusal
+	// RecordedOnEvent reports whether an uncounted, applied update was stored on a lifecycle event (host-trusted
+	// evidence recorded only) rather than as a duplicate with no event, as the store reported it (.NET's internal
+	// ApplyConfidenceEvidenceResult.RecordedOnEvent, contract 1.17).
+	RecordedOnEvent bool
 }
 
 // Counted reports whether the update moved a counter.
