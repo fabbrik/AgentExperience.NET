@@ -519,7 +519,7 @@ err := maf.UseAgentExperience(&config, maf.Options{
 | `ModelAuthoredLessons` (`ModelAuthoredLessonPolicy`) | `ModelAuthoredLessons` (`ae.ModelAuthoredLessonPolicy`) | `Include` | `ExcludeModelAuthored: true` is the same as `Exclude` (either one excludes) |
 | `ResolveRequest`, `ResolveRequestAsync` | `ResolveRequest func(ctx, maf.RequestContext) (*maf.InjectionRequest, error)` | none | nil retrieves the derived task text |
 | `ExperienceInjectionContext` (`Messages`, `Session`, `Agent`, `DerivedTaskText`) | `maf.RequestContext` (`Messages`, `Session`, `Agent`, `DerivedTaskText` with `HasDerivedTaskText`, `Identity`) | | |
-| `RetrieveExperienceRequest` | `maf.InjectionRequest` (`TaskText`, `PreferredEnvironment`, `Limit`, `ExcludeModelAuthored`, `CorrelationID`) | | the authorization and scope are the identity's |
+| `RetrieveExperienceRequest` | `maf.InjectionRequest` (`TaskText`, `PreferredEnvironment`, `Limit *int`, `ExcludeModelAuthored`, `CorrelationID`) | | the authorization and scope are the identity's; a nil `Limit` is none |
 | `DecideInjection` | `DecideInjection func(maf.DecisionContext) maf.InjectionDecision` | none (permit) | |
 | `ExperienceInjectionDecisionContext` (`Candidate`, `Current`, `ModelAuthored`) | `maf.DecisionContext` (`Candidate`, `Current`, `ModelAuthored`) | | `Current` is the ranked record: the port re-reads nothing |
 | `InjectionDecision.Permit`, `Deny(reason)` | `maf.Permit()`, `maf.Deny(reason)` | | |
@@ -535,19 +535,31 @@ err := maf.UseAgentExperience(&config, maf.Options{
 - **The resolver.** A nil request with a nil error skips the invocation (inject outcome `Skipped`); an error or a panic
   is `Failed` (and `OnInjectionFailure`); `context.Canceled` or `context.DeadlineExceeded` while the caller's context
   is done propagates from `Invoking`, as .NET's `OperationCanceledException` does; a request retrieval refuses (a
-  blank task text, one over 4,096 UTF-16 code units, a `Limit` outside 1..`CandidateLimit`) is `RetrievalFailed`.
-  A request's `CorrelationID` is the inject span's `agentexperience.correlation_id`. No timeout is put around it.
+  blank task text, one over 4,096 UTF-16 code units, a `Limit` outside 1..`CandidateLimit`, 0 included) is
+  `RetrievalFailed`. A request's `CorrelationID` is the inject span's `agentexperience.correlation_id`. No timeout is
+  put around it.
+- **Every attempt is reported.** `OnInjected` is told every invocation's outcome, as .NET's `OnContextInjected` is:
+  `Injected`, `NothingToInject` and `Withheld` (to `OnWithheld`) as before, and now also `Skipped` (no identity, or a
+  nil request), `Failed`, `RetrievalFailed`, `RetrievalTimedOut` and `RetrievalDenied`, with no omission (the inject
+  span's `agentexperience.omitted_count` is 0); `OnInjectionFailure` still says why one failed. Unlike .NET's
+  `ExperienceInjectionResult`, `InjectionResult` has no `CorrelationId` (it is on the span) and no `Failure` (it goes
+  to `OnInjectionFailure`).
+- **The byte budget.** `BlockOptions.MaxBytes` must exceed the verbose block's fixed header and footer,
+  `ae.BlockOverheadBytes` (754), as .NET's `ExperienceInjectionLimits` requires: `UseAgentExperience` refuses less (0
+  is the default, 16 KB).
 - **The decision** is asked about each selected record, in order, before the block is rendered. It can only deny, and
   it fails closed: the zero `InjectionDecision` denies (as .NET's `null` does), and so does a panic. A denial is
-  `HostDenied` with the reason as its detail (`ae.HostDeniedDetail` when empty; on a panic
+  `HostDenied` with the reason as its detail (`ae.HostDeniedDetail` for a decision that gave none; on a panic
   `The host injection decision threw <type>, so the record was denied.`). A denied record has taken its slot, and its
   omission comes after the selection's and before the byte budget's.
 - **Go's zero values.** A zero `GatedRetrievalWindowMultiplier` means 4 (.NET refuses 0); a negative one, a blank tool
   name in either collection and an undefined risk class are refused by `UseAgentExperience`. An empty
-  `ModelAuthoredLessons` is `Include`. Go cannot tell `Deny("")` from a decision with no reason: both report
-  `ae.HostDeniedDetail` (.NET reports the empty reason).
-- **Without the agent:** `ae.NewCapabilityGate`, `CapabilityGate.ForInvocation`, `ae.GatedWindow` and
-  `ae.SelectOptions.Gate` give the selection the agent runs; contract 1.13's `inject-options` fixtures pin it, with the
+  `ModelAuthoredLessons` is `Include`. `Deny("")` reports the empty reason, as .NET does; a decision literal with an
+  empty `Reason`, like the zero value, reports `ae.HostDeniedDetail`.
+- **Without the agent:** `ae.NewCapabilityGate`, `CapabilityGate.ForInvocation`, `ae.GatedWindow`,
+  `ae.SelectOptions.Gate` and `ae.ApplyHostDecisions` give the selection and the decision the agent runs (a gate with
+  `UseRunTools` must be narrowed with `ForInvocation`: checked directly it fails closed, as though no tool were
+  offered); contract 1.13's `inject-options` fixtures pin it, with the
   block, the omissions and the outcome.
 
 ### Telemetry: the same spans and metrics as .NET

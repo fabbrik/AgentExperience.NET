@@ -36,9 +36,9 @@ type InjectionRequest struct {
 	// PreferredEnvironment, when not nil, replaces Options.PreferredEnvironment for this invocation.
 	PreferredEnvironment map[string]string
 	// Limit is the request's own limit: at most this many records are injected, and ranking is cut to it (to the
-	// capability gate's wider window while a gate can reject). 0 for none; otherwise 1 to the retrieval policy's
-	// CandidateLimit, or retrieval refuses the request (RetrievalFailed).
-	Limit int
+	// capability gate's wider window while a gate can reject). nil for none; otherwise 1 to the retrieval policy's
+	// CandidateLimit, or retrieval refuses the request (RetrievalFailed), 0 included, as .NET refuses it.
+	Limit *int
 	// ExcludeModelAuthored asks retrieval to leave model-authored lessons out; ModelAuthoredLessons Exclude sets it
 	// whatever the host returns, and never clears it.
 	ExcludeModelAuthored bool
@@ -57,19 +57,23 @@ type DecisionContext struct {
 }
 
 // InjectionDecision is the host's decision on one record (.NET's InjectionDecision). The zero value denies: a
-// decision that says nothing fails closed, as .NET's null does.
+// decision that says nothing fails closed, as .NET's null does, and reports ae.HostDeniedDetail.
 type InjectionDecision struct {
 	Permitted bool
-	// Reason is the content-free explanation reported as a denial's detail; when empty,
-	// ae.HostDeniedDetail is.
+	// Reason is the content-free explanation reported as a denial's detail. In a literal, an empty Reason reports
+	// ae.HostDeniedDetail; Deny reports the reason it is given, "" included, as .NET's Deny does.
 	Reason string
+	// reasonGiven is whether Deny named the reason, so Deny("") reports "".
+	reasonGiven bool
 }
 
 // Permit is a decision that permits the record.
 func Permit() InjectionDecision { return InjectionDecision{Permitted: true} }
 
-// Deny is a decision that denies the record, with a content-free reason.
-func Deny(reason string) InjectionDecision { return InjectionDecision{Reason: reason} }
+// Deny is a decision that denies the record, with a content-free reason reported as its detail as given.
+func Deny(reason string) InjectionDecision {
+	return InjectionDecision{Reason: reason, reasonGiven: true}
+}
 
 // errInvalidRequest is a request the resolver returned that retrieval refuses.
 var errInvalidRequest = errors.New("maf: the injection request is invalid")
@@ -84,9 +88,9 @@ func validateRequest(request *InjectionRequest, candidateLimit int) error {
 		return errors.Join(errInvalidRequest, errors.New("the task text is longer than "+
 			strconv.Itoa(ae.MaxTaskTextLength)+" UTF-16 code units"))
 	}
-	if request.Limit < 0 || request.Limit > candidateLimit {
+	if request.Limit != nil && (*request.Limit < 1 || *request.Limit > candidateLimit) {
 		return errors.Join(errInvalidRequest, errors.New("the limit must be from 1 to the policy's candidate limit ("+
-			strconv.Itoa(candidateLimit)+"), or 0 for none"))
+			strconv.Itoa(candidateLimit)+"), or nil for none"))
 	}
 	return nil
 }
@@ -97,46 +101,33 @@ func (s *settings) resolveRequest(ctx context.Context, rc RequestContext) (reque
 	return s.ResolveRequest(ctx, rc)
 }
 
-// decide asks the host about each selected record, in order (.NET's DecideInjection, after the final eligibility check):
-// the records it permits, and a HostDenied omission for each it denies. A panic or a zero decision denies; a denied
-// record has taken its slot, so nothing backfills it.
-func (s *settings) decide(selected []ae.RankedRecord) ([]ae.RankedRecord, []ae.OmittedRecord) {
-	if s.DecideInjection == nil {
-		return selected, nil
+// requestLimitOf is the request's own limit, 0 for none.
+func requestLimitOf(request *InjectionRequest) int {
+	if request.Limit == nil {
+		return 0
 	}
-	permitted := make([]ae.RankedRecord, 0, len(selected))
-	var denied []ae.OmittedRecord
-	for _, candidate := range selected {
-		decision, panicked := s.decideOne(candidate)
-		if decision.Permitted && panicked == nil {
-			permitted = append(permitted, candidate)
-			continue
-		}
-		detail := ae.HostDeniedDetail
-		switch {
-		case panicked != nil:
-			name := typeName(panicked)
-			if err, ok := panicked.(error); ok {
-				name = errorName(err)
-			}
-			detail = ae.HostDeniedPanicDetail(name)
-		case decision.Reason != "":
-			detail = decision.Reason
-		}
-		denied = append(denied, ae.OmittedRecord{ExperienceID: candidate.Record.ExperienceID,
-			Reason: ae.OmittedHostDenied, Detail: &detail})
-	}
-	return permitted, denied
+	return *request.Limit
 }
 
-func (s *settings) decideOne(candidate ae.RankedRecord) (decision InjectionDecision, panicked any) {
+// decideOne asks the host about one selected record (.NET's DecideInjection, after the final eligibility check), for
+// ae.ApplyHostDecisions: a panic or the zero decision denies.
+func (s *settings) decideOne(candidate ae.RankedRecord, modelAuthored bool) (decision ae.HostDecision) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			decision, panicked = InjectionDecision{}, recovered
+			name := typeName(recovered)
+			if err, ok := recovered.(error); ok {
+				name = errorName(err)
+			}
+			decision = ae.HostDecision{Panicked: name}
 		}
 	}()
-	return s.DecideInjection(DecisionContext{Candidate: candidate, Current: candidate.Record,
-		ModelAuthored: ae.IsModelAuthored(candidate.Record.Reflection)}), nil
+	answer := s.DecideInjection(DecisionContext{Candidate: candidate, Current: candidate.Record, ModelAuthored: modelAuthored})
+	decision = ae.HostDecision{Permitted: answer.Permitted}
+	if answer.reasonGiven || answer.Reason != "" {
+		reason := answer.Reason
+		decision.Reason = &reason
+	}
+	return decision
 }
 
 // runTools are the names of the tools the invocation offers: the agent configuration's tools and the run's own, as the

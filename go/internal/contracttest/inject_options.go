@@ -25,8 +25,13 @@ type InjectOptionsCase struct {
 	RequestLimit  int
 	Agent         *ae.ReceivingAgent
 	RunTools      []string
-	Expected      *ae.Object
-	ExpectedBlock string
+	// HostDecisions are the host's decision per record (nil: no decision callback; a record not listed is permitted).
+	HostDecisions map[string]ae.HostDecision
+	// PreferMeasuredHelpful and Estimate are the benefit policy: on, over Estimate's pooled view, when it is not nil.
+	PreferMeasuredHelpful bool
+	Estimate              *ae.BenefitEstimate
+	Expected              *ae.Object
+	ExpectedBlock         string
 }
 
 // ReceivingAgentOf reads a receivingAgent object of the fixtures (nil for null).
@@ -83,6 +88,17 @@ func InjectOptionsOf(value any) (*InjectOptionsCase, error) {
 	if c.Agent, err = ReceivingAgentOf(get(options, "receivingAgent")); err != nil {
 		return nil, err
 	}
+	if decisions := get(options, "hostDecisions"); decisions != nil {
+		c.HostDecisions = map[string]ae.HostDecision{}
+		for _, m := range object(decisions).Members() {
+			d := object(m.Value)
+			decision := ae.HostDecision{}
+			decision.Permitted, _ = get(d, "permitted").(bool)
+			decision.Reason = optionalText(get(d, "reason"))
+			c.HostDecisions[m.Key] = decision
+		}
+	}
+	c.PreferMeasuredHelpful, _ = get(options, "preferMeasuredHelpful").(bool)
 	if tools := get(options, "runTools"); tools != nil {
 		c.RunTools = []string{}
 		for _, tool := range list(tools) {
@@ -110,12 +126,17 @@ func LoadInjectOptionsCase(name string) (*InjectOptionsCase, error) {
 	}
 	c.Name, c.Ranked, c.ExpectedBlock = name, ranked, string(block)
 	c.Expected = object(MustReadJSON(filepath.Join(dir, "expected.json")))
+	if _, err := os.Stat(filepath.Join(dir, "estimate.json")); err == nil {
+		estimate := EstimateOf(MustReadJSON(filepath.Join(dir, "estimate.json")))
+		c.Estimate = &estimate
+	}
 	return c, nil
 }
 
-// Run is what the port injects for the case, with no benefit view and no host decision: the gate for an invocation
-// offering the case's run tools, the limit retrieval is asked for (GatedWindow under the default policy's candidate
-// limit), SelectCandidates, then the block and its byte budget. It answers expected.json's form and the block text.
+// Run is what the port injects for the case, as its agent does: the benefit view (pooled, with an estimate), the gate
+// for an invocation offering the case's run tools, the limit retrieval is asked for (GatedWindow under the default
+// policy's candidate limit), SelectCandidates, the host's decisions (ae.ApplyHostDecisions, the agent's own path), then
+// the block and its byte budget. It answers expected.json's form and the block text.
 func (c *InjectOptionsCase) Run() (*ae.Object, string, error) {
 	if err := c.ModelAuthored.Validate(); err != nil {
 		return nil, "", err
@@ -125,9 +146,31 @@ func (c *InjectOptionsCase) Run() (*ae.Object, string, error) {
 		return nil, "", err
 	}
 	gate = gate.ForInvocation(c.RunTools)
+	if !gate.CanReject() {
+		gate = nil
+	}
+	var view *ae.BenefitView
+	if c.Estimate != nil {
+		view = ae.NewBenefitViews(*c.Estimate).For(nil)
+	}
 	exclude := c.ModelAuthored == ae.ModelAuthoredExclude
-	selected, omitted := ae.SelectCandidates(c.Ranked, nil, ae.SelectOptions{MaxRecords: c.Block.MaxRecords,
-		RequestLimit: c.RequestLimit, ExcludeModelAuthored: exclude, Gate: gate})
+	selected, omitted := ae.SelectCandidates(c.Ranked, view, ae.SelectOptions{MaxRecords: c.Block.MaxRecords,
+		RequestLimit: c.RequestLimit, ExcludeModelAuthored: exclude, Gate: gate,
+		PreferMeasuredHelpful: c.PreferMeasuredHelpful})
+	decisions := []any{}
+	if c.HostDecisions != nil {
+		var denied []ae.OmittedRecord
+		selected, denied = ae.ApplyHostDecisions(selected, func(candidate ae.RankedRecord, modelAuthored bool) ae.HostDecision {
+			id := candidate.Record.ExperienceID.String()
+			decisions = append(decisions, ae.NewObject(ae.Member{Key: "experienceId", Value: id},
+				ae.Member{Key: "modelAuthored", Value: modelAuthored}))
+			if decision, ok := c.HostDecisions[id]; ok {
+				return decision
+			}
+			return ae.HostDecision{Permitted: true}
+		})
+		omitted = append(omitted, denied...)
+	}
 	block, err := ae.RenderBlock(selected, c.Block)
 	if err != nil {
 		return nil, "", err
@@ -147,7 +190,7 @@ func (c *InjectOptionsCase) Run() (*ae.Object, string, error) {
 		ae.Member{Key: "messageRole", Value: role},
 		ae.Member{Key: "retrievalRequest", Value: ae.NewObject(ae.Member{Key: "limit", Value: limit},
 			ae.Member{Key: "excludeModelAuthored", Value: exclude})},
-		ae.Member{Key: "selected", Value: get(selection, "selected")},
+		ae.Member{Key: "decisions", Value: decisions},
 		ae.Member{Key: "injected", Value: get(selection, "injected")},
 		ae.Member{Key: "byteCount", Value: block.ByteCount},
 		ae.Member{Key: "omitted", Value: get(selection, "omitted")},

@@ -3,6 +3,7 @@ package agentexperience_test
 // Contract 1.13: the capability gate's rules beyond the fixtures.
 
 import (
+	"math"
 	"testing"
 
 	ae "github.com/fabbrik/AgentExperience.NET/go"
@@ -66,5 +67,32 @@ func TestTheGateIsValidatedAndCopied(t *testing.T) {
 	}
 	if ae.ModelAuthoredLessonPolicy("Mark").Validate() == nil || ae.ModelAuthoredLessonPolicy("").Validate() != nil {
 		t.Fatal("the model-authored policy's validation")
+	}
+}
+
+func TestTheGatedWindowCannotOverflow(t *testing.T) {
+	low := ae.RiskLow
+	gate, err := ae.NewCapabilityGate(&ae.ReceivingAgent{MaxRiskClass: &low, GatedRetrievalWindowMultiplier: math.MaxInt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ae.GatedWindow(2, gate, 8, ae.CandidateLimit); got != ae.CandidateLimit {
+		t.Fatalf("a huge multiplier gave %d, not the candidate limit", got)
+	}
+}
+
+// A gate that uses the run's tools, checked without ForInvocation, fails closed: as though no tool were offered.
+func TestARunToolsGateCheckedDirectlyFailsClosed(t *testing.T) {
+	gate, err := ae.NewCapabilityGate(&ae.ReceivingAgent{UseRunTools: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := ae.ExperienceRecord{Status: ae.StatusValidated, Outcome: ae.Outcome{Status: ae.VerificationVerified},
+		Attempts: []ae.Attempt{{SequenceNumber: 0, ToolCalls: []ae.ToolCall{{SequenceNumber: 0, ToolName: "run_tests"}}}}}
+	if got := gate.Check(&record); got != ae.OmittedToolUnavailable {
+		t.Fatalf("checked directly: %q", got)
+	}
+	if got := gate.ForInvocation([]string{"run_tests"}).Check(&record); got != "" {
+		t.Fatalf("narrowed: %q", got)
 	}
 }

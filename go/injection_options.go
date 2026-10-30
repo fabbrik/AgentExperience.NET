@@ -180,7 +180,9 @@ func (g *CapabilityGate) ForInvocation(runTools []string) *CapabilityGate {
 }
 
 // Check is the reason the gate keeps record out (OmittedToolUnavailable or OmittedRiskClassExceeded), or "" when it
-// passes: the tools of its approach, the attempt its Worked: line names. A nil gate passes everything.
+// passes: the tools of its approach, the attempt its Worked: line names. A nil gate passes everything. A gate that uses
+// the run's tools must be narrowed with ForInvocation first: checked directly it fails closed, as though the invocation
+// offered no tool.
 func (g *CapabilityGate) Check(record *ExperienceRecord) OmissionReason {
 	if g == nil {
 		return ""
@@ -189,9 +191,13 @@ func (g *CapabilityGate) Check(record *ExperienceRecord) OmissionReason {
 	if len(calls) == 0 {
 		return ""
 	}
-	if g.available != nil {
+	available := g.available
+	if g.useRun {
+		available = map[string]bool{}
+	}
+	if available != nil {
 		for _, call := range calls {
-			if isNullOrWhitespace(call.ToolName) || !g.available[call.ToolName] {
+			if isNullOrWhitespace(call.ToolName) || !available[call.ToolName] {
 				return OmittedToolUnavailable
 			}
 		}
@@ -217,7 +223,13 @@ func GatedWindow(requestLimit int, gate *CapabilityGate, maxRecords, candidateLi
 	if !gate.CanReject() || requestLimit <= 0 || requestLimit > candidateLimit {
 		return requestLimit
 	}
-	return min(candidateLimit, max(requestLimit, maxRecords*gate.multiplier))
+	// Saturating, as .NET multiplies in long: a product past the candidate limit is the candidate limit, so a huge
+	// multiplier cannot overflow.
+	window := candidateLimit
+	if maxRecords <= 0 || gate.multiplier <= candidateLimit/maxRecords {
+		window = min(candidateLimit, maxRecords*gate.multiplier)
+	}
+	return max(requestLimit, window)
 }
 
 // ApproachToolCalls are the calls of record's approach, the attempt its Worked: line names: its verified final
@@ -248,6 +260,41 @@ func finalVerifiedAttempt(record *ExperienceRecord) *Attempt {
 const (
 	HostDeniedDetail = "The host injection decision denied the record."
 )
+
+// HostDecision is one host decision as ApplyHostDecisions reads it: whether the record is permitted, the reason (nil
+// for none, which reports HostDeniedDetail) and, when the decision panicked (.NET: threw), the panic's type name.
+type HostDecision struct {
+	Permitted bool
+	Reason    *string
+	Panicked  string
+}
+
+// ApplyHostDecisions asks decide about each selected record, in order (.NET's DecideInjection, after selection and before
+// the block): the records it permits, and a HostDenied omission for each it denies, with the decision's reason as the
+// detail (HostDeniedDetail when it gave none, HostDeniedPanicDetail when it panicked). A denied record has taken its
+// slot: nothing backfills it. decide is told whether the record counts as model-authored.
+func ApplyHostDecisions(selected []RankedRecord, decide func(candidate RankedRecord, modelAuthored bool) HostDecision) (
+	[]RankedRecord, []OmittedRecord) {
+	permitted := make([]RankedRecord, 0, len(selected))
+	var denied []OmittedRecord
+	for _, candidate := range selected {
+		decision := decide(candidate, IsModelAuthored(candidate.Record.Reflection))
+		if decision.Permitted && decision.Panicked == "" {
+			permitted = append(permitted, candidate)
+			continue
+		}
+		detail := HostDeniedDetail
+		switch {
+		case decision.Panicked != "":
+			detail = HostDeniedPanicDetail(decision.Panicked)
+		case decision.Reason != nil:
+			detail = *decision.Reason
+		}
+		denied = append(denied, OmittedRecord{ExperienceID: candidate.Record.ExperienceID, Reason: OmittedHostDenied,
+			Detail: &detail})
+	}
+	return permitted, denied
+}
 
 // HostDeniedPanicDetail is the detail of a record whose host decision panicked (.NET: threw), naming the panic's type.
 func HostDeniedPanicDetail(typeName string) string {

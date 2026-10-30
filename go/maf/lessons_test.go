@@ -74,7 +74,7 @@ func TestTheViewIsReachableWhenInjectionIsDisabledAndUsesTheSetupsFlags(t *testi
 	h := newHost(t)
 	config := &agent.Config{Name: "triage-ticket"}
 	options := h.options(Options{DisableInjection: true, ExcludeModelAuthored: true,
-		BlockOptions: ae.BlockOptions{MaxBytes: 60}, Clock: func() ae.Instant {
+		BlockOptions: ae.BlockOptions{MaxBytes: 800}, Clock: func() ae.Instant {
 			return ae.MustParseInstant("2026-03-02T15:00:00+00:00")
 		}})
 	if err := UseAgentExperience(config, options); err != nil {

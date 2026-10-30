@@ -199,8 +199,12 @@ type InjectionFailure struct {
 // contribute (contract 1.6), why: nil when it did.
 type InjectionResult struct {
 	// Outcome is the inject operation's outcome, as .NET's InjectionOutcome names it: Injected; NothingToInject (no
-	// task text, or every ranked record was omitted: Omitted says why, for example MeasuredHarmful); or Withheld (in
-	// what OnWithheld is told).
+	// task text, or every ranked record was omitted: Omitted says why, for example MeasuredHarmful); Withheld (in
+	// what OnWithheld is told); or, with nothing injected, Skipped (no identity, or ResolveRequest returned nil),
+	// Failed, RetrievalFailed, RetrievalTimedOut or RetrievalDenied (contract 1.13: every attempt is reported, as .NET's
+	// OnContextInjected is; OnInjectionFailure still says why one failed). Unlike .NET's ExperienceInjectionResult it
+	// carries no CorrelationId or Failure: the request's correlation ID is on the inject span, and a failure's reason
+	// and error go to OnInjectionFailure.
 	Outcome        string
 	ExperienceIDs  []ae.UUID
 	ByteCount      int
@@ -209,8 +213,9 @@ type InjectionResult struct {
 	// WithheldExperienceIDs are the records a held-out invocation's block named and did not deliver (contract 1.8):
 	// set only in what OnWithheld is told, where ExperienceIDs is empty and ByteCount 0.
 	WithheldExperienceIDs []ae.UUID
-	// Omitted are the ranked records that were not put in the block, and why (contract 1.10): measured harmful,
-	// model-authored, past the record limit or over the byte budget, in the order .NET reports them.
+	// Omitted are the ranked records that were not put in the block, and why, in the order .NET reports them:
+	// MeasuredHarmful (contract 1.10), ModelAuthored, ToolUnavailable and RiskClassExceeded (the capability gate, contract
+	// 1.13), OverRecordLimit, HostDenied (the host's DecideInjection, contract 1.13) and OverByteBudget.
 	Omitted []ae.OmittedRecord
 	// Excluded are the candidates ranking left out, and why (contract 1.12, .NET's Excluded): IneligibleStatus,
 	// ModelAuthored or Expired (RetrievalPolicy.MaxAge). Not a complete account: what the search filtered never shows.
@@ -464,6 +469,11 @@ func newSettings(options Options) (*settings, error) {
 	}
 	if err := options.BlockOptions.Validate(); err != nil {
 		return nil, err
+	}
+	if options.BlockOptions.MaxBytes != 0 && options.BlockOptions.MaxBytes <= ae.BlockOverheadBytes {
+		// As .NET's ExperienceInjectionLimits refuses it: a budget no record could ever fit in (0 is the default).
+		return nil, fmt.Errorf("maf: the block's byte budget must exceed the block's fixed header and footer (%d bytes), "+
+			"or no record could ever fit", ae.BlockOverheadBytes)
 	}
 	switch options.MessageRole {
 	case "":

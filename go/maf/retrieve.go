@@ -65,7 +65,7 @@ func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identi
 		if failure != nil {
 			s.reportInjection(*failure)
 		}
-		op.Done(injectOutcome)
+		s.nothing(op, injectOutcome)
 		return retrieval{}, false, nil
 	}
 	cancelled := func() (retrieval, bool, error) {
@@ -89,7 +89,7 @@ func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identi
 	if err != nil {
 		observed.Fail(err)
 		s.reportInjection(InjectionFailure{Reason: "The retrieval policy refused the search; no block was added.", Err: err})
-		op.Done("Failed")
+		s.nothing(op, "Failed")
 		return retrieval{}, false, nil
 	}
 
@@ -184,7 +184,7 @@ func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identi
 	if err != nil {
 		observed.Fail(err)
 		s.reportInjection(InjectionFailure{Reason: "Ranking failed; no block was added.", Err: err})
-		op.Done("Failed")
+		s.nothing(op, "Failed")
 		return retrieval{}, false, nil
 	}
 	observed.Done(string(ae.RetrievalCompleted))

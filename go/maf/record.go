@@ -272,6 +272,17 @@ func (s *settings) reportWithheld(result InjectionResult) {
 }
 
 // reportInjected tells OnInjected, recovering a panic in it.
+// nothing ends an inject operation that searched or derived nothing to select from (.NET's Nothing then Report): every
+// such attempt reaches OnInjected with its outcome, as .NET's OnContextInjected gets every attempt, and the operation
+// records no omission.
+func (s *settings) nothing(op *ae.Operation, outcome string) {
+	if op != nil {
+		op.Set(ae.AttributeOmittedCount, 0)
+	}
+	s.reportInjected(InjectionResult{Outcome: outcome})
+	op.Done(outcome)
+}
+
 func (s *settings) reportInjected(result InjectionResult) {
 	if s.OnInjected == nil {
 		return
