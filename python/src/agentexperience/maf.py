@@ -110,7 +110,7 @@ from .embedding import (
 )
 from .encoding import Duration, Instant
 from .error_class import is_single_token
-from .finalize import FinalizedExperience, finalize
+from .finalize import FinalizedExperience, finalize_async
 from .holdout import (
     MAX_HOLDOUT_RECORDS,
     HoldoutArm,
@@ -145,7 +145,7 @@ from .model import MODEL_METADATA_KEY, reported_model, with_model
 from .observer import classify as _classify_error
 from .observer import observe
 from .records import EnvironmentFingerprint, ExperienceRecord, Provenance, RunExposure, Scope
-from .reflector import is_model_authored
+from .reflector import ExperienceReflector, is_model_authored
 from .retrieval import ConfidenceDecayPolicy, RetrievalPolicy
 from .sanitization import Sanitization
 from .search import AuthorizationBounds, ExcludedRecord, SearchParameters, SearchRow, rank
@@ -458,6 +458,9 @@ class ExperienceSettings:
     on_injected: Callable[[InjectionResult], None] | None = None
     on_finalized: Callable[[FinalizedExperience], None] | None = None
     on_injection_recorded: Callable[[InjectionRecordResult], None] | None = None
+    reflector: ExperienceReflector | None = None
+    """The reflector finalization asks for a verified run's lesson (contract 1.14): ``None`` for the deterministic one,
+    the default; :class:`~agentexperience.chat_reflector.ChatClientExperienceReflector` asks a model. Opt-in."""
     embedder: Embedder | None = None
     """Turns text into a vector, for hybrid retrieval and for embedding each stored record (contract 1.6)."""
     min_vector_relevance: float | None = None
@@ -523,6 +526,8 @@ class ExperienceSettings:
             value = getattr(self, name)
             if value is not None and not callable(value):
                 raise TypeError(f"{name} must be callable when given.")
+        if self.reflector is not None and not callable(getattr(self.reflector, "reflect", None)):
+            raise TypeError("reflector must have a reflect(request) method.")
         if not self.finalization_timeout > 0:
             raise ValueError("finalization_timeout must be a positive number of seconds.")
         if not self.injection_record_timeout > 0:
@@ -812,13 +817,14 @@ class _CaptureScope:
                 return
 
         try:
-            finalized = finalize(
+            finalized = await finalize_async(
                 run,
                 closed_round=ClosedVerificationRound(round_id, verification.artifact_revision),
                 required_checks=verification.required_checks,
                 evidence=verification.evidence,
                 current_artifact_revision=verification.artifact_revision,
                 finalized_at=settings.clock(),
+                reflector=settings.reflector,
             )
         except Exception as ex:
             self.report("Finalize", f"Finalizing the run raised {_type_name(ex)}; the run is not stored.", ex)
@@ -2365,6 +2371,7 @@ def use_agent_experience(
     receiving_agent: ReceivingAgent | None = None,
     resolve_request: RequestResolver | None = None,
     decide_injection: DecideInjection | None = None,
+    reflector: ExperienceReflector | None = None,
 ) -> AgentT:
     """
     Wires capture and injection into a MAF agent (an ``Agent``, or any agent with ``context_providers`` and
@@ -2416,6 +2423,11 @@ def use_agent_experience(
     ``RiskClassExceeded``); ``resolve_request``, sync or async, turns each invocation into an :class:`InjectionRequest`
     (``None`` skips it); and ``decide_injection`` is the host's per-record decision (fail-closed, ``HostDenied``). The
     block's layout, failure detail, argument allowlist and limits are ``block_options``.
+
+    ``reflector`` (contract 1.14) writes a verified run's lesson: the deterministic reflector by default, or
+    :class:`~agentexperience.chat_reflector.ChatClientExperienceReflector`, which asks a model and sends it sanitized
+    captured run content (opt-in; its lessons are stored model-authored, screened by the content guard, and fenced at
+    injection). Its call counts against ``finalization_timeout``: give it a timeout below that.
     """
     providers = getattr(agent, "context_providers", None)
     if not isinstance(providers, list):
@@ -2458,6 +2470,7 @@ def use_agent_experience(
         confidence_decay=confidence_decay,
         model_authored_lessons=model_authored_lessons,
         receiving_agent=receiving_agent,
+        reflector=reflector,
         resolve_request=resolve_request,
         decide_injection=decide_injection,
     )

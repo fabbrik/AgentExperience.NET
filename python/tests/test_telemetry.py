@@ -490,3 +490,26 @@ def test_a_cancelled_operation_is_faulted_and_cancelled() -> None:
         run(cancelled())
     (failure,) = [p for p in sink.points() if p[1] == "agentexperience.operation.failures"]
     assert dict(failure[3]) == {"operation": "inject", "error.class": "Cancelled", "nested": False}
+
+
+def test_a_screening_refusal_is_on_the_finalize_span_without_the_text() -> None:
+    # Contract 1.14: a model-authored reflection screening refuses names its code on the span, never its text.
+    from _contract import FIXTURES, capture_finalize_case, finalize_arguments, read_json
+
+    from agentexperience.reflector import DeterministicReflector, ReflectionRequest
+
+    class ModelReflector:
+        def reflect(self, request: ReflectionRequest) -> Any:
+            from dataclasses import replace
+
+            reflection = DeterministicReflector().reflect(request)
+            return replace(reflection, authorship="Model", lesson=f"See https://{MARKER}.example/now")
+
+    sink = Telemetry()
+    case = read_json(FIXTURES / "finalize" / "verified-after-one-failed-attempt" / "input.json")
+    finalized = finalize(capture_finalize_case(case)[0], **finalize_arguments(case), reflector=ModelReflector())
+    assert finalized.screening_refusal_code == "UnsafeContent"
+    (span,) = [item for item in sink.finished() if item.name == "agentexperience.finalize"]
+    assert attrs(span)["agentexperience.reflection.screening_refusal"] == "UnsafeContent"
+    assert attrs(span)["agentexperience.outcome"] == "Quarantined"
+    assert all(MARKER.lower() not in str(value).lower() for value in attrs(span).values())

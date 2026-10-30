@@ -104,7 +104,7 @@ def html_encode(value: str | None) -> str:
             out.append(f"&#{0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)};")
             index += 1
         elif 0xD800 <= code <= 0xDFFF:
-            out.append("�")
+            out.append("\ufffd")
         else:
             out.append(ch)
         index += 1

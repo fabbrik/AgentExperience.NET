@@ -92,6 +92,7 @@ ATTRIBUTES: tuple[str, ...] = (
     "agentexperience.correlation_id",
     "agentexperience.experience_id",
     "agentexperience.omitted_count",
+    "agentexperience.reflection.screening_refusal",
     "agentexperience.reflection_id",
     "agentexperience.run_id",
     "agentexperience.stage",
