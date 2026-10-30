@@ -63,7 +63,7 @@ const (
 //go:embed sql/write-experience-embedding.sql sql/search-experience-vector.sql sql/list-experience-lessons.sql
 //go:embed sql/record-holdout-assignment.sql sql/query-holdout-outcomes.sql
 //go:embed sql/record-provider-holdout-assignment.sql sql/query-provider-holdout-outcomes.sql
-//go:embed sql/lifecycle.sql
+//go:embed sql/lifecycle.sql sql/reuse-feedback.sql
 var contractFiles embed.FS
 
 // ContractSQL is one of the contract's SQL files, as this package embeds it (DeclareBoundsSQL, SearchSQL,
@@ -295,6 +295,8 @@ type Store struct {
 	// Contract 1.16's: the lifecycle statements, by name, and the clock a commit stamps.
 	lifecycle map[string]Statement
 	clock     atomic.Pointer[lifecycleClock]
+	// Contract 1.17's: the reuse-feedback ledger's statements, by name.
+	reuseFeedback map[string]Statement
 }
 
 // NewStore is a store that runs its transactions on db, which the host controls (and closes).
@@ -356,6 +358,10 @@ func NewStore(db Beginner) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	reuseFeedback, err := loadReuseFeedbackStatements()
+	if err != nil {
+		return nil, err
+	}
 	lessons := map[string]Statement{}
 	for _, name := range []string{"page", "page-with-statuses", "page-without-injections",
 		"page-without-injections-with-statuses"} {
@@ -364,7 +370,7 @@ func NewStore(db Beginner) (*Store, error) {
 		}
 		lessons[name] = ToDriverPlaceholders(lessonStatements[name])
 	}
-	store := &Store{db: db, lessons: lessons, lifecycle: lifecycle, declare: ToDriverPlaceholders(declare), search: ToDriverPlaceholders(search),
+	store := &Store{db: db, lessons: lessons, lifecycle: lifecycle, reuseFeedback: reuseFeedback, declare: ToDriverPlaceholders(declare), search: ToDriverPlaceholders(search),
 		record: ToDriverPlaceholders(record), writeEmbedding: ToDriverPlaceholders(writes["write"]),
 		probeRevision: ToDriverPlaceholders(writes["probe-revision"]), vectorSQL: vectors,
 		probes: map[string]Statement{}, holdout: ToDriverPlaceholders(holdout),
