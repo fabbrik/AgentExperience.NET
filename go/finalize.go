@@ -51,9 +51,13 @@ type FinalizedExperience struct {
 	Record     ExperienceRecord
 	Event      InitialLifecycleEvent
 	Evaluation VerificationResult
-	// ScreeningRefusal is why screening refused the reflection, when it did (the record is then Quarantined); it
-	// never holds record content.
+	// ScreeningRefusal is why screening refused the reflection, when it did (the record is then Quarantined): a
+	// *ScreeningRefusalError (ScreeningRefusalOf), which never holds record content.
 	ScreeningRefusal error
+	// ReflectionFailure is why the reflector produced no reflection, when it did not (contract 1.14; the record is then
+	// Quarantined): the reflector's error (the maf module's model-backed reflector returns a *ReflectionFailedError),
+	// a *ReflectorPanicError, or a binding mismatch (ErrReflectionBinding).
+	ReflectionFailure error
 }
 
 // Verification is the host's verification of a run.
@@ -75,27 +79,42 @@ func Finalize(run CapturedRun, verification Verification) (FinalizedExperience, 
 // FinalizeContext is Finalize reporting to the observer (SetObserver) under ctx. Its verification and reflection are
 // reported as nested operations of its own.
 func FinalizeContext(ctx context.Context, run CapturedRun, verification Verification) (FinalizedExperience, error) {
+	return FinalizeContextWith(ctx, run, verification, FinalizeOptions{})
+}
+
+// FinalizeContextWith is FinalizeContext reflecting with options.Reflector (contract 1.14): the deterministic
+// reflector when nil. A reflector failure, a reflection that does not match its request, or one screening refuses
+// stores the record Quarantined, with no reflection (ReflectionFailure, ScreeningRefusal); only the caller's own
+// cancellation is returned as an error.
+func FinalizeContextWith(ctx context.Context, run CapturedRun, verification Verification, options FinalizeOptions) (
+	FinalizedExperience, error) {
+	if options.Reflector == nil {
+		options.Reflector = DeterministicReflector{}
+	}
 	ctx, op := Observe(ctx, "finalize", false)
 	defer op.End()
 	if op != nil {
 		op.Set(AttributeRunID, run.RunID.String())
 		op.Set(AttributeStage, "Load")
 	}
-	finalized, err := finalize(ctx, op, run, verification)
+	finalized, err := finalize(ctx, op, run, verification, options.Reflector)
 	if err != nil {
 		op.Fail(err)
 		return finalized, err
 	}
 	if op != nil {
 		op.Set(AttributeExperienceID, finalized.Record.ExperienceID.String())
+		if refusal, ok := ScreeningRefusalOf(finalized.ScreeningRefusal); ok {
+			op.Set(AttributeScreeningRefusal, string(refusal.Code))
+		}
 	}
 	op.Done(string(finalized.Record.Status))
 	return finalized, nil
 }
 
 // finalize is the finalization; the stage it has reached is on the operation, also when it fails.
-func finalize(ctx context.Context, op *Operation, run CapturedRun, verification Verification) (FinalizedExperience,
-	error) {
+func finalize(ctx context.Context, op *Operation, run CapturedRun, verification Verification, reflector Reflector) (
+	FinalizedExperience, error) {
 	if run.ExecutionStatus == "" {
 		return FinalizedExperience{}, errors.New("the run has not finished and cannot be finalized")
 	}
@@ -119,16 +138,16 @@ func finalize(ctx context.Context, op *Operation, run CapturedRun, verification 
 	}
 
 	var reflection *Reflection
-	var refusal error
+	var refusal, failure error
 	if evaluation.Outcome.Status == VerificationVerified {
 		if op != nil {
 			op.Set(AttributeStage, "Reflect")
 		}
-		screened, err := Screen(reflectObserved(ctx, true, &run, &evaluation, ReflectionIDFor(run.RunID), at))
+		var err error
+		reflection, failure, refusal, err = reflectAndScreen(ctx, reflector, ReflectionRequest{Run: run,
+			Evaluation: evaluation, ReflectionID: ReflectionIDFor(run.RunID), CreatedAt: at})
 		if err != nil {
-			refusal = err
-		} else {
-			reflection = &screened
+			return FinalizedExperience{}, err
 		}
 	}
 
@@ -188,5 +207,6 @@ func finalize(ctx context.Context, op *Operation, run CapturedRun, verification 
 		ExpectedRevision: 0,
 		AppliedRevision:  1,
 	}
-	return FinalizedExperience{Record: record, Event: event, Evaluation: evaluation, ScreeningRefusal: refusal}, nil
+	return FinalizedExperience{Record: record, Event: event, Evaluation: evaluation, ScreeningRefusal: refusal,
+		ReflectionFailure: failure}, nil
 }

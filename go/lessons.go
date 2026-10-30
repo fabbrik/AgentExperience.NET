@@ -283,12 +283,19 @@ func (l *Lessons) ListFor(ctx context.Context, identity Identity, query LessonQu
 //
 // Listing lessons discloses them: serve the view only behind the host's own authorization.
 func (l *Lessons) List(ctx context.Context, bounds AuthorizationBounds, scope Scope, query LessonQuery) (LessonsPage, error) {
+	page, _, err := l.read(ctx, bounds, scope, query)
+	return page, err
+}
+
+// read is List, with the record each listed lesson was described from, at the same index.
+func (l *Lessons) read(ctx context.Context, bounds AuthorizationBounds, scope Scope, query LessonQuery) (LessonsPage,
+	[]*ExperienceRecord, error) {
 	if err := query.Validate(); err != nil {
-		return LessonsPage{}, err
+		return LessonsPage{}, nil, err
 	}
 	limit := query.EffectiveLimit()
 	if !bounds.Permits(scope) {
-		return LessonsPage{Scope: scope, Outcome: LessonsDenied, Lessons: []Lesson{}, GeneratedAt: l.options.Clock()}, nil
+		return LessonsPage{Scope: scope, Outcome: LessonsDenied, Lessons: []Lesson{}, GeneratedAt: l.options.Clock()}, nil, nil
 	}
 	// One record past the limit tells "exactly the limit" from "more exist". Leaving ineligible lessons out may skip
 	// any number of records, so then as many as the store answers are read.
@@ -299,15 +306,16 @@ func (l *Lessons) List(ctx context.Context, bounds AuthorizationBounds, scope Sc
 	read, err := l.store.ListLessonRecords(ctx, bounds, scope, distinctStatuses(query.Statuses), probe)
 	if err != nil {
 		if errors.Is(err, ErrAuthorizationDenied) {
-			return LessonsPage{Scope: scope, Outcome: LessonsDenied, Lessons: []Lesson{}, GeneratedAt: l.options.Clock()}, nil
+			return LessonsPage{Scope: scope, Outcome: LessonsDenied, Lessons: []Lesson{}, GeneratedAt: l.options.Clock()}, nil, nil
 		}
-		return LessonsPage{}, err
+		return LessonsPage{}, nil, err
 	}
 	page := LessonsPage{Scope: scope, Outcome: LessonsFound, Lessons: []Lesson{}, GeneratedAt: l.options.Clock(),
 		InjectionsTracked: read.InjectionsTracked}
+	var records []*ExperienceRecord
 	for i := range read.Records {
 		if err := ctx.Err(); err != nil {
-			return LessonsPage{}, err
+			return LessonsPage{}, nil, err
 		}
 		held := &read.Records[i]
 		// Only the caller's own scope: a store that answered with anything else is not shown it.
@@ -328,6 +336,7 @@ func (l *Lessons) List(ctx context.Context, bounds AuthorizationBounds, scope Sc
 			break
 		}
 		page.Lessons = append(page.Lessons, lesson)
+		records = append(records, &held.Record)
 	}
 	// A store that answered as many records as were asked for may hold more than were read.
 	answered := read.Answered
@@ -338,10 +347,10 @@ func (l *Lessons) List(ctx context.Context, bounds AuthorizationBounds, scope Sc
 	// Contract 1.10: opt-in, so the default page reads nothing more.
 	if query.IncludeMeasuredBenefit && len(page.Lessons) > 0 {
 		if err := l.addMeasuredBenefit(ctx, bounds, scope, &page); err != nil {
-			return LessonsPage{}, err
+			return LessonsPage{}, nil, err
 		}
 	}
-	return page, nil
+	return page, records, nil
 }
 
 // addMeasuredBenefit sets each listed lesson's MeasuredBenefit from one estimate for the page's scope, over the benefit

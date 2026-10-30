@@ -353,6 +353,12 @@ var page = await provider.GetAgentExperienceLessons().ListForDevelopmentIdentity
 File.WriteAllText("lessons.html", ExperienceLessonsHtml.Render(page));
 ```
 
+Since contract 1.14 the Python and Go ports render the same page, byte for byte (`render_lessons_html(page)`,
+`ae.RenderLessonsHTML(page)`), and serve it idiomatically: Python's `lessons_html_response(lessons, identity)` returns
+a status, headers and body any ASGI or WSGI framework can send, and Go's `ae.LessonsHTMLHandler` is an `http.Handler`
+that takes the host's identity function. Both send the headers above. As in .NET, the authorization is yours: map the
+identity from your own authentication, and never expose the page publicly.
+
 When a lesson was last injected is not shown in this version.
 
 ## Wiring it all together

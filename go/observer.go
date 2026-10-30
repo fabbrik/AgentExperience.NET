@@ -104,12 +104,14 @@ const (
 	// AttributeCorrelationID is the host's correlation ID, on the inject operation when the request carries one
 	// (contract 1.13).
 	AttributeCorrelationID = "agentexperience.correlation_id"
+	// AttributeScreeningRefusal is why screening refused a reflection, on the finalize operation (contract 1.14).
+	AttributeScreeningRefusal = "agentexperience.reflection.screening_refusal"
 )
 
 // ObservedAttributes are the span attributes this port sets beyond the common ones, sorted.
 func ObservedAttributes() []string {
 	attributes := []string{AttributeAttemptID, AttributeCorrelationID, AttributeExperienceID, AttributeOmittedCount,
-		AttributeReflectionID, AttributeRunID, AttributeStage}
+		AttributeReflectionID, AttributeScreeningRefusal, AttributeRunID, AttributeStage}
 	sort.Strings(attributes)
 	return attributes
 }

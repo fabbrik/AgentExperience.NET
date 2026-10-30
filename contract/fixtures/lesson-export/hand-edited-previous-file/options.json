@@ -1,0 +1,22 @@
+{
+  "description": "The file was edited by hand (previous.md): text before the first heading, a heading whose ID is not a GUID in the D format (ignored, part of the section before it), a current lesson's heading in upper case (the same lesson, but its section differs, so updated), the same lesson's heading again (the first section counts), and an indented heading (not a heading). Every edit is lost.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "authorizedScope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "now": "2026-03-03T09:00:00.1234567+00:00",
+  "minimumRunsPerArm": 3,
+  "hasPreviousFile": true
+}

@@ -1,0 +1,22 @@
+{
+  "description": "A scope that sets every segment (team and user too): the file's scope block names each, in order. A task ID and lesson text that look like Markdown (a heading, a link, a list, an HTML tag) stay inside the indented code block.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": "payments",
+    "agentId": "refund-agent",
+    "userId": "user-17"
+  },
+  "authorizedScope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": "payments",
+    "agentId": "refund-agent",
+    "userId": "user-17"
+  },
+  "now": "2026-03-03T09:00:00.1234567+00:00",
+  "minimumRunsPerArm": 3,
+  "hasPreviousFile": false
+}

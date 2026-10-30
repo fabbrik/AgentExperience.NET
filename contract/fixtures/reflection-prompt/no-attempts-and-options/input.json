@@ -1,0 +1,68 @@
+{
+  "description": "A run with no attempts and no task description (the task ID is quoted instead), under a named model, no temperature (left to the provider), 512 output tokens and a 120-character quote limit.",
+  "options": {
+    "allowedArgumentNames": null
+  },
+  "run": {
+    "runId": "00000165-0000-4000-8000-000000000000",
+    "taskId": "check-only-task",
+    "taskDescription": null,
+    "scope": {
+      "tenantId": "contract-tenant",
+      "applicationId": "contract-app",
+      "projectId": "contract-project",
+      "teamId": null,
+      "agentId": "refund-agent",
+      "userId": null
+    },
+    "environment": {
+      "hostName": "contract-host",
+      "runtimeVersion": "runtime-1",
+      "operatingSystem": "linux",
+      "applicationVersion": "1.0.0",
+      "metadata": {
+        "region": "eu-west"
+      }
+    },
+    "provenance": {
+      "source": "contract-fixture",
+      "sourceVersion": "1",
+      "recordedAt": "2026-03-02T09:00:00+00:00",
+      "correlationId": null,
+      "exposedTo": []
+    },
+    "attempts": [],
+    "executionStatus": "Completed",
+    "outcome": null,
+    "startedAt": "2026-03-02T09:00:00+00:00",
+    "endedAt": "2026-03-02T09:00:20+00:00"
+  },
+  "completionEventId": "00000165-0000-4000-8000-0000000000e0",
+  "verification": {
+    "closedRound": {
+      "roundId": "0000007e-0000-4000-8000-000000000001",
+      "artifactRevision": "rev-1"
+    },
+    "requiredChecks": [
+      {
+        "checkId": "reviewed",
+        "expectedKind": "human-approval"
+      }
+    ],
+    "evidence": [
+      {
+        "evidenceId": "00000165-0000-4000-8000-00000000e100",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "reviewed",
+        "kind": "human-approval",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      }
+    ],
+    "currentArtifactRevision": "rev-1",
+    "finalizedAt": "2026-03-02T09:00:30+00:00"
+  }
+}

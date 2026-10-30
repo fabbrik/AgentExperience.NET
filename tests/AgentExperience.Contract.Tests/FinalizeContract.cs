@@ -49,7 +49,7 @@ internal static class FinalizeContract
 
     private const string Revision = "rev-1";
 
-    private static readonly ClosedVerificationRound Round = new(Fixed.Id(0x7e, 1), Revision);
+    internal static readonly ClosedVerificationRound Round = new(Fixed.Id(0x7e, 1), Revision);
 
     /// <summary>Every finalize case, by directory name.</summary>
     public static IReadOnlyList<(string Name, FinalizeInput Input)> Cases { get; } =
@@ -97,7 +97,18 @@ internal static class FinalizeContract
     /// in input order, and for the run's exposures. An attempt capture refuses is not stored, and the attempts it keeps
     /// are numbered from 0 in the order they were recorded.
     /// </summary>
-    public static async Task<(JsonObject Record, JsonObject Event, JsonObject Capture)> RunWithCaptureAsync(FinalizeInput input)
+    public static async Task<(JsonObject Record, JsonObject Event, JsonObject Capture)> RunWithCaptureAsync(FinalizeInput input) =>
+        await RunWithReflectorAsync(input, new DefaultExperienceReflector()) is var (record, lifecycleEvent, capture, _)
+            ? (record, lifecycleEvent, capture)
+            : default;
+
+    /// <summary>
+    /// As <see cref="RunWithCaptureAsync"/>, finalizing with <paramref name="reflector"/> (contract 1.14: the model-backed
+    /// reflector over a scripted chat client), also returning the finalization's result.
+    /// </summary>
+    public static async Task<(JsonObject Record, JsonObject Event, JsonObject Capture, FinalizeExperienceResult Result)> RunWithReflectorAsync(
+        FinalizeInput input,
+        IExperienceReflector reflector)
     {
         var sanitization = input.Options.AllowedArgumentNames is { } names
             ? AgentExperienceDefaults.SanitizationAllowing([.. names])
@@ -141,7 +152,7 @@ internal static class FinalizeContract
         Assert.Equal(CompleteRunOutcome.Recorded, completed.Outcome);
 
         var store = new InMemoryExperienceRecordStore(new FixedTimeProvider(input.Verification.FinalizedAt));
-        var finalization = new ExperienceFinalizationService(capture, new DefaultExperienceReflector(), store, new ExperienceLifecycleService(store));
+        var finalization = new ExperienceFinalizationService(capture, reflector, store, new ExperienceLifecycleService(store));
         var verification = input.Verification;
         var result = await finalization.FinalizeAsync(new FinalizeExperienceRequest(
             run.RunId,
@@ -172,7 +183,7 @@ internal static class FinalizeContract
             ["applied_revision"] = result.Revision,
         };
 
-        return (ContractJson.ToStored(record), lifecycleEvent, captureOutcomes);
+        return (ContractJson.ToStored(record), lifecycleEvent, captureOutcomes, result);
     }
 
     // ---- Cases -------------------------------------------------------------------------------------------------------
@@ -669,7 +680,7 @@ internal static class FinalizeContract
 
     // ---- Builders ----------------------------------------------------------------------------------------------------
 
-    private static ExperienceRun Run(Guid runId, string taskId, string? description, DateTimeOffset startedAt, IReadOnlyList<Attempt> attempts) => new(
+    internal static ExperienceRun Run(Guid runId, string taskId, string? description, DateTimeOffset startedAt, IReadOnlyList<Attempt> attempts) => new(
         runId,
         taskId,
         description,
@@ -682,7 +693,7 @@ internal static class FinalizeContract
         startedAt,
         startedAt.AddSeconds(20));
 
-    private static Attempt Attempt(Guid runId, int sequence, DateTimeOffset startedAt, IReadOnlyList<ToolCallRecord> calls, string? result = null, string? error = null) => new(
+    internal static Attempt Attempt(Guid runId, int sequence, DateTimeOffset startedAt, IReadOnlyList<ToolCallRecord> calls, string? result = null, string? error = null) => new(
         SubId(runId, 0xa0 + sequence),
         sequence,
         startedAt,
@@ -691,7 +702,7 @@ internal static class FinalizeContract
         result,
         error);
 
-    private static ToolCallRecord Call(
+    internal static ToolCallRecord Call(
         Guid runId,
         int attempt,
         int sequence,
@@ -709,7 +720,7 @@ internal static class FinalizeContract
             result,
             error);
 
-    private static VerificationInput Verified(Guid runId, DateTimeOffset finalizedAt, params (string CheckId, string Kind, CheckResult Result)[] checks) => new(
+    internal static VerificationInput Verified(Guid runId, DateTimeOffset finalizedAt, params (string CheckId, string Kind, CheckResult Result)[] checks) => new(
         Round,
         [.. checks.Select(check => new RequiredCheckInput(check.CheckId, check.Kind))],
         [.. checks.Select((check, index) => new Evidence(
@@ -726,7 +737,7 @@ internal static class FinalizeContract
         finalizedAt);
 
     /// <summary>An ID derived from a case's run ID, so every ID in a case reads as belonging to it.</summary>
-    private static Guid SubId(Guid runId, int n)
+    internal static Guid SubId(Guid runId, int n)
     {
         var text = runId.ToString("D", CultureInfo.InvariantCulture);
         return Guid.Parse(text[..24] + n.ToString("x12", CultureInfo.InvariantCulture));

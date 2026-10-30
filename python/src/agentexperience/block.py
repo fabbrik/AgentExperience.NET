@@ -264,7 +264,6 @@ def render_block(records: Sequence[RankedRecord], options: BlockOptions | None =
 
 def _render_verbose(ranked: RankedRecord, ordinal: int, options: BlockOptions) -> str:
     record = ranked.record
-    reflection = record.reflection
     text = [f"\n--- RECORD {ordinal} ---\n"]
     text.append(
         f"Source: experience {record.experience_id}; source run {record.source_run_id}; task {_clean(record.task_id)}\n"
@@ -282,17 +281,34 @@ def _render_verbose(ranked: RankedRecord, ordinal: int, options: BlockOptions) -
     text.append(f"Verification: {record.outcome.status}\n")
     text.append(f"Evidence: {_evidence_count(record)} evidence ID(s); no evidence detail is included.\n")
 
+    text.append(_lesson_lines(record, approach))
+    text.append(f"--- END RECORD {ordinal} ---\n")
+    return "".join(text)
+
+
+def _lesson_lines(record: ExperienceRecord, approach: str | None) -> str:
+    """The verbose layout's lesson lines: the lesson, the ``Tried:`` and ``Worked:`` lines, the reuse guidance, the
+    preconditions and the warnings, fenced as model-authored when a model wrote the reflection."""
+    reflection = record.reflection
     lesson = f"Lesson: {_clean(reflection.lesson if reflection else None)}\n"
     guidance = f"Reuse guidance: {_clean(reflection.reuse_guidance if reflection else None)}\n"
     bullets = _bullets("Preconditions", reflection.preconditions if reflection else None) + _bullets(
         "Warnings", reflection.warnings if reflection else None
     )
     if is_model_authored(reflection):
-        text += [approach or "", MODEL_AUTHORED_LINE + "\n", lesson, guidance, bullets, MODEL_AUTHORED_END_LINE + "\n"]
-    else:
-        text += [lesson, approach or "", guidance, bullets]
-    text.append(f"--- END RECORD {ordinal} ---\n")
-    return "".join(text)
+        return "".join(
+            [approach or "", MODEL_AUTHORED_LINE + "\n", lesson, guidance, bullets, MODEL_AUTHORED_END_LINE + "\n"]
+        )
+    return "".join([lesson, approach or "", guidance, bullets])
+
+
+def render_lesson_text(record: ExperienceRecord, options: BlockOptions | None = None) -> str:
+    """
+    ``record``'s lesson alone, as the verbose block renders it for the reader's own record, without the block's or the
+    record's delimiters or its source, confidence, ranking, recording, environment, verification and evidence lines
+    (.NET's ``HistoricalReferenceWriter.RenderLesson``): what an export carries (contract 1.14).
+    """
+    return _lesson_lines(record, _attempt_lines(record, options or BlockOptions()))
 
 
 def _render_compact(ranked: RankedRecord, ordinal: int, options: BlockOptions) -> str:

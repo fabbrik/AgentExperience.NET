@@ -3,6 +3,7 @@
 package contracttest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -313,6 +314,11 @@ func bySequence(items []any) []any {
 // RunFinalizeCase runs a finalize case's input.json through capture and finalization. It returns the result and
 // what capture answered, in expected-capture.json's form.
 func RunFinalizeCase(input any) (ae.FinalizedExperience, *ae.Object, error) {
+	return RunFinalizeCaseWith(input, nil)
+}
+
+// RunFinalizeCaseWith is RunFinalizeCase finalizing with reflector (contract 1.14; the deterministic one when nil).
+func RunFinalizeCaseWith(input any, reflector ae.Reflector) (ae.FinalizedExperience, *ae.Object, error) {
 	c := object(input)
 	run := object(get(c, "run"))
 	environment := object(get(run, "environment"))
@@ -422,13 +428,13 @@ func RunFinalizeCase(input any) (ae.FinalizedExperience, *ae.Object, error) {
 	for _, item := range list(get(verification, "evidence")) {
 		evidence = append(evidence, EvidenceOf(item))
 	}
-	finalized, err := ae.Finalize(captured, ae.Verification{
+	finalized, err := ae.FinalizeContextWith(context.Background(), captured, ae.Verification{
 		ClosedRound:             closed,
 		RequiredChecks:          checks,
 		Evidence:                evidence,
 		CurrentArtifactRevision: text(get(verification, "currentArtifactRevision")),
 		FinalizedAt:             must(ae.ParseInstant(text(get(verification, "finalizedAt")))),
-	})
+	}, ae.FinalizeOptions{Reflector: reflector})
 	return finalized, answers, err
 }
 

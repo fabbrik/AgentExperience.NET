@@ -1,0 +1,113 @@
+{
+  "columns": {
+    "experience_id": "42c94303-7331-8afc-a8f5-1507a49244f1",
+    "source_run_id": "00000183-0000-4000-8000-000000000000",
+    "tenant_id": "contract-tenant",
+    "application_id": "contract-app",
+    "project_id": "contract-project",
+    "team_id": null,
+    "agent_id": "refund-agent",
+    "user_id": null,
+    "task_id": "refund-stuck-pending",
+    "status": "Quarantined",
+    "reuse_confidence": 0,
+    "supporting_validations": 0,
+    "contradictions": 0,
+    "revision": 1,
+    "created_at": "2026-03-02T09:00:30+00:00",
+    "updated_at": "2026-03-02T09:00:30+00:00",
+    "payload_version": 1
+  },
+  "payload": {
+    "taskSummary": "Refund ticket 42 is stuck in pending",
+    "attempts": [
+      {
+        "attemptId": "00000183-0000-4000-8000-0000000000a0",
+        "sequenceNumber": 0,
+        "startedAt": "2026-03-02T09:00:01+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000183-0000-4000-8000-00000000c000",
+            "sequenceNumber": 0,
+            "toolName": "run_refund_check",
+            "arguments": {},
+            "startedAt": "2026-03-02T09:00:01+00:00",
+            "duration": "00:00:01.2500000",
+            "result": null,
+            "error": "System.InvalidOperationException: the refund lock is held by another worker"
+          }
+        ],
+        "result": null,
+        "error": "System.InvalidOperationException: the refund lock is held by another worker"
+      },
+      {
+        "attemptId": "00000183-0000-4000-8000-0000000000a1",
+        "sequenceNumber": 1,
+        "startedAt": "2026-03-02T09:00:05+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000183-0000-4000-8000-00000000c100",
+            "sequenceNumber": 0,
+            "toolName": "wait_for_lock",
+            "arguments": {},
+            "startedAt": "2026-03-02T09:00:05+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "Lock released; see https://status.example.com/incident/42 (host 10.0.0.7).",
+            "error": null
+          },
+          {
+            "toolCallId": "00000183-0000-4000-8000-00000000c101",
+            "sequenceNumber": 1,
+            "toolName": "run_refund_check",
+            "arguments": {},
+            "startedAt": "2026-03-02T09:00:06+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "refund issued",
+            "error": null
+          }
+        ],
+        "result": "Refund issued.",
+        "error": null
+      }
+    ],
+    "outcome": {
+      "status": "Verified",
+      "evidence": [
+        {
+          "evidenceId": "00000183-0000-4000-8000-00000000e100",
+          "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+          "artifactRevision": "rev-1",
+          "checkId": "refund-issued",
+          "kind": "integration-test",
+          "result": "Pass",
+          "producer": "contract-ci",
+          "detail": "all assertions passed",
+          "capturedAt": "2026-03-02T09:00:25+00:00"
+        }
+      ],
+      "reason": "Every required check conclusively resolved to Pass in the host-closed verification round for the current artifact revision.",
+      "evaluatedAt": "2026-03-02T09:00:30+00:00"
+    },
+    "completionScore": 1,
+    "reflection": null,
+    "environment": {
+      "hostName": "contract-host",
+      "runtimeVersion": "runtime-1",
+      "operatingSystem": "linux",
+      "applicationVersion": "1.0.0",
+      "metadata": {
+        "region": "eu-west"
+      }
+    },
+    "provenance": {
+      "source": "contract-fixture",
+      "sourceVersion": "1",
+      "recordedAt": "2026-03-02T09:00:00+00:00",
+      "correlationId": null
+    },
+    "closedRoundId": "0000007e-0000-4000-8000-000000000001",
+    "origin": "Finalized"
+  }
+}

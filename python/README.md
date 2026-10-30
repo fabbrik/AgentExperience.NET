@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.13, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.13 (and so every 1.0 to 1.12 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.14, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.14 (and so every 1.0 to 1.13 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -301,8 +301,8 @@ for lesson in page.lessons:                             # newest first
   `statuses`) raises `ValueError`. One record that cannot be rendered is listed as `Unrenderable`, and the rest still are.
 - **Reads only**, under the caller's authorization bounds and in the caller's own scope (no sharing grants in contract
   1.x). Build one without the setup with `ExperienceLessons(store, block_options=..., exclude_model_authored=...)` and
-  `list_scope(bounds, scope, query)`. The view discloses lessons: serve it only behind your own authorization. This
-  port renders no HTML and maps no endpoint.
+  `list_scope(bounds, scope, query)`. The view discloses lessons: serve it only behind your own authorization. It
+  renders as HTML and exports what helps (contract 1.14, below).
 - **Stores.** `InMemoryExperienceStore` and `PostgresExperienceStore` have `list_lessons_page`; PostgreSQL runs the
   contract's `sql/list-experience-lessons.sql` as written and needs no grants beyond 1.0 and 1.4.
 - **What was measured** (contract 1.10). `LessonsQuery(include_measured_benefit=True)` fills each lesson's
@@ -312,6 +312,131 @@ for lesson in page.lessons:                             # newest first
   `None` for a lesson no assigned run in the window named, and for every lesson when the store does not read the
   holdout. A store failure on that read raises the store's own error (on PostgreSQL the driver's, whose telemetry
   error class is `Infrastructure`, as .NET's `ExperienceStoreException`). Off by default: then nothing more is read.
+
+### Exporting measured lessons (contract 1.14)
+
+`export_measured` hands a sink every lesson the injection holdout measured as helping, as .NET's
+`AgentExperienceLessons.ExportMeasuredAsync` does, so a copy kept elsewhere (an instruction file an agent loads, another
+memory store) stays in step with what was learned. The built-in sink keeps one Markdown file, byte for byte what .NET's
+`MarkdownLessonFileSink` writes:
+
+```python
+from agentexperience import MarkdownLessonFileSink
+
+result = agent_experience_lessons(agent).export_measured(MarkdownLessonFileSink("AGENTS.lessons.md"))
+print(result.outcome, len(result.lessons), result.sync)   # Found 3 LessonSyncResult(added=3, updated=0, removed=0)
+```
+
+- **The set**: lessons in exactly the identity's scope, eligible for retrieval, whose record's outcome is `Verified` and
+  whose verdict is `Helps` (one estimate over the benefit policy's window, at `options`'s minimum runs per arm, the
+  policy's when `None`), sorted by experience ID. A store that does not track the holdout gives an empty set; the sink
+  is still called, so stale copies go. A scope outside the bounds returns that outcome and the sink is not called.
+  More reusable lessons than one read answers (500) raises `RuntimeError`, as .NET refuses. Nothing exports
+  automatically and nothing is written to the store; `export_measured_async` runs it on a worker thread.
+- **Your own sink**: anything with `sync(scope, current) -> LessonSyncResult` (`LessonSink`): add what it lacks, update
+  what changed, remove what is no longer in `current`. What it raises propagates.
+- **The Markdown file** is rewritten whole on every export, atomically (a temporary file in the same directory, then
+  `os.replace`; a failure removes it), UTF-8 without a BOM, LF only. Everything drawn from a record is an indented code
+  block, so no lesson can add a heading or a link. The file gets .NET's mode, read and write for everyone less the
+  umask (`0644` under the usual umask), never owner-only. Reading the file before, a leading byte order mark is dropped
+  and a heading's ID is trimmed of white space, as .NET reads them. The path must not be blank and is made absolute;
+  like .NET, the sink confines it to nothing, so check a path you take from configuration you do not trust. The
+  directory must exist.
+
+### The lessons page as HTML (contract 1.14)
+
+`render_lessons_html(page)` is .NET's `ExperienceLessonsHtml.Render`, byte for byte: one self-contained document (inline
+CSS, no script, no external request) with every record value encoded as .NET's `WebUtility.HtmlEncode` encodes it.
+`lessons_html_response(lessons, identity, method=...)` builds a response any framework can send, ASGI or WSGI:
+`status`, `headers` and `body`, as the .NET endpoint of the deployment guide answers. A `GET` gets the page with
+exactly `Content-Type: text/html; charset=utf-8`, `Cache-Control: no-store`, `X-Frame-Options: DENY` and a
+`Content-Security-Policy` that allows no script and no framing; any other method, `HEAD` included, is 405 with
+`Allow: GET`. `identity` is your own (an `ExperienceIdentity`, or a function resolving it from your authentication):
+none is 403, and a resolution or read that raises is 500, neither with a body that says why. **The package maps no route and authorizes nothing**: take the identity
+from your own authentication, never from the request, and serve it only behind your own authorization; the page
+discloses every lesson in the scope.
+
+```python
+from agentexperience import lessons_html_response
+
+async def lessons_page(scope, receive, send):                  # a bare ASGI app, behind your own auth middleware
+    response = lessons_html_response(
+        agent_experience_lessons(agent), lambda: identity_from(scope), method=scope["method"]
+    )
+    headers = [(name.lower().encode(), value.encode()) for name, value in response.headers]
+    await send({"type": "http.response.start", "status": response.status, "headers": headers})
+    await send({"type": "http.response.body", "body": response.body})
+```
+
+### Writing lessons with a model (contract 1.14)
+
+The deterministic reflector stays the default. `ChatClientExperienceReflector` (`agentexperience.chat_reflector`, the
+`maf` extra) asks an agent_framework chat client for a verified run's lesson, as .NET's
+`ChatClientExperienceReflector` does: the same system prompt and data message, request options, reading and failure
+classes. It is opt-in:
+
+```python
+from agentexperience import ChatReflectorOptions
+from agentexperience.chat_reflector import ChatClientExperienceReflector
+
+agent = use_agent_experience(
+    agent,
+    store=store,
+    identity=identity,
+    verify=tool_succeeded("run_tests"),
+    reflector=ChatClientExperienceReflector(chat_client, ChatReflectorOptions(model_name="gpt-4o", timeout=4.0)),
+    finalization_timeout=5.0,                                  # the model call counts against it
+)
+```
+
+- **Privacy.** It sends sanitized captured run content to your provider: the task text (or ID), each attempt's ordered
+  tool names, each call's and attempt's result and error (clipped to `max_quoted_length`), and the verification status
+  with the check and evidence IDs. Never tool arguments, evidence detail, the environment or the scope.
+  `build_prompt(request)` returns the exact data message.
+- **Its lessons are model-authored**: stored with `authorship` `Model`, screened by the content guard
+  (`agentexperience.content_guard`: credential shapes, mixed-script words, instruction-override phrasing, `data:` and
+  other always-refused links, and any URL, hostname or IP address the run did not show it), fenced at injection, and
+  left out under `model_authored_lessons="Exclude"`. A refusal stores the record `Quarantined`, with
+  `FinalizedExperience.screening_refusal_code` (`UnsafeContent`, `OverLimit`, ...) and `screening_refusal` (the reason,
+  which names fields and rules, never the text), and the `finalize` span's `agentexperience.reflection.screening_refusal`.
+- **Failures** (`ReflectionFailed`, with `kind` `ModelCallFailed`, `TimedOut`, `Unparseable`, `EmptyLesson`,
+  `ToolCallAttempted`, `OutputTooLarge`, `PromptTooLarge` or `ChatOptionsCallbackFailed`, the cause's type name only)
+  store the record `Quarantined` with no lesson; `FinalizedExperience.reflection_failure` holds it. A call still running
+  at `timeout` is abandoned, also when the client ignores cancellation; your own cancellation propagates.
+- **Your own reflector** plugs into the same seam: anything with `reflect(request)` returning a `Reflection` or an
+  awaitable of one (`ExperienceReflector`), passed as `reflector=` here or to `finalize` / `finalize_async`. It must
+  copy the request's identity and evaluation (`ReflectionRequest.ensure_matches`) and set `authorship="Model"` when a
+  model wrote it, and may declare `reflected_run_content(request)`, what it showed the model.
+
+| .NET (`ChatClientExperienceReflectorOptions`) | Python (`ChatReflectorOptions`) | agent_framework request option |
+| --- | --- | --- |
+| `ModelName` | `model_name` | `model` (left out when `None`) |
+| `Timeout` (30 s) | `timeout` (seconds or a `timedelta`) | |
+| `MaxQuotedLength` (500), `MaxPromptLength` (16,000) | `max_quoted_length`, `max_prompt_length` | |
+| `Temperature` (0) | `temperature` | `temperature` (left out when `None`) |
+| `MaxOutputTokens` (2,048) | `max_output_tokens` | `max_tokens` |
+| `ConfigureChatOptions` | `configure_chat_options` (mutates the options dict) | |
+| `Tools = null`, `ToolMode = None` | | no `tools`, `tool_choice="none"` |
+| `ChatResponseFormat.ForJsonSchema` | | `response_format={"type": "json_schema", "json_schema": {"name", "description", "schema"}}` |
+
+Differences from .NET, each forced by Python or agent_framework:
+
+- A client with function invocation is not refused: agent_framework's function invocation runs only the tools a request
+  offers, and the reflector offers none (its `additional_tools` are declaration-only, never run). A response carrying a
+  function call or result still fails as `ToolCallAttempted`.
+- None in the strict JSON reading, which matches .NET's: a duplicated `lesson`, `reuseGuidance` or list member is
+  `Unparseable`, a duplicated member it does not map (at any depth) is accepted, a lone surrogate escape is
+  `Unparseable`, 64 levels of nesting are read and 65 are not, and a number of any length in a member it does not map
+  is skipped.
+- The content guard bounds its work by size rather than by .NET's one-second match timeout: its patterns run in linear
+  time, and a text over 1,048,576 UTF-16 code units is treated as one .NET could not read in time (a run-content text
+  admits nothing; a field is refused as `text that could not be checked in time`).
+- A binding or screening that raises (a reflector returning something that is not a `Reflection`, a reflection missing
+  a bound field, a guard that fails) stores the record `Quarantined` with `screening_refusal_code` `Unreadable` and
+  `FinalizedExperience.screening_exception_type`, the type name only, as .NET's backstop does.
+- A client that blocks the event loop cannot be timed out (asyncio cannot interrupt it); one that awaits is.
+- The cause type in `ReflectionFailed` is the Python exception's (`RuntimeError`, `asyncio.exceptions.CancelledError`),
+  where .NET names its own.
 
 ### Measuring benefit: the injection holdout
 
@@ -542,7 +667,8 @@ which shares lessons with .NET agents on the same database.
 
 - **Capture and finalize.** `RunCapture` sanitizes a run as it is recorded: secret-named fields are redacted, argument
   values are kept only when allowlisted, and the default limits apply. `finalize` aggregates the host's verification,
-  writes the deterministic lesson for a verified run, and returns the stored record (`Validated`, or `Quarantined`
+  writes the lesson for a verified run (the deterministic reflector's, or a host reflector's: `reflector=`, with
+  `finalize_async` for an asynchronous one), screens it, and returns the stored record (`Validated`, or `Quarantined`
   without a lesson) and its initial lifecycle event. The IDs are derived, so a retry derives the same ones.
 - **The injected block.** `render_block` turns ranked records into the Historical Reference block, byte for byte as
   the .NET adapter writes it, in the compact or verbose layout, within the record and byte limits, with record text
@@ -680,16 +806,16 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.13: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.14: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and every
 injection option that needs no session (the receiving agent's gate, the model-authored policy, the request resolver
 and the host's decision),
-injection recording, the lessons view, the injection holdout, its benefit estimate and the benefit policy that acts on
+injection recording, the lessons view with its HTML page and the export of measured lessons, the model-backed
+reflector and the content guard for model-authored lessons, the injection holdout, its benefit estimate and the benefit policy that acts on
 it, measuring another memory provider, and telemetry. These .NET features have no counterpart
 here, so a mixed .NET and Python deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
-- **Exporting measured lessons.**
 - **Session tracking and withdrawal notices** (`SessionLimits`, `SessionStateKey`; story 27.6): the port keeps no
   per-session account of what it injected, so it never deduplicates, budgets a session or retracts a record; a held-out
   invocation is always `Withheld`, never a notices-only `Retracted` block.
@@ -702,7 +828,9 @@ here, so a mixed .NET and Python deployment should keep them on the .NET side:
   `PermittingGrantId`, `GrantDisclosure` and `GrantApproachArguments`.
 - **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5), and **provenance signing** (story 27.7; so no `ContentUnconfirmed` lesson state, and no `UnconfirmedContent` omission).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
-- **Lessons view HTML and endpoint mapping.**
+- **A reflection sanitizer**: .NET passes a reflection's free text through the host's `ISanitizer` between hygiene and
+  the content guard; this port has no host sanitizer for reflections (with .NET's default sanitizer that layer changes
+  nothing).
 
 What the port does write or read follows the same contract the .NET library is tested against.
 

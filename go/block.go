@@ -309,7 +309,6 @@ func RenderBlock(records []RankedRecord, options BlockOptions) (Block, error) {
 
 func renderVerbose(ranked *RankedRecord, ordinal int, options *BlockOptions) string {
 	record := &ranked.Record
-	reflection := record.Reflection
 	var text strings.Builder
 	fmt.Fprintf(&text, "\n--- RECORD %d ---\n", ordinal)
 	fmt.Fprintf(&text, "Source: experience %s; source run %s; task %s\n", record.ExperienceID, record.SourceRunID,
@@ -324,6 +323,15 @@ func renderVerbose(ranked *RankedRecord, ordinal int, options *BlockOptions) str
 	fmt.Fprintf(&text, "Verification: %s\n", record.Outcome.Status)
 	fmt.Fprintf(&text, "Evidence: %d evidence ID(s); no evidence detail is included.\n", evidenceCount(record))
 
+	text.WriteString(lessonLines(record, approach))
+	fmt.Fprintf(&text, "--- END RECORD %d ---\n", ordinal)
+	return text.String()
+}
+
+// lessonLines are the verbose layout's lesson lines: the lesson, the Tried: and Worked: lines (approach), reuse
+// guidance, preconditions and warnings, fenced as model-authored when a model wrote the reflection.
+func lessonLines(record *ExperienceRecord, approach string) string {
+	reflection := record.Reflection
 	var lesson, guidance string
 	var preconditions, warnings []string
 	if reflection != nil {
@@ -336,12 +344,9 @@ func renderVerbose(ranked *RankedRecord, ordinal int, options *BlockOptions) str
 	}
 	bulletText := bullets("Preconditions", preconditions) + bullets("Warnings", warnings)
 	if IsModelAuthored(reflection) {
-		text.WriteString(approach + modelAuthoredLine + "\n" + lesson + guidance + bulletText + modelAuthoredEndLine + "\n")
-	} else {
-		text.WriteString(lesson + approach + guidance + bulletText)
+		return approach + modelAuthoredLine + "\n" + lesson + guidance + bulletText + modelAuthoredEndLine + "\n"
 	}
-	fmt.Fprintf(&text, "--- END RECORD %d ---\n", ordinal)
-	return text.String()
+	return lesson + approach + guidance + bulletText
 }
 
 func renderCompact(ranked *RankedRecord, ordinal int, options *BlockOptions) string {

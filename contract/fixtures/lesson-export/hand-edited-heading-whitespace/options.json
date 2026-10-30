@@ -1,0 +1,22 @@
+{
+  "description": "Headings edited by hand around their IDs (previous.md): white space before and after the GUID (two spaces, a tab, a no-break space) is trimmed as .NET's GUID parser trims it, so each still opens its lesson's section; an upper-case GUID is the same lesson. Each section differs from what the sink writes now, so the three current lessons are updated, and a lesson the file held that is gone is removed.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "authorizedScope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "now": "2026-03-03T09:00:00.1234567+00:00",
+  "minimumRunsPerArm": 3,
+  "hasPreviousFile": true
+}

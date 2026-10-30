@@ -276,13 +276,13 @@ func (c *captureScope) finishWork(ctx context.Context, status ae.RunExecutionSta
 	}
 
 	finalizedAt := s.Clock()
-	finalized, err := ae.FinalizeContext(ctx, run, ae.Verification{
+	finalized, err := ae.FinalizeContextWith(ctx, run, ae.Verification{
 		ClosedRound:             &ae.ClosedVerificationRound{RoundID: roundID, ArtifactRevision: verdict.ArtifactRevision},
 		RequiredChecks:          verdict.RequiredChecks,
 		Evidence:                verdict.Evidence,
 		CurrentArtifactRevision: verdict.ArtifactRevision,
 		FinalizedAt:             finalizedAt,
-	})
+	}, ae.FinalizeOptions{Reflector: s.Reflector})
 	if err != nil {
 		return report(StageFinalize, "Finalizing the run failed; the run is not stored.", err)
 	}

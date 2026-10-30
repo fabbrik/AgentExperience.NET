@@ -1,0 +1,8 @@
+{
+  "outcome": "Quarantined",
+  "reflectionFailure": null,
+  "screening": {
+    "refusal": "OverLimit",
+    "reason": "its Lesson is longer than the 4000-character limit"
+  }
+}

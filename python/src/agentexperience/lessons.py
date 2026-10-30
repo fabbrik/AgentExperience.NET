@@ -13,12 +13,14 @@ One of .NET's ineligibility codes does not exist here: ``ContentUnconfirmed`` (n
 decides, in .NET's order, ``Status``, ``BelowConfidenceFloor`` (the retrieval policy's ``minimum_confidence``, 0.5 by
 default), ``ModelAuthored`` (when the settings exclude model-authored lessons), ``Expired`` (contract 1.12: the last
 activity is older than the retrieval policy's ``max_age`` at the view's clock), ``OverByteBudget`` (the block options'
-``max_bytes``) and ``Unrenderable``. It renders no HTML.
+``max_bytes``) and ``Unrenderable``. Contract 1.14: it exports the lessons measured as helping
+(:meth:`ExperienceLessons.export_measured`), and :mod:`agentexperience.lessons_html` renders a page as HTML.
 """
 
 from __future__ import annotations
 
 import asyncio
+import builtins
 import math
 import uuid
 from collections.abc import Callable, Sequence
@@ -26,10 +28,11 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from ._text import format_fixed
-from .benefit import LessonBenefit, estimate_benefit, lesson_benefit_to_json
+from .benefit import BenefitComparison, BenefitOptions, LessonBenefit, estimate_benefit, lesson_benefit_to_json
 from .benefit_policy import BenefitPolicy
-from .block import Block, BlockOptions, RankedRecord, render_block
+from .block import Block, BlockOptions, RankedRecord, render_block, render_lesson_text
 from .encoding import Instant
+from .export import ExportedLesson, LessonExportResult, LessonSink
 from .identity import ExperienceIdentity
 from .inmemory import (
     MAX_LESSONS_LIMIT,
@@ -256,19 +259,25 @@ class ExperienceLessons:
         outcome ``Denied``. ``has_more`` is set when more lessons matching the query exist or may exist. A store failure
         other than the unreadable injections raises. Never writes.
         """
-        query = query or LessonsQuery()
+        return self._read(bounds, scope, query or LessonsQuery())[0]
+
+    def _read(
+        self, bounds: AuthorizationBounds, scope: Scope, query: LessonsQuery
+    ) -> tuple[LessonsPage, builtins.list[ExperienceRecord]]:
+        """The page, with the record each listed lesson was described from, at the same index."""
         if not permits(bounds, scope):
-            return LessonsPage("Denied", scope, (), self._clock())
+            return LessonsPage("Denied", scope, (), self._clock()), []
         # One record past the limit tells "exactly the limit" from "more exist". Leaving ineligible lessons out may skip
         # any number of records, so then as many as the store answers are read.
         probe = min(query.limit + 1, MAX_LESSONS_LIMIT) if query.include_ineligible else MAX_LESSONS_LIMIT
         try:
             read = self._store.list_lessons_page(bounds, scope, query.statuses, probe)
         except AuthorizationDenied:
-            return LessonsPage("Denied", scope, (), self._clock())
+            return LessonsPage("Denied", scope, (), self._clock()), []
         generated_at = self._clock()
 
         lessons: list[Lesson] = []
+        described: builtins.list[ExperienceRecord] = []
         out_of_scope = 0
         has_more = False
         for row in read.rows:
@@ -284,12 +293,13 @@ class ExperienceLessons:
                 has_more = True
                 break
             lessons.append(lesson)
+            described.append(row.record)
         # A store that answered as many records as were asked for may hold more than were read.
         has_more = has_more or read.answered >= probe
         # Contract 1.10: opt-in, so the default page reads nothing more and is unchanged.
         if query.include_measured_benefit and lessons:
             lessons = _with_measured_benefit(self._store, self._benefit, bounds, scope, lessons, generated_at)
-        return LessonsPage(
+        page = LessonsPage(
             "Found",
             scope,
             tuple(lessons),
@@ -299,6 +309,102 @@ class ExperienceLessons:
             read.injections_tracked,
             query.include_measured_benefit,
         )
+        return page, described
+
+    def export_measured(
+        self,
+        sink: LessonSink,
+        identity: ExperienceIdentity | None = None,
+        options: BenefitOptions | None = None,
+    ) -> LessonExportResult:
+        """
+        Hands ``sink`` every lesson in the identity's scope that the holdout measured as helping (contract 1.14, .NET's
+        ``ExportMeasuredAsync``), so a copy kept elsewhere (a Markdown file an agent loads, another memory store) stays
+        in step: a sync, not a one-way dump.
+
+        A lesson is in the set when the view lists it in exactly the identity's scope, it is eligible, its record's
+        outcome is ``Verified`` and its verdict is ``Helps``, from one estimate for the scope over the benefit policy's
+        window, decided with ``options`` (the policy's, 20 runs per arm by default, when ``None``). The set is sorted by
+        experience ID. A store that does not track the holdout gives an empty set, and the sink is still called, so
+        stale copies are removed. A page or estimate that is not ``Found`` (the scope lies outside the bounds) is a
+        result carrying that outcome, and the sink is not called.
+
+        Explicit and read-only: nothing exports automatically, and nothing is written to the store. ``ValueError`` for
+        invalid options (before anything is read); ``RuntimeError`` when the scope holds more reusable lessons than one
+        read answers (500), or the sink returns nothing. Whatever the sink raises propagates.
+        """
+        if sink is None or not callable(getattr(sink, "sync", None)):
+            raise TypeError("sink must have a sync(scope, current) method.")
+        identity = identity or self._identity
+        if identity is None:
+            raise ValueError("An identity is required: pass one, or build the view with identity=.")
+        if options is not None and not isinstance(options, BenefitOptions):
+            raise TypeError("options must be BenefitOptions or None.")
+        options = options or self._benefit.estimator_options
+        bounds, scope = identity.authorization, identity.scope
+
+        page, records = self._read(
+            bounds, scope, LessonsQuery(ELIGIBLE_STATUSES, MAX_LESSONS_LIMIT, include_ineligible=False)
+        )
+        if page.outcome != "Found":
+            return LessonExportResult(scope, page.outcome, (), None, page.generated_at)
+        if page.has_more:
+            raise RuntimeError(
+                f"The scope holds more reusable lessons than one store read answers ({MAX_LESSONS_LIMIT}), so the "
+                "measured set cannot be read whole, and a sink given part of it would remove copies of lessons that "
+                "still help. Nothing was handed to the sink."
+            )
+
+        exported_at = page.generated_at
+        estimate = estimate_benefit(
+            self._store, bounds, scope, options, assigned_from=self._benefit.assigned_from(exported_at)
+        )
+        if estimate.outcome != "Found":
+            return LessonExportResult(scope, estimate.outcome, (), None, exported_at)
+
+        current: builtins.list[ExportedLesson] = []
+        if estimate.tracked:
+            helps: dict[uuid.UUID, BenefitComparison] = {}
+            for entry in estimate.lessons:
+                if entry is not None and entry.comparison.verdict == "Helps":
+                    helps.setdefault(entry.experience_id, entry.comparison)
+            seen: set[uuid.UUID] = set()
+            for lesson, record in zip(page.lessons, records, strict=True):
+                comparison = helps.get(lesson.experience_id)
+                if (
+                    not lesson.is_eligible
+                    or record.outcome.status != "Verified"
+                    or comparison is None
+                    or lesson.experience_id in seen
+                ):
+                    continue
+                seen.add(lesson.experience_id)
+                current.append(
+                    ExportedLesson(
+                        record.experience_id,
+                        record.revision,
+                        lesson.task_id,
+                        render_lesson_text(record, self._options),
+                        comparison,
+                        exported_at,
+                    )
+                )
+            current.sort(key=lambda exported: str(exported.experience_id))
+
+        sync = sink.sync(scope, tuple(current))
+        if sync is None:
+            raise RuntimeError("The sink's sync returned None.")
+        return LessonExportResult(scope, "Found", tuple(current), sync, exported_at, estimate.tracked)
+
+    async def export_measured_async(
+        self,
+        sink: LessonSink,
+        identity: ExperienceIdentity | None = None,
+        options: BenefitOptions | None = None,
+    ) -> LessonExportResult:
+        """:meth:`export_measured` on a worker thread, so a PostgreSQL read or a file write does not block the event
+        loop."""
+        return await asyncio.to_thread(self.export_measured, sink, identity, options)
 
     def _describe(self, record: ExperienceRecord, now: Instant) -> Lesson:
         """One record as a lesson. A record that cannot be rendered is a lesson marked so, never an exception."""

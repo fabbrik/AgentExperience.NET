@@ -1,0 +1,8 @@
+{
+  "modelName": null,
+  "timeoutSeconds": 30,
+  "maxQuotedLength": 500,
+  "maxPromptLength": 1600,
+  "temperature": 0,
+  "maxOutputTokens": 2048
+}

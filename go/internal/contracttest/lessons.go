@@ -312,3 +312,59 @@ func splitBenefit(page any) ([]any, any) {
 	}
 	return benefits, copied
 }
+
+// ---- Contract 1.14's lessons-html fixtures -------------------------------------------------------------------------
+
+// LessonsPageOf reads a lessons page in the lessons-view expected.json form with its scope (a lessons-html
+// page.json).
+func LessonsPageOf(value any) (ae.LessonsPage, error) {
+	o := object(value)
+	at := func(v any) (ae.Instant, error) { return ae.ParseInstant(text(v)) }
+	generated, err := at(get(o, "generatedAt"))
+	if err != nil {
+		return ae.LessonsPage{}, err
+	}
+	page := ae.LessonsPage{Scope: ScopeOf(get(o, "scope")), Outcome: ae.LessonsOutcome(text(get(o, "outcome"))),
+		Lessons: []ae.Lesson{}, GeneratedAt: generated, OutOfScopeDropped: int(integer(get(o, "outOfScopeDropped")))}
+	page.HasMore, _ = get(o, "hasMore").(bool)
+	page.InjectionsTracked, _ = get(o, "injectionsTracked").(bool)
+	for _, item := range list(get(o, "lessons")) {
+		l := object(item)
+		id, err := ae.ParseUUID(text(get(l, "experienceId")))
+		if err != nil {
+			return ae.LessonsPage{}, err
+		}
+		created, err := at(get(l, "createdAt"))
+		if err != nil {
+			return ae.LessonsPage{}, err
+		}
+		updated, err := at(get(l, "updatedAt"))
+		if err != nil {
+			return ae.LessonsPage{}, err
+		}
+		lesson := ae.Lesson{ExperienceID: id, TaskID: text(get(l, "taskId")), Status: ae.ExperienceStatus(text(get(l, "status"))),
+			Confidence: Number(get(l, "confidence")), CreatedAt: created, UpdatedAt: updated, Checks: []ae.LessonCheck{},
+			BlockText: text(get(l, "blockText")), InjectionCount: integer(get(l, "injectionCount"))}
+		lesson.IsEligible, _ = get(l, "isEligible").(bool)
+		if code := optionalText(get(l, "ineligibility")); code != nil {
+			lesson.Ineligibility = ae.LessonIneligibility(*code)
+		}
+		if reason := optionalText(get(l, "ineligibleReason")); reason != nil {
+			lesson.IneligibleReason = *reason
+		}
+		if injected := get(l, "lastInjectedAt"); injected != nil {
+			instant, err := at(injected)
+			if err != nil {
+				return ae.LessonsPage{}, err
+			}
+			lesson.LastInjectedAt = &instant
+		}
+		for _, c := range list(get(l, "checks")) {
+			check := object(c)
+			lesson.Checks = append(lesson.Checks, ae.LessonCheck{CheckID: text(get(check, "checkId")),
+				EvidenceKind: text(get(check, "evidenceKind")), Result: ae.CheckResult(text(get(check, "result")))})
+		}
+		page.Lessons = append(page.Lessons, lesson)
+	}
+	return page, nil
+}

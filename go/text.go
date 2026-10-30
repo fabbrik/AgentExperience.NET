@@ -314,17 +314,25 @@ var quoteLookAlikes = map[rune]bool{
 	0x02DD: true, 0x02EE: true, 0x3003: true, 0x301D: true, 0x301E: true, 0x301F: true, 0xFF02: true,
 }
 
-// visible makes invisible characters harmless, as the .NET writer's Visible and screening's Neutralize do. Line and
+// visible makes invisible characters harmless, as the .NET writer's Visible and screening's Neutralize do. A byte of
+// invalid UTF-8 is a lone surrogate's: a space, or with remove removed. Line and
 // paragraph separators become a space. Control, format, private-use, unassigned and blank-but-not-space characters
 // become a space, or with remove are removed unless they are whitespace. A run of combining marks keeps its first
 // four. With quoteLookAlikes, a double quote or a look-alike becomes "'".
 func visible(value string, remove, quoteLookAlikesToo bool) string {
 	var out strings.Builder
 	marks := 0
-	for _, r := range value {
+	for i := 0; i < len(value); {
+		r, size := utf8.DecodeRuneInString(value[i:])
+		i += size
 		isMark, removed := false, false
 		keep, kept := r, true
-		switch cat := category(r); {
+		cat := category(r)
+		if r == utf8.RuneError && size <= 1 {
+			// A byte of invalid UTF-8 is what a lone surrogate becomes in Go: a surrogate, not a character.
+			cat = "Cs"
+		}
+		switch {
 		case cat == "Zl" || cat == "Zp":
 			keep = ' '
 		case cat == "Cc" || cat == "Cf" || cat == "Co" || cat == "Cn" || cat == "Cs" || isBlankIgnorable(r):

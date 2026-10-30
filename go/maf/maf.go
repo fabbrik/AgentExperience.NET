@@ -61,7 +61,12 @@
 //     the options alone) lists what has been learned in a scope: each lesson's status, confidence and checks, the
 //     block text an agent would be shown for it, why retrieval would not use it, and when it was last injected, from
 //     the same store, block options and model-authored flag the injection uses. It reads only, in the caller's own
-//     scope and authorization, and renders no HTML.
+//     scope and authorization. ae.RenderLessonsHTML renders a page as .NET's lessons page, and Lessons.ExportMeasured
+//     keeps a Markdown file of the lessons the holdout measured as helping (contract 1.14).
+//
+//   - The model-backed reflector (contract 1.14), with Options.Reflector and NewChatClientReflector: a model writes the
+//     lesson of a verified run, through structured output, and finalization screens it with the content guard. Off by
+//     default: the deterministic reflector writes it.
 //
 // Nothing here returns an error or panics into the agent: a store, identity, classifier or verifier failure means no
 // block, or no stored record, and is reported through OnInjectionFailure or OnCaptureFailure. Only the invocation's
@@ -261,6 +266,11 @@ type Options struct {
 	// Verify decides from your own facts whether a run is stored (see ae.ToolSucceeded and the others); without it
 	// nothing is stored.
 	Verify ae.Verifier
+	// Reflector writes the lesson of a verified run (contract 1.14): the deterministic reflector when nil. Opt in to a
+	// model with NewChatClientReflector; its call runs inside FinalizationTimeout, so raise that above the reflector's
+	// own Timeout. A reflector that fails, or whose reflection screening refuses, stores the run Quarantined, with no
+	// lesson (FinalizedExperience.ReflectionFailure, ScreeningRefusal).
+	Reflector ae.Reflector
 	// ClassifyToolResult marks a returned tool call as failed (see ae.ExitCode and ae.HTTPStatus).
 	ClassifyToolResult ae.ToolResultClassifier
 	// TaskID is the task ID runs are captured under; when empty, the agent's name reduced to an identifier, else

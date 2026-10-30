@@ -1,0 +1,46 @@
+{
+  "modelId": "gpt-4o-2024-08-06",
+  "messages": [
+    {
+      "role": "user",
+      "contents": [
+        {
+          "type": "text",
+          "text": "not part of the answer",
+          "callId": null,
+          "name": null
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "contents": [
+        {
+          "type": "reasoning",
+          "text": "The run failed once on the lock, then worked.",
+          "callId": null,
+          "name": null
+        },
+        {
+          "type": "text",
+          "text": "{\"lesson\":\"Wait for the refund lock to clear, then retry the",
+          "callId": null,
+          "name": null
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "contents": [
+        {
+          "type": "text",
+          "text": " refund check once.\",\"successfulApproaches\":[\"Waited for the lock, then ran the refund check.\"],\"failedApproaches\":[\"Retried at once while the lock was held.\"],\"preconditions\":[\"The refund service is reachable.\"],\"warnings\":[\"The cause of the held lock is not known.\"],\"reuseGuidance\":\"Check the lock before retrying.\",\"confidence\":0.99,\"verificationStatus\":\"Failed\",\"evidenceIds\":[]}",
+          "callId": null,
+          "name": null
+        }
+      ]
+    }
+  ],
+  "throws": false,
+  "delayMilliseconds": 0
+}
