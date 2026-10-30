@@ -1334,6 +1334,8 @@
     "fixtures/reuse-feedback/engine-throws/input.json": "1c39beefd13668d609201eaa7151d5ff9fdffea52d19a00416a00ebad495d113",
     "fixtures/reuse-feedback/exposure-only/expected.json": "293a336861fe8406373fd0e14023ece5c2d7e78b751cf54c5a47f677f0adcca4",
     "fixtures/reuse-feedback/exposure-only/input.json": "5ea23932c532e2e6e28fd45a2a063437e7bf12ec4445039a7dcfe7dde1815e31",
+    "fixtures/reuse-feedback/exposure-order/expected.json": "347e289f4659b8ae3b787d43c288126b08413a625f8974f02f455b400194dd08",
+    "fixtures/reuse-feedback/exposure-order/input.json": "f555885be4261958da11a021826d45bece0dc94fec1e4d473c4d820304fd2295",
     "fixtures/reuse-feedback/human-harmed-contests/expected.json": "e4593a340fe8a63af752249e29b50b90b37a474387f247617f0029c5f12638af",
     "fixtures/reuse-feedback/human-harmed-contests/input.json": "52b01d433ee1ebcd4417e1a069bb438888af4724cf7ed0e07131bd21914d21ed",
     "fixtures/reuse-feedback/human-improved/expected.json": "71efdd0978b7e6f608269fb18b6c0961bc5519e8e38de75ded7949e24d430b8a",

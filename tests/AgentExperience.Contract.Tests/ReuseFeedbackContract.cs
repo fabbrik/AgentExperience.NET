@@ -88,6 +88,7 @@ internal static class ReuseFeedbackContract
         ("store-validation", StoreValidation()),
         ("store-idempotency", StoreIdempotency()),
         ("derived-ids", DerivedIds()),
+        ("exposure-order", ExposureOrder()),
     ];
 
     private static JsonObject ExposureOnly()
@@ -493,6 +494,37 @@ internal static class ReuseFeedbackContract
                 Step("derive", Derive(Fixed.Id(R, 0xf302), record)),
                 Step("derive", Derive(Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"), Guid.Parse("00000000-0000-0000-0000-000000000001"))),
             ]);
+    }
+
+    private static JsonObject ExposureOrder()
+    {
+        Guid G(string text) => Guid.Parse(text);
+        var high = Rec(0x150) with { ExperienceId = G("ffffffff-0000-4000-8000-000000000001") };
+        var middle = Rec(0x151) with { ExperienceId = G("7fffffff-0000-4000-8000-000000000001") };
+        var exposed = new[]
+        {
+            middle.ExperienceId,
+            G("00001170-0001-4000-8000-ffffffffffff"),
+            high.ExperienceId,
+            G("00001170-ffff-4000-8000-000000000001"),
+            G("80000000-0000-4000-8000-000000000001"),
+            G("00001170-0001-4000-ffff-000000000001"),
+            G("00001170-0001-ffff-8000-000000000001"),
+            G("00001170-0001-4000-8000-000000000001"),
+        };
+        var ledger = Ledger(0x301, [.. exposed.Select(id => new ExperienceReuseExposure(id, false, null))]);
+        return Case(
+            "Exposures are stored, compared and reported in Guid order, which is the order of the IDs' lowercase text " +
+            "(unsigned, group by group): an ID whose first group has its top bit set sorts after one whose first group does " +
+            "not, and IDs equal in their first group sort by the second, third and fourth. The same order whether the " +
+            "service or the ledger alone is asked, and the attributed records are submitted in it.",
+            [high, middle],
+            [
+                Submit(Feedback(1, exposed) with { ComparativeEvaluation = Comparative([high.ExperienceId, middle.ExperienceId]) }),
+                Record(ledger),
+                Record(ledger with { Exposures = [.. ledger.Exposures.Reverse()] }),
+            ],
+            clocks: [Clock, Clock.AddMinutes(1), Clock.AddMinutes(2)]);
     }
 
     // ---- finalize-reuse-evidence -----------------------------------------------------------------------------------
