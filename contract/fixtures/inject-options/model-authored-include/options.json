@@ -1,0 +1,15 @@
+{
+  "description": "ModelAuthoredLessons Include (the default): the model-authored record is injected, its model-written fields between the two fixed authored lines.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": null,
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
+}

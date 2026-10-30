@@ -120,6 +120,51 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 - Still .NET-only: required environment attributes and a custom environment scorer.
   The injection options (deciding and resolving the request, capabilities and tool risk) are story 27.4b.
 
+### The injection options in Python and Go: contract 1.13 (story 27.4b)
+
+- **Contract 1.13** ([what it adds](contract/README-1.13.md)) brings the deterministic injection options into the
+  language-neutral contract, add-only: `inject-options` fixtures generated through the .NET provider's own selection and
+  writer (ranked records, the options and the receiving agent in; the request retrieval is asked for, the block, the
+  message role, every omission with its reason and detail, and the outcome out), covering each `ToolRiskClass`, the
+  tool check, run tools, the gated retrieval window, each `ModelAuthoredLessonPolicy`, approach arguments, each
+  `FailureDetail`, the system role and limits with the gate. Every 1.0-1.12 file is unchanged. .NET gains no public
+  API; its provider gains two internal entries the fixtures are generated through.
+- **New in both ports (additions hosts can observe), all off by default:** the receiving agent's capability gate
+  (Python `receiving_agent=ReceivingAgent(...)`, Go `Options.ReceivingAgent`), which omits a record as
+  `ToolUnavailable` or `RiskClassExceeded` (no detail) before the record limit and widens retrieval while a gate can
+  reject; the model-authored policy (`model_authored_lessons` / `ModelAuthoredLessons`, `Include` or `Exclude`; the
+  earlier `exclude_model_authored` / `ExcludeModelAuthored` still works); the host's request resolver (`resolve_request`
+  / `ResolveRequest`: `None`/nil is the `inject` outcome `Skipped`, a failure `Failed`, a request retrieval refuses
+  `RetrievalFailed`); and the host's injection decision (`decide_injection` / `DecideInjection`), fail-closed, whose
+  denials are the new omission reason `HostDenied`. With none of them set, the block, the omissions and the outcomes
+  are exactly what they were.
+- **Both ports put a request's correlation ID on the `inject` span** as `agentexperience.correlation_id`, as .NET does.
+- **The ports' injection results can carry three new omission reasons**, `ToolUnavailable`, `RiskClassExceeded` and
+  `HostDenied` (Go `OmittedToolUnavailable`, `OmittedRiskClassExceeded`, `OmittedHostDenied`); a host that switches
+  over the reasons should handle them.
+- **Port differences:** Python's `use_run_tools` sees the agent's own tools and those an earlier context provider
+  added, never tools passed to one `run` call (agent-framework does not hand them to a context provider); Go sees both.
+  The ports have no final re-read, so the decision sees the ranked record. Session tracking and withdrawal (27.6),
+  unconfirmed content (27.7), grant fields (27.8) and required environment attributes stay .NET-only.
+- **Behaviour change in both ports: the injected callback hears every attempt**, as .NET's `OnContextInjected` does.
+  Python `on_injected` and Go `OnInjected` are now also called with `Skipped` (no identity, or the resolver returned
+  nothing), `Failed` and `RetrievalFailed`, and Go's also with `RetrievalTimedOut` and `RetrievalDenied` (Python's
+  already was), each with nothing delivered; the `inject` span carries `agentexperience.omitted_count` 0 on those
+  paths. The failure callback is still called. A host that counts every callback as a delivery should check the
+  outcome. The ports' result still has no `CorrelationId` or `Failure` field.
+- **Behaviour change in both ports: a byte budget of 754 bytes or less is refused** when the agent is built
+  (Python `ValueError`, Go an error from `UseAgentExperience`; Go's 0 still means the default), as .NET refuses a
+  budget that cannot fit the verbose block's fixed frame. New constants: Python `block.BLOCK_OVERHEAD_BYTES`, Go
+  `ae.BlockOverheadBytes`.
+- **Python:** an async `decide_injection` is refused with `TypeError` (the decision is synchronous, as in .NET); a
+  `CancelledError` the resolver raises while the invocation itself is not being cancelled is `Failed` instead of
+  propagating (Python 3.11+); `RequestContext.messages` holds the replayed history and the new input.
+- **Go:** `maf.InjectionRequest.Limit` is an `*int` (nil for none, and 0 is refused as `RetrievalFailed`, as .NET
+  refuses it); `Deny("")` reports an empty detail, as .NET does, while a zero `InjectionDecision` reports the default;
+  `ae.ApplyHostDecisions` and `ae.HostDecision` are public.
+- **Both ports: a capability gate built directly with run tools fails closed** when it is checked without the
+  invocation's tools: every approach that calls a tool is `ToolUnavailable`.
+
 ## 0.1.0-preview.17
 
 This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of

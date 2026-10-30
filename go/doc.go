@@ -21,7 +21,9 @@
 // numbers: overall, per lesson and, split by the run's model (ModelMetadataKey), per model. The benefit policy (contract
 // 1.10, BenefitPolicy) acts on it: BenefitView is what one estimate means for an invocation, and SelectCandidates the
 // selection .NET's context provider runs, so a lesson measured Hurts is omitted (MeasuredHarmful) and, on request, the
-// lessons measured Helps go first. The lessons view shows each lesson's measured benefit (IncludeMeasuredBenefit).
+// lessons measured Helps go first. The lessons view shows each lesson's measured benefit (IncludeMeasuredBenefit). The
+// injection options (contract 1.13) add the receiving agent's capability gate (ReceivingAgent, NewCapabilityGate,
+// GatedWindow, SelectOptions.Gate) and the model-authored policy (ModelAuthoredLessonPolicy).
 //
 // The contract is generated from .NET, where a string is UTF-16: every length, cut and limit here is counted in
 // UTF-16 code units, never in bytes or runes. Whitespace, word characters and ignoring case are .NET's, not Go's
@@ -32,7 +34,7 @@
 package agentexperience
 
 // ContractVersion is the contract version this package implements.
-const ContractVersion = "1.12"
+const ContractVersion = "1.13"
 
 // SupportedContractVersions are the contract versions this package passes: every fixture of each.
-var SupportedContractVersions = []string{"1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11", "1.12"}
+var SupportedContractVersions = []string{"1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11", "1.12", "1.13"}

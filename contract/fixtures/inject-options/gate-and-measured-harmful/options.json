@@ -1,0 +1,26 @@
+{
+  "description": "The benefit policy with a gate: a lesson measured Hurts is MeasuredHarmful before the gate is asked, then the gate omits, and the lesson measured Helps moves first with PreferMeasuredHelpful.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": {
+    "availableTools": null,
+    "maxRiskClass": "Low",
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": false,
+    "gatedRetrievalWindowMultiplier": 4
+  },
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": true
+}

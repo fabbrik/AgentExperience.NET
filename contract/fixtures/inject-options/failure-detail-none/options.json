@@ -1,0 +1,15 @@
+{
+  "description": "FailureDetail None: a failed attempt says only failed, and a failed call [failed].",
+  "rendering": "Compact",
+  "failureDetail": "None",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": null,
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
+}

@@ -24,6 +24,15 @@ type retrieval struct {
 	now    ae.Instant
 }
 
+// query is what one invocation retrieves (contract 1.13): the task text, the preferred environment, the model-authored
+// exclusion, and the limit ranking is cut to (0 for the policy's candidate limit).
+type query struct {
+	taskText  string
+	preferred map[string]string
+	exclude   bool
+	limit     int
+}
+
 // textAnswer is what the text search answered.
 type textAnswer struct {
 	rows []ae.SearchRow
@@ -45,7 +54,8 @@ const (
 // the injection, the inject operation's outcome; ok is false then. err is set only for the caller's own cancellation,
 // which propagates: both operations are reported as failed with it (Faulted, Cancelled), and nothing else is told.
 func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identity *ae.Identity,
-	taskText string) (result retrieval, ok bool, err error) {
+	q query) (result retrieval, ok bool, err error) {
+	taskText := q.taskText
 	s := p.settings
 	retrieveCtx, observed := ae.Observe(ctx, "retrieve", false)
 	defer observed.End()
@@ -55,7 +65,7 @@ func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identi
 		if failure != nil {
 			s.reportInjection(*failure)
 		}
-		op.Done(injectOutcome)
+		s.nothing(op, injectOutcome)
 		return retrieval{}, false, nil
 	}
 	cancelled := func() (retrieval, bool, error) {
@@ -75,11 +85,11 @@ func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identi
 			"The candidate store has too many abandoned searches still running (at least %d), so no search was started.",
 			limit)})
 	}
-	parameters, err := s.retrieval.SearchParameters(identity.Scope, taskText, s.ExcludeModelAuthored)
+	parameters, err := s.retrieval.SearchParameters(identity.Scope, taskText, q.exclude)
 	if err != nil {
 		observed.Fail(err)
 		s.reportInjection(InjectionFailure{Reason: "The retrieval policy refused the search; no block was added.", Err: err})
-		op.Done("Failed")
+		s.nothing(op, "Failed")
 		return retrieval{}, false, nil
 	}
 
@@ -96,7 +106,7 @@ func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identi
 		vectorDone <- vectorAnswer{fallback: fallback}
 	} else {
 		go func() {
-			rows, fallback := s.vectorChannel(searchCtx, identity, taskText, s.VectorTimeout < s.retrieval.Timeout)
+			rows, fallback := s.vectorChannel(searchCtx, identity, taskText, q.exclude, s.VectorTimeout < s.retrieval.Timeout)
 			vectorDone <- vectorAnswer{rows, fallback, fallback != nil && policyExpired()}
 		}()
 	}
@@ -160,17 +170,21 @@ func (p *ContextProvider) retrieve(ctx context.Context, op *ae.Operation, identi
 	}
 	// The instant the block is built at: ranking's "now", and the injection's instant.
 	now := s.Clock()
-	options := ae.RankOptions{ExcludeModelAuthored: s.ExcludeModelAuthored, Policy: s.retrieval, Decay: s.decay}
+	options := ae.RankOptions{ExcludeModelAuthored: q.exclude, Policy: s.retrieval, Decay: s.decay}
 	var ranked ae.RankedResult
 	if len(vector.rows) > 0 {
-		ranked, err = ae.RankHybridWith(text.rows, vector.rows, identity.Scope, now, s.PreferredEnvironment, options)
+		ranked, err = ae.RankHybridWith(text.rows, vector.rows, identity.Scope, now, q.preferred, options)
 	} else {
-		ranked, err = ae.RankWith(text.rows, identity.Scope, now, s.PreferredEnvironment, options)
+		ranked, err = ae.RankWith(text.rows, identity.Scope, now, q.preferred, options)
+	}
+	if err == nil && q.limit > 0 && len(ranked.Ranked) > q.limit {
+		// As .NET's retrieval: the ranked records are cut to the request's own limit (the gated window, contract 1.13).
+		ranked.Ranked = ranked.Ranked[:q.limit]
 	}
 	if err != nil {
 		observed.Fail(err)
 		s.reportInjection(InjectionFailure{Reason: "Ranking failed; no block was added.", Err: err})
-		op.Done("Failed")
+		s.nothing(op, "Failed")
 		return retrieval{}, false, nil
 	}
 	observed.Done(string(ae.RetrievalCompleted))

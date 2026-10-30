@@ -1,0 +1,26 @@
+{
+  "description": "UseRunTools with no AvailableTools, on an invocation that offers no tool: only records whose approach calls no tool pass.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": {
+    "availableTools": null,
+    "maxRiskClass": null,
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": true,
+    "gatedRetrievalWindowMultiplier": 4
+  },
+  "runTools": [],
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
+}

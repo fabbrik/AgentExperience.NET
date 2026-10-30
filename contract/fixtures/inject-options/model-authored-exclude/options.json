@@ -1,0 +1,15 @@
+{
+  "description": "ModelAuthoredLessons Exclude: retrieval is asked to exclude model-authored records and leaves out any the source still returns, so they are not among the ranked records and take no slot.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 2,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Exclude",
+  "requestLimit": null,
+  "receivingAgent": null,
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
+}

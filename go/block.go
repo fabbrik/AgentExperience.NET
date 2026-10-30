@@ -201,6 +201,10 @@ func (o BlockOptions) withDefaults() BlockOptions {
 }
 
 // Validate refuses options the block cannot honour.
+// BlockOverheadBytes is the UTF-8 size of the verbose block's fixed header and footer (.NET's
+// HistoricalReferenceWriter.BlockOverheadBytes, 754): an agent's byte budget must exceed it, or no record could ever fit.
+var BlockOverheadBytes = len(BlockBegin + "\n" + preamble + BlockEnd + "\n")
+
 func (o BlockOptions) Validate() error {
 	o = o.withDefaults()
 	if o.Rendering != RenderingCompact && o.Rendering != RenderingVerbose {

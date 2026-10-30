@@ -1,0 +1,28 @@
+{
+  "outcome": "NothingToInject",
+  "messageRole": null,
+  "retrievalRequest": {
+    "limit": null,
+    "excludeModelAuthored": false
+  },
+  "decisions": [],
+  "injected": [],
+  "byteCount": 0,
+  "omitted": [
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000002",
+      "reason": "RiskClassExceeded",
+      "detail": null
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000003",
+      "reason": "RiskClassExceeded",
+      "detail": null
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000004",
+      "reason": "RiskClassExceeded",
+      "detail": null
+    }
+  ]
+}

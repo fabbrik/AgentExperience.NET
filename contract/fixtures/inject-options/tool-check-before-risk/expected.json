@@ -1,0 +1,30 @@
+{
+  "outcome": "Injected",
+  "messageRole": "User",
+  "retrievalRequest": {
+    "limit": null,
+    "excludeModelAuthored": false
+  },
+  "decisions": [],
+  "injected": [
+    "000000e1-0000-4000-8000-000000000001"
+  ],
+  "byteCount": 639,
+  "omitted": [
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000002",
+      "reason": "RiskClassExceeded",
+      "detail": null
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000003",
+      "reason": "ToolUnavailable",
+      "detail": null
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000004",
+      "reason": "ToolUnavailable",
+      "detail": null
+    }
+  ]
+}

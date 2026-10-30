@@ -71,6 +71,20 @@ internal sealed class ExperienceBenefitCache
         }
     }
 
+    /// <summary>
+    /// Holds <paramref name="estimate"/> for this principal and scope as though a refresh had just read it, so the next
+    /// <see cref="Current"/> answers with it and starts no refresh until it is stale. For tests and contract fixtures.
+    /// </summary>
+    internal void Prime(AuthorizationContext authorization, Scope scope, ExperienceBenefitEstimate estimate)
+    {
+        var entry = _entries.GetOrAdd(new Key(scope, authorization.TenantId, authorization.PrincipalId), static _ => new Entry());
+        lock (entry)
+        {
+            entry.Views = BenefitViews.From(estimate);
+            entry.RefreshedAt = _clock.GetUtcNow();
+        }
+    }
+
     /// <summary>Completes once every refresh started so far has ended. For tests.</summary>
     internal Task SettledAsync() => Task.WhenAll(_refreshes.Keys);
 

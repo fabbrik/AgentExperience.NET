@@ -174,7 +174,7 @@ func (s *settings) indexOf() (ae.EmbeddingIndex, *ae.VectorFallback) {
 // vectorChannel is the vector channel (contract 1.6): embed the task text, search the stored vectors, both within
 // ctx (the retrieval policy's Timeout) and, when bounded (VectorTimeout is strictly shorter), VectorTimeout. It never panics and never fails the invocation: whatever goes wrong is the fallback it answers with
 // (and no rows), and the fallback's text never quotes record or vector content.
-func (s *settings) vectorChannel(ctx context.Context, identity *ae.Identity, taskText string,
+func (s *settings) vectorChannel(ctx context.Context, identity *ae.Identity, taskText string, exclude bool,
 	bounded bool) (rows []ae.SearchRow,
 	fallback *ae.VectorFallback) {
 	defer func() {
@@ -199,7 +199,7 @@ func (s *settings) vectorChannel(ctx context.Context, identity *ae.Identity, tas
 		if err != nil {
 			return ae.VectorQuery{}, err
 		}
-		query, err := s.retrieval.VectorQuery(identity.Scope, e.modelID, e.vector, s.ExcludeModelAuthored)
+		query, err := s.retrieval.VectorQuery(identity.Scope, e.modelID, e.vector, exclude)
 		if err != nil {
 			return ae.VectorQuery{}, err
 		}

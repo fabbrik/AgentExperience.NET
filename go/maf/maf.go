@@ -199,8 +199,12 @@ type InjectionFailure struct {
 // contribute (contract 1.6), why: nil when it did.
 type InjectionResult struct {
 	// Outcome is the inject operation's outcome, as .NET's InjectionOutcome names it: Injected; NothingToInject (no
-	// task text, or every ranked record was omitted: Omitted says why, for example MeasuredHarmful); or Withheld (in
-	// what OnWithheld is told).
+	// task text, or every ranked record was omitted: Omitted says why, for example MeasuredHarmful); Withheld (in
+	// what OnWithheld is told); or, with nothing injected, Skipped (no identity, or ResolveRequest returned nil),
+	// Failed, RetrievalFailed, RetrievalTimedOut or RetrievalDenied (contract 1.13: every attempt is reported, as .NET's
+	// OnContextInjected is; OnInjectionFailure still says why one failed). Unlike .NET's ExperienceInjectionResult it
+	// carries no CorrelationId or Failure: the request's correlation ID is on the inject span, and a failure's reason
+	// and error go to OnInjectionFailure.
 	Outcome        string
 	ExperienceIDs  []ae.UUID
 	ByteCount      int
@@ -209,8 +213,9 @@ type InjectionResult struct {
 	// WithheldExperienceIDs are the records a held-out invocation's block named and did not deliver (contract 1.8):
 	// set only in what OnWithheld is told, where ExperienceIDs is empty and ByteCount 0.
 	WithheldExperienceIDs []ae.UUID
-	// Omitted are the ranked records that were not put in the block, and why (contract 1.10): measured harmful,
-	// model-authored, past the record limit or over the byte budget, in the order .NET reports them.
+	// Omitted are the ranked records that were not put in the block, and why, in the order .NET reports them:
+	// MeasuredHarmful (contract 1.10), ModelAuthored, ToolUnavailable and RiskClassExceeded (the capability gate, contract
+	// 1.13), OverRecordLimit, HostDenied (the host's DecideInjection, contract 1.13) and OverByteBudget.
 	Omitted []ae.OmittedRecord
 	// Excluded are the candidates ranking left out, and why (contract 1.12, .NET's Excluded): IneligibleStatus,
 	// ModelAuthored or Expired (RetrievalPolicy.MaxAge). Not a complete account: what the search filtered never shows.
@@ -275,8 +280,33 @@ type Options struct {
 	Model string
 	// PreferredEnvironment is the metadata ranking prefers.
 	PreferredEnvironment map[string]string
-	// ExcludeModelAuthored leaves model-authored lessons out of the search and the ranking.
+	// ExcludeModelAuthored leaves model-authored lessons out of the search and the ranking: the same as
+	// ModelAuthoredLessons Exclude (either one excludes).
 	ExcludeModelAuthored bool
+	// ModelAuthoredLessons is .NET's ModelAuthoredLessonPolicy (contract 1.13): Include (when empty) injects a
+	// model-authored lesson inside the fixed Authored:/End authored: fence; Exclude asks retrieval to leave them out
+	// and omits any that arrives (ae.OmittedModelAuthored, no detail), before the record limit, so it takes no slot.
+	ModelAuthoredLessons ae.ModelAuthoredLessonPolicy
+	// ReceivingAgent is .NET's ReceivingAgentCapabilities (contract 1.13): what the agent receiving the block can and
+	// may do. A record whose verified approach calls a tool it lacks, or one above its MaxRiskClass, is omitted
+	// (ae.OmittedToolUnavailable, ae.OmittedRiskClassExceeded, no detail) before the record limit, so it takes no slot;
+	// while the gate can reject and a request names its own Limit, retrieval is asked for a wider window. With
+	// UseRunTools the tool check reads the tools the SDK hands the context providers (the configuration's Tools and
+	// the run's agent.WithTool options, and any an earlier context provider added). nil gates nothing. Validated and
+	// copied by UseAgentExperience.
+	ReceivingAgent *ae.ReceivingAgent
+	// ResolveRequest is .NET's ResolveRequest / ResolveRequestAsync (contract 1.13): called once per invocation the
+	// identity resolved for, before retrieval, it returns what to retrieve. nil (the default) retrieves the derived
+	// task text with PreferredEnvironment. A nil request with a nil error skips the invocation (inject outcome
+	// Skipped); an error or a panic injects nothing (OnInjectionFailure, outcome Failed), and the invocation runs; the
+	// caller's own cancellation (an error while ctx is done) propagates from Invoking. A request retrieval refuses (a
+	// blank or overlong task text, a Limit outside 1..CandidateLimit) is RetrievalFailed. No timeout is put around it.
+	ResolveRequest func(ctx context.Context, rc RequestContext) (*InjectionRequest, error)
+	// DecideInjection is .NET's DecideInjection (contract 1.13): asked about each selected record, in order, before the
+	// block is rendered. It can only deny: a denial omits the record as ae.OmittedHostDenied with the decision's
+	// Reason as its detail (ae.HostDeniedDetail when empty), and it fails closed: the zero InjectionDecision, or a
+	// panic, denies. A denied record has taken its slot. Synchronous, as .NET's.
+	DecideInjection func(DecisionContext) InjectionDecision
 	// MessageRole is the injected message's role: message.RoleUser (when empty) or message.RoleSystem.
 	MessageRole message.Role
 	// DisableInjection captures without injecting.
@@ -380,6 +410,8 @@ type settings struct {
 	// retrieval and decay are the resolved retrieval policy and confidence decay (contract 1.12; decay nil for none).
 	retrieval ae.RetrievalPolicy
 	decay     *ae.ConfidenceDecayPolicy
+	// gate is the receiving agent's capability gate, validated and copied (contract 1.13); nil for none.
+	gate *ae.CapabilityGate
 	// measured are the memory providers UseMeasuredMemory wrapped on this configuration (contract 1.11), whose
 	// records the context provider's Close waits for too.
 	measuredMu sync.Mutex
@@ -438,6 +470,11 @@ func newSettings(options Options) (*settings, error) {
 	if err := options.BlockOptions.Validate(); err != nil {
 		return nil, err
 	}
+	if options.BlockOptions.MaxBytes != 0 && options.BlockOptions.MaxBytes <= ae.BlockOverheadBytes {
+		// As .NET's ExperienceInjectionLimits refuses it: a budget no record could ever fit in (0 is the default).
+		return nil, fmt.Errorf("maf: the block's byte budget must exceed the block's fixed header and footer (%d bytes), "+
+			"or no record could ever fit", ae.BlockOverheadBytes)
+	}
 	switch options.MessageRole {
 	case "":
 		options.MessageRole = message.RoleUser
@@ -489,6 +526,22 @@ func newSettings(options Options) (*settings, error) {
 	if err := options.Benefit.Validate(); err != nil {
 		return nil, fmt.Errorf("maf: %w", err)
 	}
+	if err := options.ModelAuthoredLessons.Validate(); err != nil {
+		return nil, fmt.Errorf("maf: %w", err)
+	}
+	if options.ExcludeModelAuthored {
+		options.ModelAuthoredLessons = ae.ModelAuthoredExclude
+	}
+	if options.ModelAuthoredLessons == ae.ModelAuthoredExclude {
+		options.ExcludeModelAuthored = true
+	} else {
+		options.ModelAuthoredLessons = ae.ModelAuthoredInclude
+	}
+	gate, err := ae.NewCapabilityGate(options.ReceivingAgent)
+	if err != nil {
+		return nil, fmt.Errorf("maf: %w", err)
+	}
+	options.ReceivingAgent = nil // copied into gate; the host's value is never read again
 	if options.Holdout.Salt == "" {
 		options.Holdout.Salt = ae.DefaultHoldoutSalt
 	}
@@ -499,7 +552,7 @@ func newSettings(options Options) (*settings, error) {
 		options.NewID = ae.NewRandomUUID
 	}
 	s := &settings{Options: options, vectorSlots: make(chan struct{}, MaxVectorCalls), retrieval: resolvedPolicy,
-		decay: resolvedDecay}
+		decay: resolvedDecay, gate: gate}
 	if options.Environment != nil {
 		s.environment = *options.Environment
 	} else {

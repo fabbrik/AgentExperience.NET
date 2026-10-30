@@ -1,5 +1,5 @@
 """
-AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.11.
+AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.13.
 
 Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical Reference
 block, derives the task text, classifies errors, and (with the ``postgres`` extra) writes records to and searches them
@@ -29,7 +29,15 @@ from .benefit import (
     estimate_provider_benefit,
 )
 from .benefit_policy import BenefitPolicy, BenefitView, BenefitViews, OmittedRecord, Selection, select_block
-from .block import Block, BlockOptions, RankedRecord, RankingComponent, render_block
+from .block import Block, BlockOptions, RankedRecord, RankingComponent, approach_tool_calls, render_block
+from .capabilities import (
+    TOOL_RISK_CLASSES,
+    CapabilityGate,
+    ModelAuthoredLessonPolicy,
+    ReceivingAgent,
+    ToolRiskClass,
+    gated_window,
+)
 from .capture import CapturedRun, RawAttempt, RawToolCall, RunCapture
 from .embedding import (
     Embedder,
@@ -110,9 +118,9 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.12"
-"""The contract version this package passes: every fixture of contract 1.12, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
-1.6, 1.7, 1.8, 1.9, 1.10 and 1.11 fixture."""
+CONTRACT_VERSION = "1.13"
+"""The contract version this package passes: every fixture of contract 1.13, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+1.6, 1.7, 1.8, 1.9, 1.10, 1.11 and 1.12 fixture."""
 
 SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.0",
@@ -128,6 +136,7 @@ SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.10",
     "1.11",
     "1.12",
+    "1.13",
 )
 """Every contract version whose fixtures this package passes."""
 
@@ -136,6 +145,7 @@ __all__ = [
     "DEFAULT_HOLDOUT_SALT",
     "MODEL_METADATA_KEY",
     "SUPPORTED_CONTRACT_VERSIONS",
+    "TOOL_RISK_CLASSES",
     "Attempt",
     "AuthorizationBounds",
     "BenefitAccumulator",
@@ -148,6 +158,7 @@ __all__ = [
     "BenefitViews",
     "Block",
     "BlockOptions",
+    "CapabilityGate",
     "CaptureLimits",
     "CapturedRun",
     "ClosedVerificationRound",
@@ -178,6 +189,7 @@ __all__ = [
     "LessonsQuery",
     "Message",
     "MessagePart",
+    "ModelAuthoredLessonPolicy",
     "ModelBenefit",
     "ModelPairBenefit",
     "OmittedRecord",
@@ -192,6 +204,7 @@ __all__ = [
     "RankingComponent",
     "RawAttempt",
     "RawToolCall",
+    "ReceivingAgent",
     "Reflection",
     "RequiredCheck",
     "RetrievalOutcome",
@@ -209,10 +222,12 @@ __all__ = [
     "SearchSafetyError",
     "Selection",
     "ToolCall",
+    "ToolRiskClass",
     "VectorFallback",
     "VectorHit",
     "VectorQuery",
     "VectorSearchResult",
+    "approach_tool_calls",
     "assign_holdout",
     "assign_provider_holdout",
     "content_hash",
@@ -225,6 +240,7 @@ __all__ = [
     "experience_id_for",
     "finalize",
     "from_stored",
+    "gated_window",
     "holdout_fraction",
     "initial_event_id_for",
     "is_valid_provider_key",

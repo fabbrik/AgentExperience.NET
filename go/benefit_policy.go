@@ -235,6 +235,14 @@ const (
 	OmittedOverRecordLimit OmissionReason = "OverRecordLimit"
 	// OmittedOverByteBudget is a record that did not fit in the block's byte budget.
 	OmittedOverByteBudget OmissionReason = "OverByteBudget"
+	// OmittedToolUnavailable is a record whose approach calls a tool the receiving agent lacks (contract 1.13). It
+	// carries no detail.
+	OmittedToolUnavailable OmissionReason = "ToolUnavailable"
+	// OmittedRiskClassExceeded is a record whose approach calls a tool above the receiving agent's maximum risk class
+	// (contract 1.13). It carries no detail.
+	OmittedRiskClassExceeded OmissionReason = "RiskClassExceeded"
+	// OmittedHostDenied is a record the host's injection decision denied (contract 1.13).
+	OmittedHostDenied OmissionReason = "HostDenied"
 )
 
 // The details of a record omitted as measured harmful: .NET's, byte for byte.
@@ -263,11 +271,15 @@ type SelectOptions struct {
 	// PreferMeasuredHelpful moves the lessons view helps ahead of the others (within the request's window and within
 	// the backfill, separately).
 	PreferMeasuredHelpful bool
+	// Gate is the capability gate for this invocation (contract 1.13; CapabilityGate.ForInvocation); nil, or one that
+	// cannot reject, gates nothing.
+	Gate *CapabilityGate
 }
 
-// SelectCandidates is .NET's ExperienceContextProvider selection (PreferHelpful, then Select) without a session or a
-// capability gate: the records to render, in order, and the omissions in the order .NET reports them. view is the
-// cached benefit view (nil for none, which changes nothing).
+// SelectCandidates is .NET's ExperienceContextProvider selection (PreferHelpful, then Select) without a session: the
+// records to render, in order, and the omissions in the order .NET reports them. For each record, the first rule that
+// applies: MeasuredHarmful, ModelAuthored, the capability gate (contract 1.13), then the record limit; a record omitted
+// by the first three takes no slot. view is the cached benefit view (nil for none, which changes nothing).
 func SelectCandidates(ranked []RankedRecord, view *BenefitView, options SelectOptions) ([]RankedRecord, []OmittedRecord) {
 	ordered := ranked
 	if view != nil && options.PreferMeasuredHelpful {
@@ -283,6 +295,10 @@ func SelectCandidates(ranked []RankedRecord, view *BenefitView, options SelectOp
 	}
 	selected := make([]RankedRecord, 0, min(len(ordered), limit))
 	omitted := []OmittedRecord{}
+	gate := options.Gate
+	if !gate.CanReject() {
+		gate = nil
+	}
 	for index := range ordered {
 		candidate := &ordered[index]
 		id := candidate.Record.ExperienceID
@@ -303,6 +319,12 @@ func SelectCandidates(ranked []RankedRecord, view *BenefitView, options SelectOp
 		if options.ExcludeModelAuthored && IsModelAuthored(candidate.Record.Reflection) {
 			omit(OmittedModelAuthored, nil)
 			continue
+		}
+		if gate != nil {
+			if reason := gate.Check(&candidate.Record); reason != "" {
+				omit(reason, nil)
+				continue
+			}
 		}
 		if len(selected) < limit {
 			selected = append(selected, *candidate)

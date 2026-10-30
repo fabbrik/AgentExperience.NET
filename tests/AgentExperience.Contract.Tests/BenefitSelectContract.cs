@@ -257,7 +257,7 @@ internal static class BenefitSelectContract
     /// Runs one at a time, each a row per lesson it names, with a verified or failed record of its own, at a minimum of 2
     /// runs per arm.
     /// </summary>
-    private sealed class RunBuilder(int family)
+    internal sealed class RunBuilder(int family)
     {
         public const int Minimum = 2;
 

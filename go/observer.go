@@ -101,12 +101,15 @@ const (
 	AttributeReflectionID = "agentexperience.reflection_id"
 	AttributeStage        = "agentexperience.stage"
 	AttributeOmittedCount = "agentexperience.omitted_count"
+	// AttributeCorrelationID is the host's correlation ID, on the inject operation when the request carries one
+	// (contract 1.13).
+	AttributeCorrelationID = "agentexperience.correlation_id"
 )
 
 // ObservedAttributes are the span attributes this port sets beyond the common ones, sorted.
 func ObservedAttributes() []string {
-	attributes := []string{AttributeAttemptID, AttributeExperienceID, AttributeOmittedCount, AttributeReflectionID,
-		AttributeRunID, AttributeStage}
+	attributes := []string{AttributeAttemptID, AttributeCorrelationID, AttributeExperienceID, AttributeOmittedCount,
+		AttributeReflectionID, AttributeRunID, AttributeStage}
 	sort.Strings(attributes)
 	return attributes
 }

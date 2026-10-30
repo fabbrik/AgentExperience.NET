@@ -1,0 +1,26 @@
+{
+  "description": "MaxRiskClass Critical disables the risk check: with no tool check either the gate can reject nothing, so nothing is omitted and retrieval's window is not widened.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": 3,
+  "receivingAgent": {
+    "availableTools": null,
+    "maxRiskClass": "Critical",
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": false,
+    "gatedRetrievalWindowMultiplier": 4
+  },
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
+}

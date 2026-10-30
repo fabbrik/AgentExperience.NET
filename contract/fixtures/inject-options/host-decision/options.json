@@ -1,0 +1,35 @@
+{
+  "description": "The host's decision, asked once per selected record in order, after the gate: a denial with a reason omits it as HostDenied with that reason, one with none with the default detail, and a denied record keeps its slot. The decision is told whether the record is model-authored. The byte budget comes after: a budget that fits two records drops the next one whole.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 5,
+  "maxBytes": 1022,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": {
+    "availableTools": null,
+    "maxRiskClass": "Medium",
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": false,
+    "gatedRetrievalWindowMultiplier": 4
+  },
+  "runTools": null,
+  "hostDecisions": {
+    "000000e1-0000-4000-8000-000000000002": {
+      "permitted": false,
+      "reason": "risk policy: no retries"
+    },
+    "000000e1-0000-4000-8000-000000000007": {
+      "permitted": false,
+      "reason": null
+    }
+  },
+  "preferMeasuredHelpful": false
+}

@@ -2,6 +2,7 @@ package maf
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 
@@ -77,27 +78,75 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		identity, err = s.resolveIdentity(ctx, IdentityContext{Agent: running, Session: session})
 		if err != nil {
 			s.reportInjection(InjectionFailure{Reason: "Resolving the identity failed; no block was added.", Err: err})
-			op.Done("Failed")
+			s.nothing(op, "Failed")
 			return messages, nil
 		}
 	}
 	if identity == nil {
-		op.Done("Skipped")
+		s.nothing(op, "Skipped")
 		return messages, nil
 	}
 
-	taskText, ok, err := ae.DeriveTaskText(taskMessages(messages), ae.DefaultTaskTextMaxLength, ae.FollowUpThreshold)
+	taskText, derived, err := ae.DeriveTaskText(taskMessages(messages), ae.DefaultTaskTextMaxLength, ae.FollowUpThreshold)
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "Deriving the task text failed; no block was added.", Err: err})
-		op.Done("Failed")
+		s.nothing(op, "Failed")
 		return messages, nil
 	}
-	if !ok {
-		s.reportInjected(InjectionResult{Outcome: "NothingToInject"})
-		op.Done("NothingToInject")
+	// The capability gate for this invocation (contract 1.13): with UseRunTools, over the tools it offers, taken once.
+	gate := s.gate
+	if gate.UsesRunTools() {
+		gate = gate.ForInvocation(runTools(options))
+	}
+	if !gate.CanReject() {
+		gate = nil
+	}
+	q := query{taskText: taskText, preferred: s.PreferredEnvironment, exclude: s.ExcludeModelAuthored}
+	requestLimit := 0
+	if s.ResolveRequest != nil {
+		// Contract 1.13: the host's request resolver.
+		running, _ := agent.AgentFromContext(ctx)
+		session, _ := agent.GetOption(options, agent.WithSession)
+		request, err := s.resolveRequest(ctx, RequestContext{Agent: running, Session: session, Messages: messages,
+			DerivedTaskText: taskText, HasDerivedTaskText: derived, Identity: *identity})
+		if err != nil && ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			// The caller's own cancellation propagates, as it does from retrieval (.NET: an OperationCanceledException
+			// while the invocation's token is cancelled); any other error is a failure.
+			op.Fail(ctx.Err())
+			return messages, ctx.Err()
+		}
+		if err != nil {
+			s.reportInjection(InjectionFailure{Reason: "The injection request resolver (ResolveRequest) failed; no block was added.",
+				Err: err})
+			s.nothing(op, "Failed")
+			return messages, nil
+		}
+		if request == nil {
+			s.nothing(op, "Skipped")
+			return messages, nil
+		}
+		if request.CorrelationID != "" && op != nil {
+			op.Set(ae.AttributeCorrelationID, request.CorrelationID)
+		}
+		if err := validateRequest(request, s.retrieval.CandidateLimit); err != nil {
+			s.reportInjection(InjectionFailure{Reason: "Retrieval refused the injection request; no block was added.", Err: err})
+			s.nothing(op, "RetrievalFailed")
+			return messages, nil
+		}
+		q = query{taskText: request.TaskText, preferred: s.PreferredEnvironment,
+			exclude: s.ExcludeModelAuthored || request.ExcludeModelAuthored,
+			limit:   ae.GatedWindow(requestLimitOf(request), gate, s.BlockOptions.MaxRecords, s.retrieval.CandidateLimit)}
+		if request.PreferredEnvironment != nil {
+			q.preferred = request.PreferredEnvironment
+		}
+		if request.Limit != nil {
+			requestLimit = *request.Limit
+		}
+	} else if !derived {
+		s.nothing(op, "NothingToInject")
 		return messages, nil
 	}
-	retrieved, ok, err := p.retrieve(ctx, op, identity, taskText)
+	retrieved, ok, err := p.retrieve(ctx, op, identity, q)
 	if !ok {
 		// err is only ever the caller's own cancellation, which propagates (as .NET's does).
 		return messages, err
@@ -109,11 +158,21 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		view = s.benefit.current(ctx, identity, s.invokingModel(captured))
 	}
 	selected, omitted := ae.SelectCandidates(ranked.Ranked, view, ae.SelectOptions{
-		MaxRecords: s.BlockOptions.MaxRecords, ExcludeModelAuthored: s.ExcludeModelAuthored,
-		PreferMeasuredHelpful: s.Benefit.PreferMeasuredHelpful})
+		MaxRecords: s.BlockOptions.MaxRecords, RequestLimit: requestLimit, ExcludeModelAuthored: q.exclude,
+		PreferMeasuredHelpful: s.Benefit.PreferMeasuredHelpful, Gate: gate})
+	// Contract 1.13: the host's decision on each selected record, before the block (and its byte budget).
+	if s.DecideInjection != nil {
+		var denied []ae.OmittedRecord
+		selected, denied = ae.ApplyHostDecisions(selected, s.decideOne)
+		omitted = append(omitted, denied...)
+	}
 	block, err := ae.RenderBlock(selected, s.BlockOptions)
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "Rendering the block failed; no block was added.", Err: err})
+		if op != nil {
+			op.Set(ae.AttributeOmittedCount, len(omitted))
+		}
+		s.reportInjected(InjectionResult{Outcome: "Failed", Omitted: omitted})
 		op.Done("Failed")
 		return messages, nil
 	}

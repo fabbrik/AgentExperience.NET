@@ -438,7 +438,7 @@ public sealed class ExperienceContextProvider : AIContextProvider
         // this invocation, taken once here, before the host's resolver runs.
         // A gate that can reject nothing (no tool check, and no risk check below Critical) is no gate: it neither widens
         // retrieval nor checks a record.
-        var capabilityGate = _capabilityGate?.ForInvocation(context.Tools) is { CanReject: true } active ? active : null;
+        var capabilityGate = GateFor(context.Tools);
 
         RetrieveExperienceRequest? request;
         try
@@ -478,14 +478,11 @@ public sealed class ExperienceContextProvider : AIContextProvider
             return Nothing(trace, InjectionOutcome.Skipped, NoOmissions, retrieved: null, correlationId: null, failure: null);
         }
 
-        if (_excludeModelAuthored && !request.ExcludeModelAuthored)
-        {
-            // Story 14.4: the exclusion moves into retrieval, so every source applies it before its own limit and
-            // model-authored records cannot fill the candidate window. Only ever switched on here, never off: a host
-            // that asked for it itself keeps it whatever the policy. Retrieval also excludes what a source still
-            // returns; the checks below stay as defence in depth, and for a record that changed before its re-read.
-            request = request with { ExcludeModelAuthored = true };
-        }
+        // Story 14.4: the exclusion moves into retrieval, so every source applies it before its own limit and
+        // model-authored records cannot fill the candidate window. Only ever switched on here, never off: a host
+        // that asked for it itself keeps it whatever the policy. Retrieval also excludes what a source still
+        // returns; the checks below stay as defence in depth, and for a record that changed before its re-read.
+        request = WithModelAuthoredExclusion(request);
 
         // From the request, not from a result: the host's correlation identifier is then on the span for
         // every outcome below -- a retrieval that timed out, one that was denied, one that threw -- and
@@ -1372,6 +1369,26 @@ public sealed class ExperienceContextProvider : AIContextProvider
         int? requestLimit,
         BenefitView? benefit) =>
         SelectCandidates(ranked, omitted, session: null, gate: null, requestLimit, benefit);
+
+    /// <summary>
+    /// The capability gate one invocation runs under: with <see cref="ReceivingAgentCapabilities.UseRunTools"/>, over
+    /// <paramref name="runTools"/>, taken once. A gate that can reject nothing (no tool check, and no risk check below
+    /// Critical) is no gate: it neither widens retrieval nor checks a record.
+    /// </summary>
+    private CapabilityGate? GateFor(IEnumerable<AITool>? runTools) =>
+        _capabilityGate?.ForInvocation(runTools) is { CanReject: true } active ? active : null;
+
+    /// <summary><paramref name="request"/> with the model-authored exclusion switched on under <see cref="ModelAuthoredLessonPolicy.Exclude"/>; never switched off.</summary>
+    private RetrieveExperienceRequest WithModelAuthoredExclusion(RetrieveExperienceRequest request) =>
+        _excludeModelAuthored && !request.ExcludeModelAuthored ? request with { ExcludeModelAuthored = true } : request;
+
+    /// <summary>
+    /// The request this provider asks retrieval for once the host's resolver returned <paramref name="request"/>, for an
+    /// invocation offering <paramref name="runTools"/>: the steps an invocation takes, <see cref="WithModelAuthoredExclusion"/>
+    /// and <see cref="GatedWindow"/> under <see cref="GateFor"/>. For contract 1.13's <c>inject-options</c> fixtures.
+    /// </summary>
+    internal RetrieveExperienceRequest RetrievalRequest(RetrieveExperienceRequest request, IEnumerable<AITool>? runTools) =>
+        GatedWindow(WithModelAuthoredExclusion(request), GateFor(runTools), _options.Limits.MaxRecords, _retrieval.Policy.CandidateLimit);
 
     /// <summary>
     /// Takes the top <see cref="ExperienceInjectionLimits.MaxRecords"/> in rank order and records the

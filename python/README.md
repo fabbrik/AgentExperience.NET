@@ -3,8 +3,8 @@
 A pure-Python core of AgentExperience that implements the [language-neutral contract](https://github.com/fabbrik/AgentExperience.NET/blob/main/contract/README.md), so a
 lesson learned by a Python agent is stored in the format the .NET library reads, and the other way round.
 
-**Status: alpha, contract 1.12, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
-fixture of contract 1.12 (and so every 1.0 to 1.11 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
+**Status: alpha, contract 1.13, with a Microsoft Agent Framework integration (the `maf` extra).** It passes every
+fixture of contract 1.13 (and so every 1.0 to 1.12 fixture). It is published to PyPI as `agenticexperience` (the import name stays `agentexperience`), with every
 release of this repository and at the same version as the .NET packages: .NET `0.1.0-preview.N` is
 `agenticexperience` `0.1.0aN` (a PEP 440 alpha; while every release is an alpha, pip and uv install the newest one).
 Like the .NET packages, it claims no production readiness, and its API may change between alphas.
@@ -194,12 +194,82 @@ agent = use_agent_experience(
 | .NET | Python |
 | --- | --- |
 | `RetrievalOutcome` `Completed`, `TimedOut`, `Denied`, `Failed` | the `retrieve` operation's outcome (`RetrievalOutcome`) |
-| `InjectionOutcome` `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed` | the `inject` operation's outcome; `InjectionResult.outcome` for the first two |
+| `InjectionOutcome` `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed` | the `inject` operation's outcome, and `InjectionResult.outcome` |
 | `RetrievalExclusionReason` `IneligibleStatus`, `ModelAuthored`, `Expired` | `ExcludedRecord.reason` (`ExclusionReason`); never `EnvironmentMismatch` or `UnconfirmedContent` (no required attributes, no provenance signing) |
 
 The lessons view applies the same policy (`agent_experience_lessons` takes the setup's): a lesson below
 `minimum_confidence` is `BelowConfidenceFloor`, naming that floor, and one whose last activity is more than `max_age`
 before the view's clock is `Expired`.
+
+### The injection options (contract 1.13)
+
+The rest of .NET's `ExperienceInjectionOptions` that needs no session tracking, with .NET's defaults and validation, so
+a Python agent configured like a .NET one injects the same block with the same omissions:
+
+```python
+from agentexperience import ReceivingAgent
+from agentexperience.maf import InjectionDecision, InjectionRequest
+
+async def resolve(context):  # or a plain function
+    if context.derived_task_text is None:
+        return None  # skip this invocation
+    return InjectionRequest(context.derived_task_text, correlation_id=trace_id)
+
+agent = use_agent_experience(
+    agent, store=store, identity=identity, verify=verify,
+    receiving_agent=ReceivingAgent(
+        available_tools={"read_ledger", "wait_for_lock", "retry_refund"},
+        max_risk_class="Medium",
+        tool_risk_classes={"read_ledger": "Low", "wait_for_lock": "Low", "retry_refund": "Medium"},
+    ),
+    model_authored_lessons="Exclude",
+    resolve_request=resolve,
+    decide_injection=lambda decision: InjectionDecision.permit()
+    if risk_policy.allows(decision.current)
+    else InjectionDecision.deny("risk policy"),
+)
+```
+
+| .NET (`ExperienceInjectionOptions`) | Python (`use_agent_experience`) | Default |
+| --- | --- | --- |
+| `ReceivingAgent` (`ReceivingAgentCapabilities`) | `receiving_agent` (`ReceivingAgent`) | `None`: nothing gated |
+| `AvailableTools`, `MaxRiskClass`, `ToolRiskClasses`, `UseRunTools`, `GatedRetrievalWindowMultiplier` | `available_tools`, `max_risk_class`, `tool_risk_classes`, `use_run_tools`, `gated_retrieval_window_multiplier` | `None`, `None`, empty, `False`, 4 |
+| `ToolRiskClass` `Low`, `Medium`, `High`, `Critical` | `ToolRiskClass`, the same names as strings, in that order | |
+| `ModelAuthoredLessons` (`ModelAuthoredLessonPolicy`) | `model_authored_lessons`, `"Include"` or `"Exclude"` (`exclude_model_authored=True` is the same as `"Exclude"`) | `"Include"` |
+| `ResolveRequest`, `ResolveRequestAsync` | `resolve_request`: one callable, sync or async, given a `RequestContext` (agent, session, messages, `derived_task_text`, identity), returning an `InjectionRequest` (`task_text`, `preferred_environment`, `limit`, `exclude_model_authored`, `correlation_id`) or `None` | `None`: the derived task text |
+| `DecideInjection` (`InjectionDecision.Permit`, `Deny`) | `decide_injection`: given a `DecisionContext` (`candidate`, `current`, `model_authored`), returning `InjectionDecision.permit()` or `.deny(reason)` | `None`: permit |
+| `ApproachArguments`, `FailureDetail`, `Rendering`, `Limits.MaxRecords`, `Limits.MaxBytes` | `block_options` (`approach_arguments`, `failure_detail`, `rendering`, `max_records`, `max_bytes`) | the contract's |
+| `MessageRole` | `message_role`, `"user"` or `"system"` | `"user"` |
+
+- **The gate** checks the tools of a record's approach (its verified final attempt's calls, as its `Tried:` line shows
+  them): a tool missing from `available_tools` omits it as `ToolUnavailable`, then a tool whose class (a tool not in
+  `tool_risk_classes` is `Critical`) is above `max_risk_class` as `RiskClassExceeded`, with no detail. It runs before
+  the record limit, so a gated record takes no slot. A blank tool name, an undefined class or a multiplier below 1
+  raises `ValueError` when the `ReceivingAgent` is built; it copies the collections it is given. A `max_bytes` that
+  does not exceed the verbose block's fixed overhead (754 bytes) is refused when the agent is built, as .NET refuses it.
+- **`use_run_tools`** checks against the tools the provider is handed: the agent's own tools and those an earlier
+  context provider added. agent-framework does not hand a context provider the `tools=` of one `run` call, nor an MCP
+  server's functions, so a record whose approach calls one of those is withheld (where .NET's agent-level provider sees
+  a run's own tools).
+- **The resolver** is given the messages the task text is derived from (the replayed history, earlier context
+  providers' messages, then the new input). `None` skips the invocation (`inject` outcome `Skipped`); a raise injects
+  nothing and is reported through `on_injection_failure` (`Failed`); a cancellation propagates only when the invocation
+  itself is being cancelled (on Python 3.10, which cannot tell, every cancellation does), otherwise it is `Failed`.
+  Every attempt also reaches `on_injected`, as .NET's `OnContextInjected`: `Skipped` (no identity, or the resolver
+  returned `None`), `Failed` and `RetrievalFailed` included, with nothing delivered. `InjectionResult` has no
+  `CorrelationId` or `Failure` field (.NET's do): the correlation ID is on the span, and the failure goes to
+  `on_injection_failure`. A request retrieval refuses (a
+  blank task text, one over 4,096 UTF-16 code units, a `limit` outside 1 to the policy's `candidate_limit`) is
+  `RetrievalFailed`. The `limit` cuts the ranking (widened while a gate can reject, as .NET's gated window) and caps
+  what is injected; `correlation_id` is the `inject` span's `agentexperience.correlation_id`. The authorization and
+  scope are the identity's.
+- **The decision** is asked once per selected record, after the selection and before the byte budget. A denial omits
+  the record as `HostDenied` with its reason (or .NET's default detail); it fails closed (a raise, `None` or anything
+  but an `InjectionDecision` denies), and a denied record keeps its slot. It is synchronous, as .NET's: an `async`
+  callable is refused when the agent is built, and one that returns an awaitable denies.
+- The pure parts are public: `ReceivingAgent.gate`, `CapabilityGate`, `gated_window`, `approach_tool_calls`, and
+  `select_block(..., gate=, decide=)`. A `use_run_tools` gate checks only once `for_invocation(tools)` has narrowed it;
+  checked directly it knows no tool, so it fails closed (`ToolUnavailable` for any approach that calls a tool).
 
 ### See what it learned: the lessons view
 
@@ -610,18 +680,27 @@ print(render_block(ranked.ranked, BlockOptions(rendering="Compact")).text)
 
 ## What the Python port does not do yet
 
-The port covers contract 1.0 to 1.12: capture, finalize, store, text and semantic retrieval under .NET's retrieval
-policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block,
+The port covers contract 1.0 to 1.13: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and every
+injection option that needs no session (the receiving agent's gate, the model-authored policy, the request resolver
+and the host's decision),
 injection recording, the lessons view, the injection holdout, its benefit estimate and the benefit policy that acts on
 it, measuring another memory provider, and telemetry. These .NET features have no counterpart
 here, so a mixed .NET and Python deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
 - **Exporting measured lessons.**
-- **Withdrawal notices:** the port keeps no per-session account of what it injected, so it never retracts a record;
-  a held-out invocation is always `Withheld`, never a notices-only `Retracted` block.
-- **Sharing:** grants, and so the grant-disclosure choices.
-- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5), and **provenance signing** (so no `ContentUnconfirmed` lesson state).
+- **Session tracking and withdrawal notices** (`SessionLimits`, `SessionStateKey`; story 27.6): the port keeps no
+  per-session account of what it injected, so it never deduplicates, budgets a session or retracts a record; a held-out
+  invocation is always `Withheld`, never a notices-only `Retracted` block.
+- **The final eligibility re-read** (story 27.6): the port renders the record retrieval returned and does not re-read
+  it before injecting, so it has no `Limits.EligibilityCheckTimeout` or `MaxAbandonedReads`, and never omits a record
+  as `Ineligible` or `Unreadable`. Its decision context's `current` is the ranked record.
+- **Required environment attributes** (`RetrieveExperienceRequest.RequiredEnvironmentAttributes`): an
+  `InjectionRequest` has none, and retrieval never excludes as `EnvironmentMismatch`.
+- **Sharing** (story 27.8): grants, and so the grant-disclosure choices and the decision context's `SharedByGrant`,
+  `PermittingGrantId`, `GrantDisclosure` and `GrantApproachArguments`.
+- **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5), and **provenance signing** (story 27.7; so no `ContentUnconfirmed` lesson state, and no `UnconfirmedContent` omission).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
 - **Lessons view HTML and endpoint mapping.**
 
