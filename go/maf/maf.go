@@ -61,7 +61,12 @@
 //     the options alone) lists what has been learned in a scope: each lesson's status, confidence and checks, the
 //     block text an agent would be shown for it, why retrieval would not use it, and when it was last injected, from
 //     the same store, block options and model-authored flag the injection uses. It reads only, in the caller's own
-//     scope and authorization, and renders no HTML.
+//     scope and authorization. ae.RenderLessonsHTML renders a page as .NET's lessons page, and Lessons.ExportMeasured
+//     keeps a Markdown file of the lessons the holdout measured as helping (contract 1.14).
+//
+//   - The model-backed reflector (contract 1.14), with Options.Reflector and NewChatClientReflector: a model writes the
+//     lesson of a verified run, through structured output, and finalization screens it with the content guard. Off by
+//     default: the deterministic reflector writes it.
 //
 // Nothing here returns an error or panics into the agent: a store, identity, classifier or verifier failure means no
 // block, or no stored record, and is reported through OnInjectionFailure or OnCaptureFailure. Only the invocation's

@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.13, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.13 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11 and 1.12 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.14, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.14 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12 and 1.13 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -143,7 +143,8 @@ for _, lesson := range page.Lessons {
   and result, never the evidence's detail), `BlockText` (the Historical Reference block an agent would be shown for it
   alone, numbered 1, with no ranking and no limit: `ae.RenderAlone`, byte-equal to .NET's), whether retrieval would
   use it and why not, and when it was last injected and how often. Listing lessons discloses them: serve the view only
-  behind your own authorization. It renders no HTML and maps no endpoint.
+  behind your own authorization. `ae.RenderLessonsHTML(page)` renders a page as .NET's lessons page, and
+  `ae.LessonsHTMLHandler` serves it ([below](#show-it-the-lessons-page)).
 - **The query.** `Statuses` (nil: every status), `Limit` (1 to 500, 50 by default, like .NET) and `IncludeIneligible`
   (nil: true). An invalid limit, or empty or undefined statuses, is an error before anything is read. A scope outside
   the bounds is an empty page with the outcome `Denied`, never an error and never a statement. `HasMore` is set when
@@ -160,6 +161,104 @@ for _, lesson := range page.Lessons {
   `InjectionsTracked` false: a nil `LastInjectedAt` then means "not known", not "never".
 - **Stores.** The PostgreSQL store runs the contract's `list-experience-lessons.sql` as written (a bounded read, at
   most 500 records, never a write) and the in-memory store holds the same data; both are an `ae.LessonsReader`.
+
+### Export what helps: the Markdown sink
+
+Contract 1.14. `Lessons.ExportMeasured` hands a sink every lesson in the identity's scope that the
+[holdout](#measuring-benefit-the-holdout) measured as helping (.NET's `ExportMeasuredAsync`): eligible, its outcome
+`Verified`, its verdict `Helps` in one estimate over the benefit policy's window, sorted by experience ID. It is a sync,
+not a dump: the sink gets the whole current set every time, an empty one included, and removes what is no longer in
+it. The built-in `ae.MarkdownLessonFileSink` keeps one Markdown file an agent loads (from `AGENTS.md`, `CLAUDE.md` or
+a skill folder), byte for byte the file .NET's `MarkdownLessonFileSink` writes for the same lessons:
+
+```go
+lessons, _ := maf.LessonsOf(&config)
+sink, err := ae.NewMarkdownLessonFileSink("docs/agent-lessons.md", nil) // nil: the system clock
+if err != nil {
+	return err
+}
+result, err := lessons.ExportMeasured(ctx, identity, sink, nil) // nil: the benefit policy's minimum runs per arm
+// result.Lessons, result.Sync (Added, Updated, Removed), result.HoldoutTracked
+```
+
+- **The file** names the scope and the export instant, then each lesson's revision, measured benefit and text (the
+  verbose block's lesson lines, `ae.RenderLessonText`). Everything drawn from a record is an indented code block, so no
+  lesson can add a heading, a link or an instruction outside it. It is written to a temporary file beside it and
+  renamed over it, so a reader sees the old file or the new one; the directory must exist.
+- **The path is yours.** A blank one is refused and the rest made absolute; as in .NET it is confined to nothing, so a
+  path from configuration you do not trust is yours to check.
+- **Your own sink** implements `ae.LessonSink` (`Sync(ctx, scope, current)`): another memory store, an instruction
+  file, a skill folder.
+- **Refused:** a scope with more reusable lessons than one read answers (500), so a sink is never handed part of the set.
+  A scope outside the bounds is a result with the outcome `Denied`, and the sink is not called. A `MinimumRunsPerArm` of
+  0 is the default (20), as everywhere in this port; a negative one is refused.
+
+### Show it: the lessons page
+
+`ae.RenderLessonsHTML(page)` is a lessons page as one self-contained HTML document (inline CSS, no script, no external
+request, light and dark mode), byte for byte .NET's `ExperienceLessonsHtml.Render`, every value HTML-encoded as .NET's
+`WebUtility.HtmlEncode` encodes it. `ae.LessonsHTMLHandler` is an `http.Handler` that lists the caller's scope and
+serves it with `Cache-Control: no-store`, `X-Frame-Options: DENY` and a `frame-ancestors 'none'` content security
+policy. **Authorization is yours:** `Identity` resolves the caller from your own authentication (never from the
+request's query or body; `nil` answers 403), and the page discloses every lesson in the scope:
+
+```go
+mux.Handle("/agent-experience/lessons", requireAuth(ae.LessonsHTMLHandler{Lessons: lessons,
+	Identity: func(r *http.Request) (*ae.Identity, error) { return myIdentityFrom(r) }}))
+```
+
+### A model writes the lesson: the chat reflector
+
+Contract 1.14. By default the lesson is the deterministic reflector's and never calls a model. Opt in to .NET's
+`ChatClientExperienceReflector` with `maf.NewChatClientReflector` and `Options.Reflector`:
+
+```go
+reflectorAgent := openaiprovider.NewChatCompletionsAgent(client, openaiprovider.AgentConfig{Model: "gpt-4o-mini"})
+reflector, err := maf.NewChatClientReflector(maf.AgentChatClient(reflectorAgent,
+	func(o *maf.ChatOptions) []agent.Option { // the Go SDK has no provider-neutral model, temperature or output cap
+		params := openai.ChatCompletionNewParams{MaxCompletionTokens: openai.Int(int64(o.MaxOutputTokens))}
+		if o.Temperature != nil {
+			params.Temperature = openai.Float(float64(*o.Temperature))
+		}
+		return []agent.Option{openaiprovider.ChatCompletionNewParams(params)}
+	}), maf.ChatClientReflectorOptions{ModelName: "gpt-4o-mini"})
+if err != nil {
+	return err
+}
+err = maf.UseAgentExperience(&config, maf.Options{Store: store, Identity: identity, Verify: verify,
+	Reflector: reflector, FinalizationTimeout: 45 * time.Second})
+```
+
+It sends the published `maf.SystemPrompt` and the data message .NET sends (the same bytes: `BuildPrompt` shows it), asks
+for the same JSON schema with no tools and a tool mode of none, reads the answer as strictly as .NET does, copies every
+bound field from the request, and returns a reflection marked model-authored. Finalization then screens it with the
+**content guard** (credential-shaped text, mixed-script words, instruction-override phrasing, `data:`/`javascript:`
+links and UNC paths, and any URL, hostname or IP address the run did not show the model), and the block fences it as
+model-authored. A failure is a `*maf.ReflectionFailedError` with .NET's kind and fixed message; the record is then
+stored `Quarantined` with no lesson, as in .NET (`FinalizedExperience.ReflectionFailure`; a refusal is
+`ScreeningRefusal`, an `*ae.ScreeningRefusalError` with .NET's code and reason). It emits no telemetry of its own.
+Privacy is .NET's: sanitized captured run content leaves your process for your model provider.
+
+| .NET | Go |
+| --- | --- |
+| `ChatClientExperienceReflector` | `maf.ChatClientReflector` (`maf.NewChatClientReflector`) |
+| `IChatClient` | `maf.ChatClient`; `maf.AgentChatClient(*agent.Agent, provider)` adapts a MAF agent |
+| `ChatOptions` (`ModelId`, `Temperature`, `MaxOutputTokens`, `Tools`, `ToolMode`, `ResponseFormat`) | `maf.ChatOptions` (the same, and `AgentOptions` for provider settings) |
+| `ChatClientExperienceReflectorOptions` | `maf.ChatClientReflectorOptions`; zero values are the defaults (30 s, 500, 16,000, 2,048, temperature 0); `NoTemperature` is .NET's `Temperature = null` |
+| `ConfigureChatOptions` (an `Action`) | `ConfigureChatOptions func(*ChatOptions) error`: an error or a panic is `ChatOptionsCallbackFailed` |
+| `ReflectionFailedException` (`Kind`, `CauseType`) | `*maf.ReflectionFailedError` (`Kind`, `CauseType`: the error's or panic's Go type, never its message) |
+| `GetReflectedRunContent`, `IReflectionRunContent` | `ReflectedRunContent`, `ae.ReflectionRunContent` |
+| `IExperienceReflector`, `ReflectionRequest`, `EnsureMatches` | `ae.Reflector`, `ae.ReflectionRequest`, `EnsureMatches` |
+| `AddAgentExperienceChatClientReflector` | `maf.Options.Reflector` (or `ae.FinalizeContextWith` and `ae.FinalizeOptions.Reflector`) |
+| `ReflectionScreeningRefusal` | `ae.ScreeningRefusalCode` (`ae.ScreeningRefusalOf`) |
+
+Where Go differs: a function-invoking pipeline is refused only when the client says so (`maf.FunctionInvokingClient`),
+because a MAF agent does not expose its tools; give the reflector an agent with no tools. The response's model ID is
+read from the provider's raw response (`Model`), which the OpenAI provider sets. The call runs inside the one call's
+`FinalizationTimeout` (5 s by default), so raise it above the reflector's own `Timeout`. The content guard needs Unicode
+NFKC, which the core module does not carry: the `maf` module registers it (`ae.SetUnicodeNormalizer`) when it is
+imported; a host screening model-authored reflections without `maf` registers `norm.NFKC.String` itself, or every
+model-authored reflection is refused as text that cannot be normalized.
 
 ### What the one call wires
 
@@ -622,7 +721,11 @@ Python agents on the same database.
   statement; `MergeChannels` and `RankHybrid` turn the text and vector candidates into one ranked list: every merged candidate
   is scored, and the ranked list is cut to the candidate limit (50 by default; contract 1.12's cut, as .NET's).
 - **The lessons view** (contract 1.7). `NewLessons` over any `LessonsReader`, `Lessons.List` and `ListFor`, `RenderAlone`;
-  see [See what it learned](#see-what-it-learned-the-lessons-view).
+  see [See what it learned](#see-what-it-learned-the-lessons-view). Contract 1.14: `RenderLessonsHTML` and
+  `LessonsHTMLHandler`, and `ExportMeasured` with `MarkdownLessonFileSink` (or your own `LessonSink`).
+- **The reflector seam** (contract 1.14). `FinalizeContextWith` reflects with an `ae.Reflector` (the deterministic one
+  by default), binds what it returns (`ReflectionRequest.EnsureMatches`) and screens it (`ScreenWith`), a
+  model-authored reflection with the content guard.
 - **PostgreSQL** (the `postgres` package). `Store` writes a finalized record and its initial event as the application
   role, reads records back, runs the contract's text search, records injections (`RecordInjection`, contract
   1.4) and holdout assignments (`RecordHoldoutAssignment`, contract 1.8), writes and searches embeddings (`WriteEmbedding` and `SearchVectors`, contract 1.6) and reads the lessons view's
@@ -706,13 +809,22 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
   neutralized by the other in a block or a task text, or a word character to one error class and not the other. Every
   character the contract's fixtures use is classified the same in all of them, and CI runs the fixtures on Go 1.24 and
   the latest stable.
+- **The content guard's patterns** (contract 1.14) are .NET regular expressions with lookarounds and atomic groups,
+  which RE2 cannot express; hand-written scanners apply them as .NET does, per UTF-16 code unit, so a character outside
+  the Basic Multilingual Plane is neither a letter, a digit nor a mark to them, and lower case is .NET's invariant one
+  (which leaves U+0130 as it is). Its NFKC is `golang.org/x/text`'s, registered by the `maf` module.
+- **Strict JSON.** `encoding/json` matches member names ignoring case and accepts a duplicated member; the chat
+  reflector reads the model's answer as .NET's source-generated reader does instead: exact names, a known member at
+  most once, at most 64 levels deep, and no lone surrogate escape in a string it reads.
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.13: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.14: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and the injection
 options (the receiving agent, the model-authored policy, the request resolver and the injection decision),
-injection recording, the lessons view, the injection holdout, the benefit estimate, the benefit policy, measuring another memory provider and telemetry. These .NET features have no counterpart here, so a mixed
+injection recording, the lessons view and its HTML page, exporting measured lessons, the model-backed reflector and its
+content guard, the injection holdout, the benefit estimate, the benefit policy, measuring another memory provider and
+telemetry. These .NET features have no counterpart here, so a mixed
 .NET and Go deployment should keep them on the .NET side:
 
 - **Lifecycle after finalization:** reuse feedback, confidence reinforcement, contest and revocation.
@@ -724,10 +836,8 @@ injection recording, the lessons view, the injection holdout, the benefit estima
   `PermittingGrantId`, `GrantDisclosure` and `GrantApproachArguments` (story 27.8).
 - **Performing erasure and crypto-shredding** (the port never reads an erased record, contract 1.5) (Go also has no at-rest encryption), and **provenance signing** (so no `ContentUnconfirmed` lesson state, and no `UnconfirmedContent` omission; story 27.7).
 - **Migrations:** the port never creates or alters a schema object; the .NET migrator does.
-- **Lessons view HTML and endpoint mapping.**
 - **Required environment attributes** (.NET's `RequiredEnvironmentAttributes`, and so the `EnvironmentMismatch`
   exclusion): the port only grades preferred attributes, and `maf.InjectionRequest` has no such field.
-- **Exporting lessons.**
 
 What the port does write or read follows the same contract the .NET library is tested against.
 
@@ -743,7 +853,7 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.13 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.14 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
 against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The
@@ -807,6 +917,14 @@ cancellation, parallel calls), runs the quick start and compares its output
   `ae.EstimateProviderBenefit` must be exactly
   [`go-provider-fleet-estimate.json`](maf/testdata/cross-language/go-provider-fleet-estimate.json), which the .NET
   contract tests compare with the .NET estimate over the same rows.
+- *Exporting measured lessons, .NET writes, Go writes the same file* (contract 1.14). The .NET contract tests export
+  each `lesson-export` seed through the .NET lessons view to the .NET Markdown sink; the in-memory module's tests
+  export the same seeds through `ExportMeasured` to `ae.MarkdownLessonFileSink`, and the `maf` tests export one through
+  a Go agent's one-call setup: the files must be .NET's, byte for byte.
+- *The model-backed reflector, .NET finalizes, Go stores the same record* (contract 1.14). Each `reflection-output`
+  case is a run the .NET finalization stored with its model-backed reflector over a scripted answer; the `maf` tests
+  capture and finalize the same run with `maf.ChatClientReflector` over a scripted client giving the same answer, and
+  the stored record and initial event must be .NET's, with the same failure kind or screening refusal.
 
 **PostgreSQL** (the `postgres` build tag, in `postgres/pgtest/` and `maf/`, Go 1.26): in `postgres/pgtest/`, each
 finalize fixture is written through the Go store and read back row for row, every search fixture is run and ranked,
