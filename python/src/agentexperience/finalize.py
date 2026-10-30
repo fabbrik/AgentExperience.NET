@@ -9,17 +9,18 @@ import inspect
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from ._text import format_round_trip
 from .capture import CapturedRun
 from .encoding import Instant, format_uuid
 from .ids import experience_id_for, initial_event_id_for, reflection_id_for
-from .observer import observe
+from .observer import observe, type_name
 from .records import Evidence, ExperienceRecord, ExperienceStatus, Reflection
 from .reflector import (
     DeterministicReflector,
     ExperienceReflector,
+    ReflectionBindingError,
     ReflectionRequest,
     ScreeningRefusal,
     ScreeningRefused,
@@ -84,6 +85,10 @@ class FinalizedExperience:
     """What the reflector raised, or the binding error for a reflection that does not match its request, when that is
     what quarantined the record (.NET's ``FinalizationFailure.Exception``). A model-backed reflector raises
     :class:`agentexperience.reflection_prompt.ReflectionFailed`, with a ``kind``; its message holds no model text."""
+    screening_exception_type: str | None = None
+    """When binding or screening the reflection raised (a reflector that returned something that is not a reflection,
+    a reflection missing a bound field, a guard that failed), the type name of what it raised; never its message. The
+    record is then Quarantined with :attr:`screening_refusal_code` ``Unreadable``, as .NET's backstop stores it."""
 
 
 def finalize(
@@ -126,7 +131,7 @@ def finalize(
                     answer.close()
                 raise TypeError("This reflector is asynchronous: finalize with finalize_async.")
             if reflected.failure is None:
-                _screen(reflector, request, cast("Reflection | None", answer), reflected)
+                _screen(reflector, request, answer, reflected)
         return _record(run, evaluation, at, closed_round, reflected, op)
 
 
@@ -163,7 +168,7 @@ async def finalize_async(
             except Exception as error:
                 reflected.failure = error
             else:
-                _screen(reflector, request, cast("Reflection | None", answer), reflected)
+                _screen(reflector, request, answer, reflected)
         return _record(run, evaluation, at, closed_round, reflected, op)
 
 
@@ -173,6 +178,7 @@ class _Reflected:
     refusal: str | None = None
     code: ScreeningRefusal | None = None
     failure: Exception | None = None
+    exception_type: str | None = None
 
 
 def _run_content(reflector: ExperienceReflector, request: ReflectionRequest) -> list[str] | None:
@@ -187,22 +193,29 @@ def _run_content(reflector: ExperienceReflector, request: ReflectionRequest) -> 
     return [] if content is None else list(content)
 
 
-def _screen(
-    reflector: ExperienceReflector, request: ReflectionRequest, answer: Reflection | None, reflected: _Reflected
-) -> None:
+def _screen(reflector: ExperienceReflector, request: ReflectionRequest, answer: object, reflected: _Reflected) -> None:
     if answer is None:
         reflected.failure = ValueError("The reflector returned no reflection.")
         return
     try:
-        request.ensure_matches(answer)
-    except ValueError as mismatch:
-        reflected.failure = mismatch
-        return
-    try:
+        if not isinstance(answer, Reflection):
+            raise TypeError("The reflector returned something that is not a Reflection.")
+        try:
+            request.ensure_matches(answer)
+        except ReflectionBindingError as mismatch:
+            reflected.failure = mismatch
+            return
         reflected.reflection = screen(answer, _run_content(reflector, request))
     except ScreeningRefused as refused:
         reflected.refusal = str(refused)
         reflected.code = refused.refusal
+    except Exception as error:
+        # The backstop, as .NET's: binding or screening that throws never escapes finalization. Only the type is
+        # kept; its message may quote the reflection.
+        reflected.reflection = None
+        reflected.refusal = "screening the reflection threw"
+        reflected.code = "Unreadable"
+        reflected.exception_type = type_name(error)
 
 
 def _evaluate(
@@ -274,7 +287,9 @@ def _record(
         producer=PRODUCER,
         occurred_at=at,
     )
-    finalized = FinalizedExperience(record, event, evaluation, reflected.refusal, reflected.code, reflected.failure)
+    finalized = FinalizedExperience(
+        record, event, evaluation, reflected.refusal, reflected.code, reflected.failure, reflected.exception_type
+    )
     if op is not None:
         op.set("agentexperience.experience_id", str(record.experience_id))
         op.outcome(record.status)

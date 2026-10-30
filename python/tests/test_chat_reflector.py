@@ -424,3 +424,42 @@ def test_sixty_four_levels_are_read() -> None:
     from agentexperience.reflection_prompt import read_answer
 
     assert read_answer('{"lesson":"a","x":' + "[" * 63 + "]" * 63 + "}").lesson == "a"
+
+
+def test_binding_or_screening_that_raises_quarantines_as_unreadable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dataclasses import replace
+
+    from agentexperience.reflector import DeterministicReflector
+
+    case = read_json(BASE / "input.json")
+
+    class NotAReflection:
+        def reflect(self, request: ReflectionRequest) -> Any:
+            return {"lesson": "a dict, not a reflection"}
+
+    class NoEvidenceIds:
+        def reflect(self, request: ReflectionRequest) -> Any:
+            return replace(DeterministicReflector().reflect(request), evidence_ids=None)  # type: ignore[arg-type]
+
+    class ModelAuthored:
+        def reflect(self, request: ReflectionRequest) -> Any:
+            return replace(DeterministicReflector().reflect(request), authorship="Model")
+
+    def finalized_with(reflector: Any) -> FinalizedExperience:
+        return finalize(capture_finalize_case(case)[0], **finalize_arguments(case), reflector=reflector)
+
+    for reflector, raised in ((NotAReflection(), "TypeError"), (NoEvidenceIds(), "TypeError")):
+        finalized = finalized_with(reflector)
+        assert finalized.record.status == "Quarantined" and finalized.record.reflection is None
+        assert finalized.screening_refusal_code == "Unreadable"
+        assert finalized.screening_exception_type == raised
+
+    def guard_fails(value: str, run: Any) -> str | None:
+        raise RuntimeError("the guard failed on secret text")
+
+    monkeypatch.setattr("agentexperience.reflector.guard_check", guard_fails)
+    finalized = finalized_with(ModelAuthored())
+    assert finalized.record.status == "Quarantined"
+    assert finalized.screening_refusal_code == "Unreadable"
+    assert finalized.screening_exception_type == "RuntimeError"
+    assert "secret" not in (finalized.screening_refusal or "")

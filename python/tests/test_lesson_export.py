@@ -63,7 +63,8 @@ def export_case(
     store = make_store(read_json(case / "seed.json"))
     path = directory / "lessons.md"
     if options["hasPreviousFile"]:
-        path.write_bytes((case / "previous.md").read_bytes())
+        bom = b"\xef\xbb\xbf" if options.get("previousFileBom") else b""
+        path.write_bytes(bom + (case / "previous.md").read_bytes())
     identity = ExperienceIdentity(
         "contract-principal", scope_of(options["scope"]), AuthorizationBounds.of(scope_of(options["authorizedScope"]))
     )
@@ -101,9 +102,11 @@ def test_lesson_export_postgres(pg_server: Any, name: str, tmp_path: Path) -> No
 def test_the_lesson_export_cases() -> None:
     assert cases("lesson-export") == [
         "denied",
+        "hand-edited-heading-whitespace",
         "hand-edited-previous-file",
         "measured-helps-only",
         "nothing-measured-helpful",
+        "previous-file-with-bom",
         "scope-with-every-segment",
         "sync-against-previous-file",
     ]
@@ -234,3 +237,30 @@ def test_a_sink_returning_none_is_an_error() -> None:
         view.export_measured(Nothing(), ExperienceIdentity("p", scope_of(options["scope"])), BenefitOptions(3))
     with pytest.raises(ValueError):
         BenefitOptions(0)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="file modes are POSIX")
+def test_the_file_gets_dotnets_mode_never_owner_only(tmp_path: Path) -> None:
+    path = tmp_path / "lessons.md"
+    previous = os.umask(0o022)
+    try:
+        MarkdownLessonFileSink(path, clock=lambda: NOW).sync(SCOPE, [lesson(1)])
+        assert path.stat().st_mode & 0o777 == 0o644
+        os.chmod(path, 0o600)
+        os.umask(0o002)
+        MarkdownLessonFileSink(path, clock=lambda: NOW).sync(SCOPE, [lesson(2)])
+        assert path.stat().st_mode & 0o777 == 0o664
+    finally:
+        os.umask(previous)
+
+
+def test_a_heading_guid_is_trimmed_of_white_space_and_a_bom_dropped(tmp_path: Path) -> None:
+    path = tmp_path / "lessons.md"
+    sink = MarkdownLessonFileSink(path, clock=lambda: NOW)
+    sink.sync(SCOPE, [lesson(1), lesson(2)])
+    text = path.read_text(encoding="utf-8").replace(
+        f"## Lesson {uuid.UUID(int=1)}", f"## Lesson \u00a0\t{uuid.UUID(int=1)}\u2003"
+    )
+    path.write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
+    assert sink.sync(SCOPE, [lesson(1), lesson(2)]) == LessonSyncResult(0, 1, 0)
+    assert not path.read_bytes().startswith(b"\xef\xbb\xbf")
