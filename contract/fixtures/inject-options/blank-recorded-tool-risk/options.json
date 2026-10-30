@@ -1,0 +1,26 @@
+{
+  "description": "A recorded call whose tool name is blank is Critical to the risk check.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": {
+    "availableTools": null,
+    "maxRiskClass": "High",
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": false,
+    "gatedRetrievalWindowMultiplier": 4
+  },
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
+}

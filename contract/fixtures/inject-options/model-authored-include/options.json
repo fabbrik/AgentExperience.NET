@@ -9,5 +9,7 @@
   "modelAuthoredLessons": "Include",
   "requestLimit": null,
   "receivingAgent": null,
-  "runTools": null
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
 }

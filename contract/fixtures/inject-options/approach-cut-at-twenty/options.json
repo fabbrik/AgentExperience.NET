@@ -1,16 +1,18 @@
 {
-  "description": "Exclude with a gate: the model-authored exclusion is decided before the gate, so a model-authored record whose approach would also be gated is ModelAuthored.",
+  "description": "The approach checked is the one the Tried: line shows, cut to twenty calls, so a twenty-first call's unavailable tool does not gate.",
   "rendering": "Compact",
   "failureDetail": "ErrorClass",
   "messageRole": "User",
   "maxRecords": 8,
   "maxBytes": 16384,
   "approachArguments": {},
-  "modelAuthoredLessons": "Exclude",
+  "modelAuthoredLessons": "Include",
   "requestLimit": null,
   "receivingAgent": {
-    "availableTools": null,
-    "maxRiskClass": "Low",
+    "availableTools": [
+      "read_ledger"
+    ],
+    "maxRiskClass": null,
     "toolRiskClasses": {
       "read_ledger": "Low",
       "wait_for_lock": "Low",
@@ -20,5 +22,7 @@
     "useRunTools": false,
     "gatedRetrievalWindowMultiplier": 4
   },
-  "runTools": null
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
 }

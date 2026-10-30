@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Holdout;
 using AgentExperience.Core.Retrieval;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 using AgentExperience.Storage.InMemory;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace AgentExperience.Contract.Tests;
@@ -19,11 +21,16 @@ internal sealed record ReceivingAgentInput(
     bool UseRunTools,
     int GatedRetrievalWindowMultiplier);
 
+/// <summary>What the host's <see cref="ExperienceInjectionOptions.DecideInjection"/> answers for one record.</summary>
+internal sealed record HostDecisionInput(bool Permitted, string? Reason);
+
 /// <summary>
 /// <c>options.json</c> of an inject-options case: the injection options whose effect is deterministic, the resolved
-/// request's own limit (<see langword="null"/> for none), the receiving agent (<see langword="null"/> for none) and the
-/// names of the tools the invocation offers (<see cref="RunTools"/>, read only with
-/// <see cref="ReceivingAgentInput.UseRunTools"/>).
+/// request's own limit (<see langword="null"/> for none), the receiving agent (<see langword="null"/> for none), the names
+/// of the tools the invocation offers (<see cref="RunTools"/>, <see langword="null"/> for none), the host's decision per
+/// record (<see cref="HostDecisions"/>: a record not listed is permitted; <see langword="null"/>: no decision callback)
+/// and the benefit policy (<see cref="PreferMeasuredHelpful"/>; the policy is on, over <c>estimate.json</c>, exactly when
+/// the case has that file).
 /// </summary>
 internal sealed record InjectOptionsInput(
     string Description,
@@ -36,9 +43,11 @@ internal sealed record InjectOptionsInput(
     ModelAuthoredLessonPolicy ModelAuthoredLessons,
     int? RequestLimit,
     ReceivingAgentInput? ReceivingAgent,
-    IReadOnlyList<string>? RunTools)
+    IReadOnlyList<string>? RunTools,
+    IReadOnlyDictionary<Guid, HostDecisionInput>? HostDecisions,
+    bool PreferMeasuredHelpful)
 {
-    /// <summary>The library's defaults, no request limit and no receiving agent.</summary>
+    /// <summary>The library's defaults, no request limit, no receiving agent and no host decision.</summary>
     public static InjectOptionsInput Default { get; } = new(
         string.Empty,
         HistoricalReferenceRendering.Compact,
@@ -50,37 +59,41 @@ internal sealed record InjectOptionsInput(
         ModelAuthoredLessonPolicy.Include,
         RequestLimit: null,
         ReceivingAgent: null,
-        RunTools: null);
-}
-
-/// <summary>An inject-options case: the ranked records (best first) and the options.</summary>
-internal sealed record InjectOptionsCase(IReadOnlyList<(ExperienceRecord Record, RankingInput Ranking)> Records, InjectOptionsInput Options);
-
-/// <summary>What the .NET context provider does with an inject-options case.</summary>
-internal sealed record InjectOptionsRun(
-    RetrieveExperienceRequest Request,
-    List<Guid> Selected,
-    HistoricalReferencePayload Payload,
-    HistoricalReferenceMessageRole Role,
-    List<OmittedExperience> Omitted)
-{
-    /// <summary><see cref="InjectionOutcome.Injected"/> when the block holds a record, otherwise <see cref="InjectionOutcome.NothingToInject"/>.</summary>
-    public InjectionOutcome Outcome => Payload.IsEmpty ? InjectionOutcome.NothingToInject : InjectionOutcome.Injected;
+        RunTools: null,
+        HostDecisions: null,
+        PreferMeasuredHelpful: false);
 }
 
 /// <summary>
-/// Contract 1.13's <c>inject-options</c> family: the injection options whose effect is deterministic. The ranked records,
-/// the options and the receiving agent go in; the request retrieval is asked for, what the context provider selects (the
-/// model-authored policy, the capability gate, the record limit), the block its writer renders (layout, failure detail,
-/// argument allowlist, byte budget), the role it is sent in, every omission with its reason and detail, and the outcome
-/// come out. Generated through <c>ExperienceContextProvider.SelectAndWrite</c>, the selection and rendering an
-/// invocation runs. Needs no database.
+/// An inject-options case: what the candidate source answers (each record with its relevance, best first), the options
+/// and, for a case with the benefit policy on, the estimate the provider's cache holds.
+/// </summary>
+internal sealed record InjectOptionsCase(IReadOnlyList<ExperienceRecord> Candidates, InjectOptionsInput Options, ExperienceBenefitEstimate? Estimate = null);
+
+/// <summary>What the .NET agent did with an inject-options case.</summary>
+internal sealed record InjectOptionsRun(
+    IReadOnlyList<(ExperienceRecord Record, RankingInput Ranking)> Ranked,
+    RetrieveExperienceRequest Request,
+    bool QueryExcludedModelAuthored,
+    ExperienceInjectionResult Result,
+    ChatMessage? Block,
+    List<(Guid ExperienceId, bool ModelAuthored)> Decisions);
+
+/// <summary>
+/// Contract 1.13's <c>inject-options</c> family: the injection options whose effect is deterministic. Each case runs a
+/// real <see cref="ExperienceContextProvider"/> on a <see cref="ChatClientAgent"/>: retrieval over a candidate source that
+/// answers with the case's records, the final re-read through the in-memory record store, the host's decision from the
+/// options, and the writer. <c>records.json</c> is what retrieval ranked (the input a port selects from); the rest is what
+/// the provider reported (<see cref="ExperienceInjectionOptions.OnContextInjected"/>) and the message the model was sent.
+/// Needs no database.
 /// </summary>
 internal static class InjectOptionsContract
 {
     public const string Family = "inject-options";
 
     private const int F = 0xe1;
+
+    private const string TaskText = "Refund ticket 46 is stuck";
 
     /// <summary>The host's risk classes for the tools the records call; <c>drop_ledger</c> is undeclared, so Critical.</summary>
     internal static readonly IReadOnlyDictionary<string, ToolRiskClass> RiskClasses = new Dictionary<string, ToolRiskClass>(StringComparer.Ordinal)
@@ -101,6 +114,21 @@ internal static class InjectOptionsContract
     private static readonly ExperienceRecord Model = Lesson(7, "model-refund", "A model wrote this lesson about the ledger.", [["read_ledger"]], modelAuthored: true);
     private static readonly ExperienceRecord ModelDrop = Lesson(8, "model-drop", "A model wrote this lesson about dropping the ledger.", [["drop_ledger"]], modelAuthored: true);
 
+    // Records with no approach to gate: not verified, a final attempt that failed, and attempt numbers that repeat.
+    private static readonly ExperienceRecord Unverified = Lesson(9, "unverified-drop", "Dropping the ledger did not verify.", [["drop_ledger"]]) is var u
+        ? u with { Outcome = u.Outcome with { Status = TaskVerificationStatus.Failed } }
+        : null!;
+    private static readonly ExperienceRecord FailedLast = Lesson(10, "failed-last", "The last attempt to drop the ledger failed.", [["read_ledger"], ["drop_ledger"]], failLast: true);
+    private static readonly ExperienceRecord Repeated = Lesson(11, "repeated-attempts", "Two attempts share a number.", [["read_ledger"], ["drop_ledger"]]) is var r
+        ? r with { Attempts = [.. r.Attempts.Select(attempt => attempt with { SequenceNumber = 0 })] }
+        : null!;
+
+    // Twenty-one calls: the approach is cut to the first twenty, so the twenty-first tool is never checked.
+    private static readonly ExperienceRecord Long = Lesson(12, "long-approach", "Read the ledger page by page.", [[.. Enumerable.Repeat("read_ledger", 20), "drop_ledger"]]);
+
+    // A recorded call whose tool name is blank.
+    private static readonly ExperienceRecord Blank = Lesson(13, "blank-tool", "A call whose tool name was not recorded.", [["read_ledger", " "]]);
+
     /// <summary>Every inject-options case, by directory name.</summary>
     public static IReadOnlyList<(string Name, InjectOptionsCase Case)> Cases { get; } = Build();
 
@@ -109,9 +137,16 @@ internal static class InjectOptionsContract
 
     private static List<(string Name, InjectOptionsCase Case)> Build()
     {
-        var all = Ranked(Read, Retry, Issue, Drop, Think);
+        ExperienceRecord[] all = [Read, Retry, Issue, Drop, Think];
         var o = InjectOptionsInput.Default;
-        var budget = InjectContract.BudgetFor(Ranked(Read, Think), InjectOptions.Default) + 1;
+
+        // The size of the block holding Read and Think alone, as the provider writes it.
+        var two = Run(new InjectOptionsCase([Read, Think], o)).Result.PayloadBytes;
+        var hurts = new BenefitSelectContract.RunBuilder(F + 1);
+        hurts.Add(3, HoldoutArm.Treatment, verified: false, null, null, Read.ExperienceId);
+        hurts.Add(3, HoldoutArm.Holdout, verified: true, null, null, Read.ExperienceId);
+        hurts.Add(3, HoldoutArm.Treatment, verified: true, null, null, Think.ExperienceId);
+        hurts.Add(3, HoldoutArm.Holdout, verified: false, null, null, Think.ExperienceId);
         return
         [
             ("risk-low", new(all, o with
@@ -135,12 +170,12 @@ internal static class InjectOptionsContract
                 ReceivingAgent = Agent(ToolRiskClass.Critical),
                 RequestLimit = 3,
             })),
-            ("tool-unavailable", new(Ranked(Read, Retry, Issue, Earlier, Think), o with
+            ("tool-unavailable", new([Read, Retry, Issue, Earlier, Think], o with
             {
                 Description = "AvailableTools without retry_refund and issue_refund: approaches calling either are omitted as ToolUnavailable. Only the verified final attempt's tools are checked, so a failed earlier attempt's tool (drop_ledger) does not gate, and an approach calling no tool always passes.",
                 ReceivingAgent = Agent(available: ["read_ledger", "wait_for_lock"]),
             })),
-            ("tool-check-before-risk", new(Ranked(Read, Retry, Issue, Drop), o with
+            ("tool-check-before-risk", new([Read, Retry, Issue, Drop], o with
             {
                 Description = "Both checks: the tool check comes first, so an approach whose tool is missing is ToolUnavailable even when its risk would also fail, and an available tool above MaxRiskClass is RiskClassExceeded.",
                 ReceivingAgent = Agent(ToolRiskClass.Low, available: ["read_ledger", "wait_for_lock", "retry_refund"]),
@@ -156,66 +191,104 @@ internal static class InjectOptionsContract
                 ReceivingAgent = Agent(available: ["read_ledger", "wait_for_lock", "retry_refund"], useRunTools: true),
                 RunTools = ["read_ledger", "retry_refund", "issue_refund", " "],
             })),
-            ("gate-takes-no-slot", new(Ranked(Issue, Read, Drop, Retry, Think, Earlier), o with
+            ("run-tools-none-offered", new(all, o with
+            {
+                Description = "UseRunTools with no AvailableTools, on an invocation that offers no tool: only records whose approach calls no tool pass.",
+                ReceivingAgent = Agent(useRunTools: true),
+                RunTools = [],
+            })),
+            ("blank-recorded-tool", new([Blank, Read], o with
+            {
+                Description = "A recorded call whose tool name is blank is always unavailable to the tool check (a declared tool name can never be blank).",
+                ReceivingAgent = Agent(available: ["read_ledger"]),
+            })),
+            ("blank-recorded-tool-risk", new([Blank, Read], o with
+            {
+                Description = "A recorded call whose tool name is blank is Critical to the risk check.",
+                ReceivingAgent = Agent(ToolRiskClass.High),
+            })),
+            ("no-approach-passes", new([Unverified, FailedLast, Repeated, Drop], o with
+            {
+                Description = "A record with no approach has nothing to gate and passes: one that did not verify, one whose final attempt failed, and one whose attempt numbers repeat. A verified approach calling an unavailable tool is still omitted.",
+                ReceivingAgent = Agent(available: ["read_ledger"]),
+            })),
+            ("approach-cut-at-twenty", new([Long, Drop], o with
+            {
+                Description = "The approach checked is the one the Tried: line shows, cut to twenty calls, so a twenty-first call's unavailable tool does not gate.",
+                ReceivingAgent = Agent(available: ["read_ledger"]),
+            })),
+            ("gate-takes-no-slot", new([Issue, Read, Drop, Retry, Think, Earlier], o with
             {
                 Description = "The gate runs before the record limit: with MaxRecords 2, the gated records take no slot, the next eligible records fill them, and the record after that is OverRecordLimit, its detail naming its rank.",
                 MaxRecords = 2,
                 ReceivingAgent = Agent(ToolRiskClass.Low),
             })),
-            ("gate-and-byte-budget", new(Ranked(Issue, Read, Think, Earlier), o with
+            ("gate-and-byte-budget", new([Issue, Read, Think, Earlier], o with
             {
                 Description = "The gate's omissions come first, then the writer's byte budget: a budget that fits two records drops the third passing record whole as OverByteBudget.",
-                MaxBytes = budget,
+                MaxBytes = two + 1,
                 ReceivingAgent = Agent(ToolRiskClass.Low),
             })),
-            ("request-limit-gated-window", new(Ranked(Issue, Read, Retry, Think, Earlier), o with
+            ("request-limit-gated-window", new([Issue, Read, Retry, Think, Earlier], o with
             {
                 Description = "A request limit of 2 with a gate that can reject: retrieval is asked for MaxRecords x GatedRetrievalWindowMultiplier (3 x 2 = 6) records, capped by the candidate limit. A gated record inside the host's window is reported; one past it was fetched only as backfill, so it is not, and neither is a backfill record no slot was left for.",
                 MaxRecords = 3,
                 RequestLimit = 2,
                 ReceivingAgent = Agent(ToolRiskClass.Low, multiplier: 2),
             })),
-            ("everything-gated", new(Ranked(Retry, Issue, Drop), o with
+            ("gate-and-measured-harmful", new([Read, Issue, Think, Retry], o with
+            {
+                Description = "The benefit policy with a gate: a lesson measured Hurts is MeasuredHarmful before the gate is asked, then the gate omits, and the lesson measured Helps moves first with PreferMeasuredHelpful.",
+                PreferMeasuredHelpful = true,
+                ReceivingAgent = Agent(ToolRiskClass.Low),
+            }, hurts.Estimate(splitByModel: false))),
+            ("everything-gated", new([Retry, Issue, Drop], o with
             {
                 Description = "Every record is gated: nothing is injected, the outcome is NothingToInject and every omission is reported.",
                 ReceivingAgent = Agent(ToolRiskClass.Low),
             })),
-            ("model-authored-include", new(Ranked(Model, Read), o with
+            ("model-authored-include", new([Model, Read], o with
             {
                 Description = "ModelAuthoredLessons Include (the default): the model-authored record is injected, its model-written fields between the two fixed authored lines.",
             })),
-            ("model-authored-exclude", new(Ranked(Model, Read, ModelDrop, Think), o with
+            ("model-authored-exclude", new([Model, Read, ModelDrop, Think], o with
             {
-                Description = "ModelAuthoredLessons Exclude: retrieval is asked to exclude model-authored records, and any that arrives is omitted as ModelAuthored, with no detail, before the record limit, so it takes no slot.",
+                Description = "ModelAuthoredLessons Exclude: retrieval is asked to exclude model-authored records and leaves out any the source still returns, so they are not among the ranked records and take no slot.",
                 MaxRecords = 2,
                 ModelAuthoredLessons = ModelAuthoredLessonPolicy.Exclude,
             })),
-            ("model-authored-before-the-gate", new(Ranked(ModelDrop, Drop, Read), o with
+            ("host-decision", new([Read, Model, Issue, Retry, Think, Earlier], o with
             {
-                Description = "Exclude with a gate: the model-authored exclusion is decided before the gate, so a model-authored record whose approach would also be gated is ModelAuthored.",
-                ModelAuthoredLessons = ModelAuthoredLessonPolicy.Exclude,
-                ReceivingAgent = Agent(ToolRiskClass.Low),
+                Description = "The host's decision, asked once per selected record in order, after the gate: a denial with a reason omits it as HostDenied with that reason, one with none with the default detail, and a denied record keeps its slot. The decision is told whether the record is model-authored. The byte budget comes after: a budget that fits two records drops the next one whole.",
+                MaxRecords = 5,
+                MaxBytes = two + 1,
+                HostDecisions = new Dictionary<Guid, HostDecisionInput>
+                {
+                    [Retry.ExperienceId] = new(false, "risk policy: no retries"),
+                    [Model.ExperienceId] = new(false, null),
+                },
+                ReceivingAgent = Agent(ToolRiskClass.Medium),
             })),
-            ("approach-arguments", new(Ranked(Retry), o with
+            ("approach-arguments", new([Retry], o with
             {
                 Description = "ApproachArguments allowlists retry_refund's delay: the Tried: lines show its stored values, and nothing else.",
                 ApproachArguments = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["retry_refund"] = ["delay"] },
             })),
-            ("failure-detail-error-class", new(Ranked(Retry), o with
+            ("failure-detail-error-class", new([Retry], o with
             {
                 Description = "FailureDetail ErrorClass (the default): a failed attempt shows the error's class, and the failed call its first token.",
             })),
-            ("failure-detail-excerpt", new(Ranked(Retry), o with
+            ("failure-detail-excerpt", new([Retry], o with
             {
                 Description = "FailureDetail Excerpt: the failed attempt adds the error's first line, quoted; the failed call's marker is still the class's first token.",
                 FailureDetail = AttemptFailureDetail.Excerpt,
             })),
-            ("failure-detail-none", new(Ranked(Retry), o with
+            ("failure-detail-none", new([Retry], o with
             {
                 Description = "FailureDetail None: a failed attempt says only failed, and a failed call [failed].",
                 FailureDetail = AttemptFailureDetail.None,
             })),
-            ("message-role-system-verbose", new(Ranked(Read, Drop, Retry), o with
+            ("message-role-system-verbose", new([Read, Drop, Retry], o with
             {
                 Description = "MessageRole System with the verbose layout and a gate: the same block text, sent as a system message.",
                 Rendering = HistoricalReferenceRendering.Verbose,
@@ -225,20 +298,28 @@ internal static class InjectOptionsContract
         ];
     }
 
-    private static List<(ExperienceRecord Record, RankingInput Ranking)> Ranked(params ExperienceRecord[] records) =>
-        [.. records.Select((record, index) => (record, InjectContract.Ranking(1.0 - (0.05 * index), 0.9)))];
-
     /// <summary>A verified lesson whose attempts call <paramref name="attempts"/>' tools in order, the last the approach.</summary>
-    internal static ExperienceRecord Lesson(int n, string taskId, string lesson, string[][] attempts, bool modelAuthored = false, bool failFirst = false, int family = F, Scope? scope = null)
+    internal static ExperienceRecord Lesson(
+        int n,
+        string taskId,
+        string lesson,
+        string[][] attempts,
+        bool modelAuthored = false,
+        bool failFirst = false,
+        int family = F,
+        Scope? scope = null,
+        bool failLast = false)
     {
         var record = SearchContract.Seed(family, n, taskId, "Refund ticket handling", lesson, modelAuthored: modelAuthored, scope: scope);
         var at = record.CreatedAt.AddMinutes(-10);
         var list = new List<Attempt>();
         for (var a = 0; a < attempts.Length; a++)
         {
-            var error = failFirst && a == 0 ? "System.InvalidOperationException: the ledger is locked" : null;
+            var error = (failFirst && a == 0) || (failLast && a == attempts.Length - 1)
+                ? "System.InvalidOperationException: the ledger is locked"
+                : null;
             var calls = attempts[a]
-                .Select((tool, c) => Call(family, n, (a * 16) + c, c, tool, at.AddMinutes(a).AddSeconds(c), new(), error))
+                .Select((tool, c) => Call(family, n, (a * 32) + c, c, tool, at.AddMinutes(a).AddSeconds(c), new(), error))
                 .ToList();
             list.Add(new Attempt(Fixed.Id(family, 0x300 + (n * 16) + a), a, at.AddMinutes(a), TimeSpan.FromSeconds(3), calls, error is null ? "ok" : null, error));
         }
@@ -263,8 +344,8 @@ internal static class InjectOptionsContract
             Error: Timeout),
             new(Fixed.Id(family, 0x300 + (n * 16) + 1), 1, at.AddMinutes(1), TimeSpan.FromSeconds(4),
             [
-                Call(family, n, 16, 0, "wait_for_lock", at.AddMinutes(1), new(), error: null),
-                Call(family, n, 17, 1, "retry_refund", at.AddMinutes(1).AddSeconds(1), new() { ["delay"] = 30, ["ticket"] = "T-46" }, error: null),
+                Call(family, n, 32, 0, "wait_for_lock", at.AddMinutes(1), new(), error: null),
+                Call(family, n, 33, 1, "retry_refund", at.AddMinutes(1).AddSeconds(1), new() { ["delay"] = 30, ["ticket"] = "T-46" }, error: null),
             ],
             Result: "Refund issued.",
             Error: null),
@@ -277,32 +358,81 @@ internal static class InjectOptionsContract
         new(Fixed.Id(family, 0x1000 + (n * 64) + id), sequence, name, arguments, at, TimeSpan.FromMilliseconds(500), error is null ? "ok" : null, error);
 
     /// <summary>
-    /// What the .NET context provider does with a case: the provider is built with the case's options (a host resolver
-    /// whose request carries the case's limit), retrieval is asked for <c>RetrievalRequest</c>'s request, and the
-    /// selection and the block are <c>SelectAndWrite</c>'s, for an invocation offering the case's run tools.
+    /// Runs a case through a real <see cref="ExperienceContextProvider"/> on a <see cref="ChatClientAgent"/>: the records
+    /// stored in the in-memory record store (for the final re-read), retrieval over a source that answers with them at
+    /// relevance 1.00, 0.95, 0.90, ..., the host's resolver returning a request with the case's limit, the case's options,
+    /// and, with an estimate, the benefit policy on over a cache that holds it.
     /// </summary>
-    public static InjectOptionsRun Run(IReadOnlyList<(ExperienceRecord Record, RankingInput Ranking)> records, InjectOptionsInput options)
+    public static InjectOptionsRun Run(InjectOptionsCase definition)
     {
+        var options = definition.Options;
         var clock = new FixedTimeProvider(Fixed.T0);
         var store = new InMemoryExperienceRecordStore(clock);
-        var request = new RetrieveExperienceRequest(Fixed.Authorization, Fixed.Scope, "Refund ticket 46 is stuck", Limit: options.RequestLimit);
-        var provider = new ExperienceContextProvider(
-            new ExperienceRetrievalService(new InMemoryExperienceCandidateSource(store), RetrievalPolicy.Default, RankingWeights.Default, clock),
-            store,
-            Options(options, _ => request, clock));
+        foreach (var record in definition.Candidates)
+        {
+            var created = store.CreateAsync(Fixed.Authorization, record, CancellationToken.None).GetAwaiter().GetResult();
+            if (created.Outcome != ExperienceStoreOutcome.Created)
+            {
+                throw new InvalidOperationException($"{record.TaskId} was not stored: {created.Outcome}.");
+            }
+        }
+
+        var source = new FixtureSource([.. definition.Candidates.Select((record, index) => (record, 1.0 - (0.05 * index)))]);
+        var retrieval = new ExperienceRetrievalService(source, RetrievalPolicy.Default, RankingWeights.Default, clock);
+        var request = new RetrieveExperienceRequest(Fixed.Authorization, Fixed.Scope, TaskText, Limit: options.RequestLimit);
+        var decisions = new List<(Guid, bool)>();
+        ExperienceInjectionResult? result = null;
+        var injection = Options(options, _ => request, clock);
+        injection.OnContextInjected = injected => result = injected;
+        if (options.HostDecisions is { } host)
+        {
+            injection.DecideInjection = decision =>
+            {
+                decisions.Add((decision.Current.ExperienceId, decision.ModelAuthored));
+                return host.TryGetValue(decision.Current.ExperienceId, out var answer)
+                    ? new InjectionDecision(answer.Permitted, answer.Reason)
+                    : InjectionDecision.Permit;
+            };
+        }
+
+        if (definition.Estimate is { } estimate)
+        {
+            injection.Benefit = new ExperienceBenefitPolicy
+            {
+                Enabled = true,
+                PreferMeasuredHelpful = options.PreferMeasuredHelpful,
+                MinimumRunsPerArm = estimate.MinimumRunsPerArm,
+            };
+        }
+
+        var provider = new ExperienceContextProvider(retrieval, store, injection);
+        if (definition.Estimate is { } held)
+        {
+            provider.BenefitCache!.Prime(Fixed.Authorization, Fixed.Scope, held);
+        }
 
         var runTools = options.RunTools?.Select(name => (AITool)new NamedTool(name)).ToList();
-        var ranked = records
-            .Select(entry => new RankedExperience(
-                entry.Record,
-                entry.Ranking.Score,
-                [.. entry.Ranking.Components.Select(component => new RankingComponent(component.Kind, component.Value, component.Weight))]))
-            .ToList();
-        var omitted = new List<OmittedExperience>();
+        var client = new RecordingChatClient();
+        var agent = new ChatClientAgent(client, new ChatClientAgentOptions
+        {
+            ChatOptions = runTools is null ? null : new ChatOptions { Tools = runTools },
+            AIContextProviders = [provider],
+        });
+        agent.RunAsync(TaskText).GetAwaiter().GetResult();
+        if (result is null)
+        {
+            throw new InvalidOperationException("The provider reported no result.");
+        }
+
+        // The ranked records retrieval answered the provider with: the same source and request, asked again.
         var asked = provider.RetrievalRequest(request, runTools);
-        // As an invocation selects: under the resolved request's own limit, never the widened one retrieval is asked for.
-        var (selected, payload, role) = provider.SelectAndWrite(ranked, omitted, request.Limit, runTools);
-        return new InjectOptionsRun(asked, [.. selected.Select(entry => entry.Record.ExperienceId)], payload, role, omitted);
+        var ranked = retrieval.RetrieveAsync(asked, CancellationToken.None).GetAwaiter().GetResult().Records
+            .Select(entry => (entry.Record, new RankingInput(
+                entry.Score,
+                [.. entry.Components.Select(component => new RankingComponentInput(component.Kind, component.Value, component.Weight))])))
+            .ToList();
+        var block = client.Seen.SingleOrDefault(message => message.AdditionalProperties?.ContainsKey(ExperienceContextProvider.HistoricalReferenceKey) == true);
+        return new InjectOptionsRun(ranked, asked, source.Query?.ExcludeModelAuthored ?? false, result, block, decisions);
     }
 
     /// <summary>The .NET injection options a case declares, with <paramref name="resolve"/> as the host's resolver.</summary>
@@ -330,26 +460,31 @@ internal static class InjectOptionsContract
     };
 
     /// <summary>
-    /// <c>expected.json</c>: the <c>outcome</c>; the <c>messageRole</c> the block is sent in (<c>null</c> when nothing is
-    /// injected); the <c>retrievalRequest</c> (its <c>limit</c>, <c>null</c> for none, and whether it excludes
-    /// model-authored records); the records <c>selected</c> before the byte budget and <c>injected</c>, in order; the
-    /// block's <c>byteCount</c>; and every omission in the order the provider reports it (<c>experienceId</c>,
-    /// <c>reason</c>, <c>detail</c>, <c>null</c> when it carries none). The block itself is <c>expected-block.txt</c>,
-    /// empty when nothing is injected.
+    /// <c>expected.json</c>: the <c>outcome</c>; the <c>messageRole</c> the block was sent in (<c>null</c> when nothing was
+    /// injected); the <c>retrievalRequest</c> (the <c>limit</c> retrieval was asked for, <c>null</c> for none, and whether it
+    /// excluded model-authored records); the host's <c>decisions</c>, in the order it was asked (each <c>experienceId</c>
+    /// and whether the provider counts it <c>modelAuthored</c>); the records <c>injected</c>, in order; the block's
+    /// <c>byteCount</c>; and every omission in the order the provider reports it (<c>experienceId</c>, <c>reason</c>,
+    /// <c>detail</c>, <c>null</c> when it carries none). The block itself is <c>expected-block.txt</c>, empty when nothing
+    /// was injected.
     /// </summary>
     public static JsonObject ExpectedJson(InjectOptionsRun run) => new()
     {
-        ["outcome"] = run.Outcome.ToString(),
-        ["messageRole"] = run.Payload.IsEmpty ? null : run.Role.ToString(),
+        ["outcome"] = run.Result.Outcome.ToString(),
+        ["messageRole"] = run.Block is null ? null : (run.Block.Role == ChatRole.System ? "System" : "User"),
         ["retrievalRequest"] = new JsonObject
         {
             ["limit"] = run.Request.Limit,
-            ["excludeModelAuthored"] = run.Request.ExcludeModelAuthored,
+            ["excludeModelAuthored"] = run.QueryExcludedModelAuthored,
         },
-        ["selected"] = new JsonArray([.. run.Selected.Select(id => (JsonNode)Id(id))]),
-        ["injected"] = new JsonArray([.. run.Payload.ExperienceIds.Select(id => (JsonNode)Id(id))]),
-        ["byteCount"] = run.Payload.IsEmpty ? 0 : run.Payload.ByteCount,
-        ["omitted"] = new JsonArray([.. run.Omitted.Select(entry => (JsonNode)new JsonObject
+        ["decisions"] = new JsonArray([.. run.Decisions.Select(entry => (JsonNode)new JsonObject
+        {
+            ["experienceId"] = Id(entry.ExperienceId),
+            ["modelAuthored"] = entry.ModelAuthored,
+        })]),
+        ["injected"] = new JsonArray([.. run.Result.InjectedExperienceIds.Select(id => (JsonNode)Id(id))]),
+        ["byteCount"] = run.Result.PayloadBytes,
+        ["omitted"] = new JsonArray([.. run.Result.Omitted.Select(entry => (JsonNode)new JsonObject
         {
             ["experienceId"] = Id(entry.ExperienceId),
             ["reason"] = entry.Reason.ToString(),
@@ -363,5 +498,39 @@ internal static class InjectOptionsContract
     private sealed class NamedTool(string name) : AITool
     {
         public override string Name => name;
+    }
+
+    /// <summary>A candidate source that answers with the given records, in order, at most the limit it is asked for.</summary>
+    private sealed class FixtureSource(IReadOnlyList<(ExperienceRecord Record, double Relevance)> candidates) : IExperienceCandidateSource
+    {
+        public ExperienceCandidateQuery? Query { get; private set; }
+
+        public Task<ExperienceCandidateSearchResult> SearchAsync(AuthorizationContext authorization, ExperienceCandidateQuery query, CancellationToken cancellationToken)
+        {
+            Query = query;
+            IReadOnlyList<ExperienceCandidate> answer = [.. candidates.Take(query.Limit).Select(entry => new ExperienceCandidate(entry.Record, entry.Relevance))];
+            return Task.FromResult(new ExperienceCandidateSearchResult(ExperienceStoreOutcome.Found, answer, []));
+        }
+    }
+
+    /// <summary>A model that answers at once, and keeps every message it was sent.</summary>
+    private sealed class RecordingChatClient : IChatClient
+    {
+        public List<ChatMessage> Seen { get; } = [];
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            Seen.AddRange(messages);
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done.")));
+        }
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
     }
 }

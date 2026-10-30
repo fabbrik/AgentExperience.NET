@@ -1,0 +1,28 @@
+{
+  "description": "A recorded call whose tool name is blank is always unavailable to the tool check (a declared tool name can never be blank).",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": {
+    "availableTools": [
+      "read_ledger"
+    ],
+    "maxRiskClass": null,
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": false,
+    "gatedRetrievalWindowMultiplier": 4
+  },
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
+}

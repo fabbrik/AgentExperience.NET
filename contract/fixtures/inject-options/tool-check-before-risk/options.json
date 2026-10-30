@@ -24,5 +24,7 @@
     "useRunTools": false,
     "gatedRetrievalWindowMultiplier": 4
   },
-  "runTools": null
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
 }

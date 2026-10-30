@@ -1,5 +1,5 @@
 {
-  "description": "ModelAuthoredLessons Exclude: retrieval is asked to exclude model-authored records, and any that arrives is omitted as ModelAuthored, with no detail, before the record limit, so it takes no slot.",
+  "description": "ModelAuthoredLessons Exclude: retrieval is asked to exclude model-authored records and leaves out any the source still returns, so they are not among the ranked records and take no slot.",
   "rendering": "Compact",
   "failureDetail": "ErrorClass",
   "messageRole": "User",
@@ -9,5 +9,7 @@
   "modelAuthoredLessons": "Exclude",
   "requestLimit": null,
   "receivingAgent": null,
-  "runTools": null
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
 }

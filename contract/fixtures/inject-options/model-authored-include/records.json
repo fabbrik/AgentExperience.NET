@@ -102,7 +102,7 @@
       }
     },
     "ranking": {
-      "score": 0.8999999999999999,
+      "score": 0.8107217455642816,
       "components": [
         {
           "kind": "Relevance",
@@ -111,12 +111,12 @@
         },
         {
           "kind": "Confidence",
-          "value": 0.9,
+          "value": 0.6666666666666666,
           "weight": 0.25
         },
         {
           "kind": "Recency",
-          "value": 1,
+          "value": 0.7937005259840998,
           "weight": 0.15
         },
         {
@@ -234,7 +234,7 @@
       }
     },
     "ranking": {
-      "score": 0.8825,
+      "score": 0.7932217455642815,
       "components": [
         {
           "kind": "Relevance",
@@ -243,12 +243,12 @@
         },
         {
           "kind": "Confidence",
-          "value": 0.9,
+          "value": 0.6666666666666666,
           "weight": 0.25
         },
         {
           "kind": "Recency",
-          "value": 1,
+          "value": 0.7937005259840998,
           "weight": 0.15
         },
         {

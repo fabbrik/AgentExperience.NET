@@ -11,7 +11,7 @@ block already contains.
 --- RECORD 1 ---
 Source: experience 000000e1-0000-4000-8000-000000000001; source run 000000e1-0000-4000-8000-000000000101; task read-ledger
 Confidence: 0.667 (status Validated)
-Applicability (as ranked at retrieval): score 0.900 from Relevance 1.000 x 0.350 = 0.350; Confidence 0.900 x 0.250 = 0.225; Recency 1.000 x 0.150 = 0.150; Status 0.500 x 0.150 = 0.075; EnvironmentCompatibility 1.000 x 0.100 = 0.100
+Applicability (as ranked at retrieval): score 0.811 from Relevance 1.000 x 0.350 = 0.350; Confidence 0.667 x 0.250 = 0.167; Recency 0.794 x 0.150 = 0.119; Status 0.500 x 0.150 = 0.075; EnvironmentCompatibility 1.000 x 0.100 = 0.100
 Recorded: learned 2026-02-20T09:00:00Z; last lifecycle activity 2026-02-20T09:00:00Z
 Environment: host contract-host; runtime runtime-1; os linux; application version 1.0.0; region eu-west
 Verification: Verified
@@ -29,7 +29,7 @@ Warnings: (none recorded)
 --- RECORD 2 ---
 Source: experience 000000e1-0000-4000-8000-000000000002; source run 000000e1-0000-4000-8000-000000000102; task retry-refund
 Confidence: 0.667 (status Validated)
-Applicability (as ranked at retrieval): score 0.865 from Relevance 0.900 x 0.350 = 0.315; Confidence 0.900 x 0.250 = 0.225; Recency 1.000 x 0.150 = 0.150; Status 0.500 x 0.150 = 0.075; EnvironmentCompatibility 1.000 x 0.100 = 0.100
+Applicability (as ranked at retrieval): score 0.776 from Relevance 0.900 x 0.350 = 0.315; Confidence 0.667 x 0.250 = 0.167; Recency 0.794 x 0.150 = 0.119; Status 0.500 x 0.150 = 0.075; EnvironmentCompatibility 1.000 x 0.100 = 0.100
 Recorded: learned 2026-02-20T09:00:00Z; last lifecycle activity 2026-02-20T09:00:00Z
 Environment: host contract-host; runtime runtime-1; os linux; application version 1.0.0; region eu-west
 Verification: Verified
