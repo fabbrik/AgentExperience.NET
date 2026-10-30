@@ -283,6 +283,39 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   `StaleRevision` at revision 2, that the record's history holds the winner's event alone, and that the three read that
   history identically.
 
+### Reuse feedback in Python and Go: contract 1.17 (story 27.6c)
+
+- **Contract 1.17** ([what it adds](contract/README-1.17.md)) brings reuse feedback into the language-neutral contract,
+  add-only. `sql/reuse-feedback.sql` publishes the .NET PostgreSQL ledger's own statements (generated from its source
+  and checked against it on every build) with the order a submission runs them in; three new fixture families pin the
+  rest: `reuse-feedback` (generated through .NET's `ExperienceReuseFeedbackService` over the in-memory stores: exposure
+  only, human and comparative attribution, harm contesting, `RecordedOnly`, duplicate keys, ineligible, unresolved and
+  refused records, every fatal and degrading validation error in order, denial, a host engine that throws or returns no
+  score, store failures and their retry, the ledger's own validation and idempotency, and the derived evidence and
+  event IDs, tags 1 and 2 under their own namespace), `finalize-reuse-evidence` (finalization with `ReuseEvidence =
+  SameTask` and `ContradictOnFailure`, finalized twice to pin the replay) and `reuse-feedback-sql` (through the
+  PostgreSQL ledger, with the two tables each case leaves). Every 1.0-1.16 file is unchanged. No schema object and no
+  privilege is added.
+- **New in both ports (hosts can observe it): the ports now write the reuse-feedback ledger and, for attributed
+  records, confidence evidence.** Python `ExperienceReuseFeedbackService(store, lifecycle).record(...)` and Go
+  `NewReuseFeedbackService(store, lifecycle)` with `Record`, over in-memory and PostgreSQL ledgers (Python
+  `PostgresExperienceReuseFeedbackStore`, Go `postgres`), with .NET's validation, dispositions, reasons and retry
+  semantics. Attributed evidence goes through the contract 1.16 lifecycle service, so it keeps that service's port
+  default, `HostTrustedEvidence = RecordedOnly`: an attribution is recorded and moves no score until the host opts into
+  `Counted`. A port verifies no attribution (story 27.7) and holds no key store, so it writes the rationale in
+  plaintext and a resubmission of a submission .NET sealed is a `Conflict`.
+- **New in both ports: finalization's reuse evidence**, Python `apply_reuse_evidence(...)` and Go
+  `ApplyReuseEvidence(...)`, off unless asked for (`SameTask`, with `contradict_on_failure` / `ContradictOnFailure`
+  off by default). A port's finalization is a pure function, so the host calls this step once the finalized record is
+  stored, and again with the stored record on a run already finalized; the MAF adapters do not run it yet. The
+  `finalize` span's `reuse_evidence.submitted` attribute is not written by a port.
+- **Telemetry:** both ports report the `reuse_feedback` operation (`feedback_id`, `run_id`), with a nested
+  `confidence.apply` for each attributed record.
+- **A cross-language test on PostgreSQL** (`CrossLanguageReuseFeedbackPostgresTests`, run by the CI job
+  `cross-language-lifecycle`): feedback a .NET, a Python and a Go agent submit on the same lessons is one row (the
+  others `AlreadyRecorded`, a changed resubmission `Conflict` from all three), all three read the same history and
+  confidence, and each agent alone leaves the same ledger, evidence, event and record rows in its own database.
+
 ## 0.1.0-preview.17
 
 This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of

@@ -129,6 +129,42 @@ what was decided by then is still reported.
 declared to belong to — `"memory-enabled"`, `"memory-disabled"` — so a later measurement aggregates conditions that
 were fixed in advance rather than subsets chosen once the results are in.
 
+## In Python and Go
+
+Since contract 1.17 ([what it adds](../../contract/README-1.17.md)) both ports record reuse feedback exactly as .NET
+does: the same validation with the same errors in the same order, the same split between fatal and degrading errors,
+the same dispositions and reasons, and ledgers (in-memory and PostgreSQL) that replay and conflict as described above.
+Their PostgreSQL ledgers run the .NET store's own statements ([`contract/sql/reuse-feedback.sql`](../../contract/sql/reuse-feedback.sql),
+generated from it), so the feedback ID is the database's arbiter whoever writes: the same submission from a .NET, a
+Python and a Go agent is one row, and every agent then reads the same history and confidence. A cross-language test
+proves it on PostgreSQL in CI.
+
+| .NET | Python (`agentexperience`) | Go (core module) |
+| --- | --- | --- |
+| `ExperienceReuseFeedbackService.RecordAsync` | `ExperienceReuseFeedbackService(store, lifecycle).record(authorization, ExperienceReuseFeedback(...))` | `NewReuseFeedbackService(store, lifecycle)`, `.Record(ctx, authorization, ExperienceReuseFeedback{...})` |
+| `EvidenceIdFor`, `EventIdFor` | `ExperienceReuseFeedbackService.evidence_id_for`, `.event_id_for` | `FeedbackEvidenceIDFor`, `FeedbackEventIDFor` |
+| `IExperienceReuseFeedbackStore` (in-memory, PostgreSQL) | `ExperienceReuseFeedbackStore`: the in-memory ledger and `PostgresExperienceReuseFeedbackStore` | `ReuseFeedbackStore`: the `inmemory` and `postgres` ledgers |
+| `ExperienceFinalizationOptions.ReuseEvidence`, `ContradictOnFailure` | `apply_reuse_evidence(service, authorization, record, reuse_evidence="SameTask", contradict_on_failure=...)` | `ApplyReuseEvidence(ctx, service, authorization, record, ReuseEvidenceOptions{...})` |
+
+What a port does differently:
+
+- **Attribution is not verified** (story 27.7): a port runs as .NET does under `TrustHostSuppliedIdentifiers`, so it
+  checks no run, round, assessment token or exposure before the ledger is written, and the evidence it submits is
+  admitted `HostTrusted`. By default (`RecordedOnly`) that evidence is recorded without moving the record: an
+  attribution is stored on the ledger and on an event, and no score, counter or status moves until the host opts into
+  `Counted`. See [Confidence](confidence.md#in-python-and-go).
+- **No key store**: a port writes the rationale in plaintext. Resubmitting a submission a .NET store sealed is a
+  `Conflict`, and writes nothing.
+- **Finalization's reuse evidence is a call of its own.** A port's finalization is a pure function, so the host calls
+  the reuse-evidence step once the finalized record is stored (and again with the stored record when the run was
+  already finalized); it is off unless asked for, as in .NET. The MAF adapters do not run it yet: call it from your
+  finalization callback.
+- **Cancellation and time budgets** are the language's own: Go honours the context (what was decided is reported, the
+  rest `Failed` and retryable, or the reuse-evidence list truncated); Python's calls are synchronous.
+
+Both ports report `reuse_feedback` (and a nested `confidence.apply` per attributed record) through their telemetry
+exactly as .NET does.
+
 ## How the PostgreSQL ledger stores it
 
 `PostgresExperienceReuseFeedbackStore` answers one question — *what did a run that saw these records actually come
