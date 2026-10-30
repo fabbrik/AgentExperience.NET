@@ -59,6 +59,7 @@
     <EmbeddedResource Include="Migrations\0029_experience_provider_holdout_assignments.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0029_experience_provider_holdout_assignments.sql" />
     <EmbeddedResource Include="Migrations\0030_experience_failure_signatures.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0030_experience_failure_signatures.sql" />
     <EmbeddedResource Include="Migrations\0031_grant_recipe_excerpts.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0031_grant_recipe_excerpts.sql" />
+    <EmbeddedResource Include="Migrations\0032_experience_runs.sql" LogicalName="AgentExperience.Storage.Postgres.Migrations.0032_experience_runs.sql" />
   </ItemGroup>
 
   <ItemGroup>
@@ -86,6 +87,8 @@
     <!-- Story 11.2: the validation rules for the core storage ports, shared with AgentExperience.Storage.InMemory so
          both stores refuse exactly the same requests. The rules only this adapter has are in ExperienceRecordValidator.cs. -->
     <Compile Include="..\Shared\ExperienceRecordValidator.Shared.cs" Link="Shared\ExperienceRecordValidator.Shared.cs" />
+    <!-- Story 28.7: the run store's validation rules, shared with the SQLite run store. -->
+    <Compile Include="..\Shared\ExperienceRunValidator.Shared.cs" Link="Shared\ExperienceRunValidator.Shared.cs" />
     <!-- Story 17.1: the one rule that decides whether a reflection counts as model-authored, shared by Core, the MAF
          adapter and both stores so every authorship decision agrees. -->
     <Compile Include="..\Shared\ReflectionAuthorshipRule.Shared.cs" Link="Shared\ReflectionAuthorshipRule.Shared.cs" />

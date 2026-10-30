@@ -69,6 +69,18 @@ shows `run_refund_check(strategy="wait-for-lock") [returned: "exit=0 the refund 
 worked. A failed call never carries an excerpt. See
 [Showing what worked](../../docs/guide/injection.md#showing-what-worked-the-recipe).
 
+## Memory in a local file, across processes
+
+```bash
+dotnet run --project samples/AgentExperience.Sample.QuickStart -- --sqlite experience.db
+dotnet run --project samples/AgentExperience.Sample.QuickStart -- --sqlite experience.db
+```
+
+The same wiring with `.UseSqlite(path)` instead of the in-memory storage, and one run per process. The first process
+has no memory and learns; the second, with nothing in memory, finds the lesson the first one stored in the file and is
+handed it. The schema is created on the first start (`ExperienceSqliteSchema.MigrateAsync`, which applies nothing once
+the file is current). Delete the file to start over.
+
 ## The model is a stand-in
 
 By default the model is [ScriptedModel.cs](ScriptedModel.cs), a script, not a model. It reads only what a real model

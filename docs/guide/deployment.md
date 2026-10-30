@@ -687,6 +687,44 @@ Validation messages never contain record payload content, and the store does not
 A create whose acknowledgement was lost (cancelled or timed out after PostgreSQL committed it) returns `Conflict`
 when retried. After a `Conflict`, call `GetAsync` in your own scope to check whether the stored record is yours.
 
+## SQLite: one local file
+
+For a single agent on one machine (a coding agent, a CLI, an MCP server), `AgentExperience.Storage.Sqlite` keeps
+everything in one database file, with no server and no roles:
+
+```csharp
+await ExperienceSqliteSchema.MigrateAsync("experience.db");   // journaled and idempotent: run it on every start
+
+builder.Services
+    .AddAgentExperience(options => { /* ... */ })
+    .UseSqlite("experience.db");
+```
+
+Or opt in to migrating on first use: `.UseSqlite("experience.db", o => o.MigrateSchemaOnFirstUse = true)`. Nothing
+migrates on its own otherwise: a store checks the schema version once, on its first operation, and refuses a missing or
+older schema (saying to migrate) and one newer than the package. The migrator creates a missing file **owner-only**: on
+Unix its directory `0700` and the file `0600`, and SQLite gives the `-wal` and `-shm` files the file's permissions. An
+existing file or directory keeps its permissions. The file is put in write-ahead-log mode, connections run with foreign keys on and a busy
+timeout, and every write is one `BEGIN IMMEDIATE` transaction, so several processes may share the file: two commits
+from the same revision still have exactly one winner, and a writer waits for another rather than failing.
+
+It registers the record store, the full-text candidate source (FTS5, Porter-stemmed: closer to PostgreSQL's matching
+than to the in-memory store's), the failure-signature source, the reuse-feedback ledger and the run store, each passing
+the same conformance suite as PostgreSQL. With the run store, the capture service keeps each completed run in the file,
+so a later process can finalize it when its verdict arrives ([Finalizing later](capture.md#finalizing-later)). `SqliteExperienceRecordStore.DeleteAsync` erases a record to a tombstone, removing its
+search text and every row that named it. Every connection runs with `secure_delete` on, so freed content is zeroed in
+the file; the full-text index is rewritten (FTS5 `optimize`) in the erasure's transaction, so the record's terms leave
+its segments at once; and the write-ahead log is checkpointed and truncated after the commit, best effort -- a reader
+still holding an older snapshot keeps the pre-erasure pages in the `-wal` file until a later checkpoint. Copies of the
+file (backups, snapshots) are outside its reach, and the tombstone keeps the ID, scope, status, counters, revision and
+instants, never content. A run save waits at most `SqliteStorageOptions.RunSaveBusyTimeout` (2 seconds) for a busy
+file, so a completion is never held up behind another process's write.
+
+**What it does not do.** No sharing grants or access log, no encryption or crypto-shredding, no row-level security or
+database roles (anything that can open the file can read and write all of it, so protect the file as you would the
+agent's other secrets), no vectors (retrieval is text and failure signature only) and no retention sweeps. For a team,
+a shared service or any of those, use PostgreSQL.
+
 ## Deploying with two roles
 
 This is the supported deployment, and the one every guarantee in these guides about append-only history and erasure
@@ -771,6 +809,7 @@ then grants exactly this:
 | `experience_holdout_assignments` (`0027`, when it exists) | `SELECT`, `INSERT` — the injection holdout's assignment rows; no `UPDATE` (the insert is `ON CONFLICT DO NOTHING`) and no `DELETE` (erasure removes rows through `0027`'s trigger, as the owner). Contract 1.8's `sql/application-role-privileges-1.8.sql` grants the same |
 | `experience_provider_holdout_assignments` (`0029`, when it exists) | `SELECT`, `INSERT` — a measured memory provider's holdout rows; no `UPDATE` and no `DELETE` (erasure removes rows through `0029`'s trigger, as the owner). Contract 1.11's `sql/application-role-privileges-1.11.sql` grants the same |
 | `experience_failure_signatures` (`0030`, when it exists) | `SELECT`, `INSERT` — each record's failure signatures, written with the record and searched by `PostgresExperienceSignatureSource`; no `UPDATE` and no `DELETE` (erasure removes rows through `0030`'s trigger, as the owner). .NET-only: no contract privileges file grants it |
+| `experience_runs` (`0032`, when it exists) | `SELECT`, `INSERT`, `DELETE`, and `UPDATE` on `finalized_at` only — the run store's staging rows, saved at completion, marked finalized, deleted after finalization or a retention; never the run or its scope columns. .NET-only: no contract privileges file grants it |
 | `experience_embeddings` (when the vectors package created it) | `SELECT`, `INSERT`, `DELETE`, and `UPDATE` on `model_id`, `dimension`, `content_hash`, `source_revision`, `embedding`, `updated_at` only — derived, rebuildable data, not a ledger, but never its record ID or scope columns |
 | `purge_experience_record`, `purge_expired_grants` | `EXECUTE` only with `AllowErasure` |
 | `purge_grant_access` | `EXECUTE` only with `AllowAccessLogPurge` |
@@ -882,7 +921,7 @@ await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
    `experience_records` (tombstones included), `lifecycle_events`, `confidence_evidence`, `experience_grants`,
    `experience_grant_events`, `experience_grant_access`, `reuse_feedback`, `reuse_feedback_exposures`,
    `experience_injections`, `experience_holdout_assignments`, `experience_provider_holdout_assignments`,
-   `experience_failure_signatures`, and
+   `experience_failure_signatures`, `experience_runs`, and
    `experience_embeddings` when the vectors package
    created it;
 4. verifies the result like the privileges — each table enabled and not forced; each policy's name, command,

@@ -745,6 +745,11 @@ internal sealed class CaptureScope
             else
             {
                 Volatile.Write(ref _completedRun, 1);
+                if (completed.RunStoreFailure is { } runStoreFailure)
+                {
+                    // Reported on its own stage, and finalization goes on: the completion itself landed.
+                    ReportFailure(ExperienceCaptureFailureStage.RunStore, runStoreFailure, completed.RunStoreException);
+                }
             }
         }
         catch (Exception ex)
@@ -973,6 +978,12 @@ internal sealed class CaptureScope
                 ExperienceCaptureFailureStage.Finalization,
                 $"Finalization ended at stage {result.Stage} with outcome {result.Outcome}; no Experience Record is durable for this run.",
                 result.Failure?.Exception);
+        }
+
+        // The host refused the run, and its stored copy could not be deleted: the one run store problem finalization reports.
+        if (result.RunStoreFailure is { } runStoreFailure)
+        {
+            Fail(ExperienceCaptureFailureStage.RunStore, runStoreFailure, null);
         }
 
         // Finalization may have overrun the timeout and already been reported as such; telling the

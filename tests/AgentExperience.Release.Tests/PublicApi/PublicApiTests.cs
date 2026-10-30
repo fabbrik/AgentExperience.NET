@@ -73,9 +73,13 @@ public sealed class PublicApiTests
         VerifyApi(typeof(AgentExperience.Storage.InMemory.InMemoryExperienceRecordStore).Assembly);
 
     [Fact]
+    public Task AgentExperience_Storage_Sqlite() =>
+        VerifyApi(typeof(AgentExperience.Storage.Sqlite.SqliteExperienceRecordStore).Assembly);
+
+    [Fact]
     public void Every_shipping_assembly_has_a_baseline_and_no_baseline_is_orphaned()
     {
-        // A seventh package, or a renamed one, must not slip past the gate by simply having no test.
+        // An eighth package, or a renamed one, must not slip past the gate by simply having no test.
         var baselines = Directory.GetFiles(BaselineDirectory(), "*.verified.txt")
             .Select(path => Path.GetFileName(path)!)
             .Order(StringComparer.Ordinal)
@@ -89,6 +93,7 @@ public sealed class PublicApiTests
                 "AgentExperience.Storage.InMemory.verified.txt",
                 "AgentExperience.Storage.Postgres.Vectors.verified.txt",
                 "AgentExperience.Storage.Postgres.verified.txt",
+                "AgentExperience.Storage.Sqlite.verified.txt",
             ],
             baselines);
 

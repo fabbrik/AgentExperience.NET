@@ -1,7 +1,7 @@
 <Project>
 
   <!-- The supported target framework: net10.0 only, by the maintainer's decision (see CHANGELOG), for every project
-       in the repository: the six shipping packages, every test project, the end-to-end sample, the experiments and
+       in the repository: the seven shipping packages, every test project, the end-to-end sample, the experiments and
        eng/verify-packages.cs (a file-based app that imports this file too). Stated once, here; the release tests check that
        CI, eng/verify-packages.cs and docs/compatibility-evidence.md agree with it. Supporting a second framework again
        means TargetFrameworks (plural) here. 0.1.0-preview.3 is the last release that also targets net8.0 and net9.0. -->
@@ -20,7 +20,7 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
-  <!-- Versioning. Set here, once, for all six packages. This is a PREVIEW: the version is deliberately
+  <!-- Versioning. Set here, once, for all seven packages. This is a PREVIEW: the version is deliberately
        not 1.0.0, because 1.0.0 is a stability promise this codebase declines to make while the Known
        limits table in docs/known-limits.md is non-empty (see RELEASING.md). Bump the suffix (preview.2, ...)
        for each preview; only a release that satisfies RELEASING.md's production-readiness gate may drop
@@ -30,7 +30,7 @@
     <VersionSuffix>preview.17</VersionSuffix>
   </PropertyGroup>
 
-  <!-- Package metadata: applies to every packable project (the six under src/). -->
+  <!-- Package metadata: applies to every packable project (the seven under src/). -->
   <PropertyGroup>
     <Authors>AgentExperience.NET Contributors</Authors>
     <Company>AgentExperience.NET</Company>
@@ -54,7 +54,7 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <DebugType>portable</DebugType>
-    <!-- The six shipping projects are exactly the ones under src/. -->
+    <!-- The seven shipping projects are exactly the ones under src/. -->
     <AgentExperienceShippingProject Condition="$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)').Replace('\', '/').StartsWith('src/'))">true</AgentExperienceShippingProject>
   </PropertyGroup>
 

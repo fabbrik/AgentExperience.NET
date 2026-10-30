@@ -40,6 +40,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
+    <!-- Story 28.7: the SQLite adapter column; no Docker. -->
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.Sqlite\AgentExperience.Storage.Sqlite.csproj" />
     <!-- The hybrid column merges the channels with Core's own merge rule (internal, visible to this project). -->
     <ProjectReference Include="..\..\src\AgentExperience.Core\AgentExperience.Core.csproj" />
     <!-- The hybrid column adapts a Microsoft.Extensions.AI generator with the package's own public adapter. -->
@@ -56,6 +58,7 @@
          one. -->
     <EmbeddedResource Include="GoldenInMemoryReport.txt" LogicalName="AgentExperience.RetrievalQuality.GoldenInMemoryReport.txt" />
     <EmbeddedResource Include="GoldenPostgresReport.txt" LogicalName="AgentExperience.RetrievalQuality.GoldenPostgresReport.txt" />
+    <EmbeddedResource Include="GoldenSqliteReport.txt" LogicalName="AgentExperience.RetrievalQuality.GoldenSqliteReport.txt" />
   </ItemGroup>
 
 </Project>

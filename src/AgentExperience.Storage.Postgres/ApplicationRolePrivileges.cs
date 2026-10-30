@@ -43,6 +43,12 @@ internal static class ApplicationRolePrivileges
     internal const string FailureSignaturesTable = "experience_failure_signatures";
 
     /// <summary>
+    /// <c>0032</c>'s table: completed runs kept for finalizing later. Optional, so the privileges call still succeeds on a
+    /// schema not yet migrated to <c>0032</c>. .NET-only: no contract privileges file grants it.
+    /// </summary>
+    internal const string RunsTable = "experience_runs";
+
+    /// <summary>
     /// Every table the application role gets anything on, and exactly what. A table in the schema that is
     /// not listed here -- the migration journal, or anything a later migration adds before this list names
     /// it -- gets nothing, and the verification fails if the role can reach it anyway.
@@ -82,6 +88,10 @@ internal static class ApplicationRolePrivileges
         // Story 28.2: the signature insert, beside the record's own, and the signature search. Append and read: a record's
         // signatures never change, and erasure removes them through 0030's trigger, as the owner.
         new(FailureSignaturesTable, Delete: false, [], Optional: true),
+
+        // Story 28.7: the run store. Save, read, mark finalized (UPDATE of finalized_at only, never the run or its scope),
+        // and delete after finalization or a retention.
+        new(RunsTable, Delete: true, ["finalized_at"], Optional: true),
 
         // Derived, rebuildable data owned by the vectors package: the index upserts and removes vectors.
         // UPDATE is column-level, the columns the upsert's ON CONFLICT DO UPDATE sets: never experience_id,

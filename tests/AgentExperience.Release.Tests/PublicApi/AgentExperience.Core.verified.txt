@@ -52,6 +52,15 @@
         public CompleteRunResult(AgentExperience.Core.Capture.CompleteRunOutcome Outcome, string? Reason) { }
         public AgentExperience.Core.Capture.CompleteRunOutcome Outcome { get; init; }
         public string? Reason { get; init; }
+        public System.Exception? RunStoreException { get; init; }
+        public string? RunStoreFailure { get; init; }
+    }
+    public sealed class ExperienceRunStoreOptions
+    {
+        public static readonly System.TimeSpan DefaultSaveTimeout;
+        public ExperienceRunStoreOptions() { }
+        public System.TimeSpan SaveTimeout { get; init; }
+        public System.Func<AgentExperience.Abstractions.ExperienceRun, bool>? ShouldPersistRun { get; init; }
     }
     public interface IExperienceCaptureService
     {
@@ -65,6 +74,8 @@
     {
         public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits) { }
         public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits, System.TimeProvider timeProvider) { }
+        public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits, System.TimeProvider timeProvider, AgentExperience.Abstractions.IExperienceRunStore? runStore) { }
+        public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits, System.TimeProvider timeProvider, AgentExperience.Abstractions.IExperienceRunStore? runStore, AgentExperience.Core.Capture.ExperienceRunStoreOptions? runStoreOptions) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Capture.AppendAttemptResult> AppendAttemptAsync(System.Guid runId, AgentExperience.Core.Capture.AppendAttemptRequest request, System.Threading.CancellationToken cancellationToken = default) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Capture.CompleteRunResult> CompleteRunAsync(System.Guid runId, System.Guid completionEventId, AgentExperience.Abstractions.RunExecutionStatus executionStatus, System.DateTimeOffset endedAt, System.Threading.CancellationToken cancellationToken = default) { }
         public AgentExperience.Core.Capture.RecordExposureResult RecordExposure(System.Guid runId, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.RunExposure> exposures) { }
@@ -292,6 +303,7 @@ namespace AgentExperience.Core.Finalization
         public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout = default) { }
         public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout, AgentExperience.Core.Confidence.ExperienceProvenanceSigningOptions? provenanceSigning) { }
         public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout, AgentExperience.Core.Confidence.ExperienceProvenanceSigningOptions? provenanceSigning, AgentExperience.Abstractions.ISanitizer? reflectionSanitizer, AgentExperience.Core.Finalization.ExperienceFinalizationOptions? options) { }
+        public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout, AgentExperience.Core.Confidence.ExperienceProvenanceSigningOptions? provenanceSigning, AgentExperience.Abstractions.ISanitizer? reflectionSanitizer, AgentExperience.Core.Finalization.ExperienceFinalizationOptions? options, AgentExperience.Abstractions.IExperienceRunStore? runStore) { }
         public System.TimeSpan IndexingTimeout { get; }
         public AgentExperience.Core.Finalization.ExperienceFinalizationOptions Options { get; }
         public System.Threading.Tasks.Task<AgentExperience.Core.Finalization.FinalizeExperienceResult> FinalizeAsync(AgentExperience.Core.Finalization.FinalizeExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
@@ -360,6 +372,7 @@ namespace AgentExperience.Core.Finalization
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Finalization.ReuseEvidenceResult> ReuseEvidence { get; init; }
         public bool ReuseEvidenceTruncated { get; init; }
         public long Revision { get; init; }
+        public string? RunStoreFailure { get; init; }
         public AgentExperience.Core.Finalization.FinalizationStage Stage { get; init; }
         public AgentExperience.Abstractions.ExperienceStatus? Status { get; }
     }

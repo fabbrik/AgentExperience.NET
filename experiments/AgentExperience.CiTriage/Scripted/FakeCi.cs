@@ -53,6 +53,14 @@ public sealed class FakeCi : IGitHub, IRepository
         return failure;
     }
 
+    /// <summary>A later green run on a failure's branch, and the fix files between the two commits: its fix has landed.</summary>
+    public CiRun AddFix(string branch, string failSha, string greenSha, DateTimeOffset greenAt, IReadOnlyList<string> fixFiles)
+    {
+        var green = AddRun(branch, greenSha, "success", greenAt);
+        _diffs[(failSha, greenSha)] = fixFiles;
+        return green;
+    }
+
     /// <summary>A completed run with no jobs of interest (a green run elsewhere, say).</summary>
     public CiRun AddRun(string branch, string sha, string conclusion, DateTimeOffset completedAt)
     {

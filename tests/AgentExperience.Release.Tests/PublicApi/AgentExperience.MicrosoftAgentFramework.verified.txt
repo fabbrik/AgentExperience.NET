@@ -85,6 +85,7 @@
         Embeddings = 7,
         Recall = 8,
         RecipeExcerpt = 9,
+        RunStore = 10,
     }
     public sealed class ExperienceCaptureOptions
     {

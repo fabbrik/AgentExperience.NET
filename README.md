@@ -299,6 +299,7 @@ cd go/maf && go run ./examples/quickstart
 | [`AgentExperience.Abstractions`](src/AgentExperience.Abstractions/README.md) | Domain types and ports; reference it directly only to implement a port |
 | [`AgentExperience.Storage.Postgres`](src/AgentExperience.Storage.Postgres/README.md) | PostgreSQL 15–18 storage, text search and the schema migrator |
 | [`AgentExperience.Storage.Postgres.Vectors`](src/AgentExperience.Storage.Postgres.Vectors/README.md) | Optional pgvector search by meaning |
+| [`AgentExperience.Storage.Sqlite`](src/AgentExperience.Storage.Sqlite/README.md) | One local SQLite file: durable storage and full-text search for a single agent on one machine |
 | [`AgentExperience.Storage.InMemory`](src/AgentExperience.Storage.InMemory/README.md) | **Development and tests only**; refuses other environments unless overridden |
 
 ## Build and test

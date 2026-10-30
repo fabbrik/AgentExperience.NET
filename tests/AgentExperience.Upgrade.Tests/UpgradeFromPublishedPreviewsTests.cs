@@ -158,15 +158,15 @@ public sealed class UpgradeFromPublishedPreviewsTests
                 $"today's migrators applied [{string.Join(", ", applied)}], expected the scripts the preview had not [{string.Join(", ", pending)}]");
 
             // Story 15.1: the privileges call switched row-level security on every covered table exactly when this run
-            // asked it to -- thirteen tables, the vectors package's, the injections table, both holdout assignment tables and the failure signatures included -- so a green run in
+            // asked it to -- fourteen tables, the vectors package's, the injections table, both holdout assignment tables, the failure signatures and the run store's included -- so a green run in
             // that mode really read and wrote everything below behind the policies.
             var secured = await ScalarAsync<long>(
                 owner,
                 "SELECT count(*) FROM pg_class WHERE relnamespace = 'agent_experience'::regnamespace AND relrowsecurity AND NOT relforcerowsecurity");
             report.Check(
-                secured == (RowLevelSecurityMode.IsOn ? 13 : 0),
+                secured == (RowLevelSecurityMode.IsOn ? 14 : 0),
                 "row-level security",
-                $"{secured} tables have row-level security enabled, expected {(RowLevelSecurityMode.IsOn ? 13 : 0)}");
+                $"{secured} tables have row-level security enabled, expected {(RowLevelSecurityMode.IsOn ? 14 : 0)}");
 
             // ---- After: everything, as the application role.
             await using var application = NpgsqlDataSource.Create(ConnectionString(container, Database, applicationRole));

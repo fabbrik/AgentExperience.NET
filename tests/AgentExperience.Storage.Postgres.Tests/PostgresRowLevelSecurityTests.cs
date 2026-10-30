@@ -24,6 +24,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
         "experience_records", "lifecycle_events", "confidence_evidence", "experience_grants", "experience_grant_events",
         "experience_grant_access", "reuse_feedback", "reuse_feedback_exposures", "experience_injections",
         "experience_holdout_assignments", "experience_provider_holdout_assignments", "experience_failure_signatures",
+        "experience_runs",
     ];
 
     // ---------------------------------------------------------------- nothing declared
@@ -492,6 +493,7 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
         { "experience_holdout_assignments", "run_id" },
         { "experience_provider_holdout_assignments", "run_id" },
         { "experience_failure_signatures", "experience_id" },
+        { "experience_runs", "run_id" },
     };
 
     [Theory]
@@ -1165,6 +1167,11 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
             var measured = await new PostgresExperienceRecordStore(App).RecordProviderHoldoutAssignmentAsync(
                 Authorize(tenant), owner, new ProviderHoldoutAssignment(Guid.NewGuid(), "mem0", HoldoutArm.Holdout, DateTimeOffset.UtcNow), CancellationToken.None);
             Assert.Equal(ExperienceStoreOutcome.Committed, measured.Outcome);
+
+            // Story 28.7: a stored run in the owner's scope.
+            var run = Storage.Conformance.RunStoreConformanceTests.CompletedRun(owner);
+            var saved = await new PostgresExperienceRunStore(App).SaveAsync(Authorize(tenant), run, Guid.NewGuid(), CancellationToken.None);
+            Assert.Equal(ExperienceRunStoreOutcome.Saved, saved.Outcome);
         }
 
         public async ValueTask DisposeAsync()

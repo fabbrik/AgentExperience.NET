@@ -15,7 +15,7 @@ internal static class ExperiencePayload
     /// <summary>The payload version written by this adapter.</summary>
     public const int CurrentVersion = 1;
 
-    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.General)
+    internal static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.General)
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = false,
@@ -49,37 +49,8 @@ internal static class ExperiencePayload
 
     private static PayloadV1 ToV1(ExperienceRecord record) => new(
         record.TaskSummary,
-        record.Attempts.Select(a => new AttemptV1(
-            a.AttemptId,
-            a.SequenceNumber,
-            Utc(a.StartedAt),
-            a.Duration,
-            a.ToolCalls.Select(t => new ToolCallV1(
-                t.ToolCallId,
-                t.SequenceNumber,
-                t.ToolName,
-                t.Arguments,
-                Utc(t.StartedAt),
-                t.Duration,
-                t.Result,
-                t.Error,
-                t.RecipeExcerpt)).ToList(),
-            a.Result,
-            a.Error)).ToList(),
-        new OutcomeV1(
-            record.Outcome.Status,
-            record.Outcome.Evidence.Select(e => new EvidenceV1(
-                e.EvidenceId,
-                e.VerificationRoundId,
-                e.ArtifactRevision,
-                e.CheckId,
-                e.Kind,
-                e.Result,
-                e.Producer,
-                e.Detail,
-                Utc(e.CapturedAt))).ToList(),
-            record.Outcome.Reason,
-            Utc(record.Outcome.EvaluatedAt)),
+        record.Attempts.Select(ToV1).ToList(),
+        ToV1(record.Outcome),
         record.CompletionScore,
         record.Reflection is null
             ? null
@@ -99,25 +70,127 @@ internal static class ExperiencePayload
                 record.Reflection.Producer,
                 Utc(record.Reflection.CreatedAt),
                 record.Reflection.Authorship == ReflectionAuthorship.Deterministic ? null : record.Reflection.Authorship),
-        new EnvironmentV1(
-            record.Environment.HostName,
-            record.Environment.RuntimeVersion,
-            record.Environment.OperatingSystem,
-            record.Environment.ApplicationVersion,
-            new Dictionary<string, string>(record.Environment.Metadata, StringComparer.Ordinal)),
-        new ProvenanceV1(
-            record.Provenance.Source,
-            record.Provenance.SourceVersion,
-            Utc(record.Provenance.RecordedAt),
-            record.Provenance.CorrelationId,
-            record.Provenance.ExposedTo is { Count: > 0 } exposedTo
-                ? exposedTo.Select(exposure => new RunExposureV1(exposure.ExperienceId, exposure.Revision)).ToList()
-                : null),
+        ToV1(record.Environment),
+        ToV1(record.Provenance),
         record.ClosedRoundId,
         record.Origin == ExperienceRecordOrigin.HostWritten ? null : record.Origin,
         record.ProvenanceSignature is { } signature
             ? new ProvenanceSignatureV1(signature.KeyId, signature.Algorithm, signature.Value.ToArray())
             : null);
+
+    // Story 28.7: the attempt, outcome, environment and provenance mappings, each one place, so the run store's
+    // payload (ExperienceRunPayload) stores a captured run's attempts exactly as a record's are stored, and a field
+    // added to one is added to both.
+
+    /// <summary>One attempt, its tool calls included, as the version-1 payload stores it.</summary>
+    internal static AttemptV1 ToV1(Attempt a) => new(
+        a.AttemptId,
+        a.SequenceNumber,
+        Utc(a.StartedAt),
+        a.Duration,
+        a.ToolCalls.Select(t => new ToolCallV1(
+            t.ToolCallId,
+            t.SequenceNumber,
+            t.ToolName,
+            t.Arguments,
+            Utc(t.StartedAt),
+            t.Duration,
+            t.Result,
+            t.Error,
+            t.RecipeExcerpt)).ToList(),
+        a.Result,
+        a.Error);
+
+    /// <summary>A stored attempt back as the domain attempt.</summary>
+    internal static Attempt FromV1(AttemptV1 a) => new(
+        a.AttemptId,
+        a.SequenceNumber,
+        Utc(a.StartedAt),
+        a.Duration,
+        a.ToolCalls.Select(t => new ToolCallRecord(
+            t.ToolCallId,
+            t.SequenceNumber,
+            t.ToolName,
+            NormalizeArguments(t.Arguments),
+            Utc(t.StartedAt),
+            t.Duration,
+            t.Result,
+            t.Error)
+        {
+            RecipeExcerpt = t.RecipeExcerpt,
+        }).ToList(),
+        a.Result,
+        a.Error);
+
+    /// <summary>An outcome, its evidence included, as the version-1 payload stores it.</summary>
+    internal static OutcomeV1 ToV1(Outcome outcome) => new(
+        outcome.Status,
+        outcome.Evidence.Select(e => new EvidenceV1(
+            e.EvidenceId,
+            e.VerificationRoundId,
+            e.ArtifactRevision,
+            e.CheckId,
+            e.Kind,
+            e.Result,
+            e.Producer,
+            e.Detail,
+            Utc(e.CapturedAt))).ToList(),
+        outcome.Reason,
+        Utc(outcome.EvaluatedAt));
+
+    /// <summary>A stored outcome back as the domain outcome.</summary>
+    internal static Outcome FromV1(OutcomeV1 outcome) => new(
+        outcome.Status,
+        outcome.Evidence.Select(e => new Evidence(
+            e.EvidenceId,
+            e.VerificationRoundId,
+            e.ArtifactRevision,
+            e.CheckId,
+            e.Kind,
+            e.Result,
+            e.Producer,
+            e.Detail,
+            Utc(e.CapturedAt))).ToList(),
+        outcome.Reason,
+        Utc(outcome.EvaluatedAt));
+
+    /// <summary>An environment fingerprint as the version-1 payload stores it.</summary>
+    internal static EnvironmentV1 ToV1(EnvironmentFingerprint environment) => new(
+        environment.HostName,
+        environment.RuntimeVersion,
+        environment.OperatingSystem,
+        environment.ApplicationVersion,
+        new Dictionary<string, string>(environment.Metadata, StringComparer.Ordinal));
+
+    /// <summary>A stored environment fingerprint back as the domain one.</summary>
+    internal static EnvironmentFingerprint FromV1(EnvironmentV1 environment) => new(
+        environment.HostName,
+        environment.RuntimeVersion,
+        environment.OperatingSystem,
+        environment.ApplicationVersion,
+        environment.Metadata);
+
+    /// <summary>A provenance, its exposures included, as the version-1 payload stores it.</summary>
+    internal static ProvenanceV1 ToV1(Provenance provenance) => new(
+        provenance.Source,
+        provenance.SourceVersion,
+        Utc(provenance.RecordedAt),
+        provenance.CorrelationId,
+        provenance.ExposedTo is { Count: > 0 } exposedTo
+            ? exposedTo.Select(exposure => new RunExposureV1(exposure.ExperienceId, exposure.Revision)).ToList()
+            : null);
+
+    /// <summary>A stored provenance back as the domain one.</summary>
+    internal static Provenance FromV1(ProvenanceV1 provenance) => new(
+        provenance.Source,
+        provenance.SourceVersion,
+        Utc(provenance.RecordedAt),
+        provenance.CorrelationId)
+    {
+        ExposedTo = provenance.ExposedTo is { Count: > 0 } exposedTo
+            ? exposedTo.Select(exposure => new RunExposure(exposure.ExperienceId, exposure.Revision)).ToArray()
+            : [],
+    };
 
     /// <summary>Maps a stored payload plus its column values back to the domain record.</summary>
     public static ExperienceRecord ToRecord(
@@ -138,39 +211,8 @@ internal static class ExperiencePayload
             scope,
             taskId,
             payload.TaskSummary,
-            payload.Attempts.Select(a => new Attempt(
-                a.AttemptId,
-                a.SequenceNumber,
-                Utc(a.StartedAt),
-                a.Duration,
-                a.ToolCalls.Select(t => new ToolCallRecord(
-                    t.ToolCallId,
-                    t.SequenceNumber,
-                    t.ToolName,
-                    NormalizeArguments(t.Arguments),
-                    Utc(t.StartedAt),
-                    t.Duration,
-                    t.Result,
-                    t.Error)
-                {
-                    RecipeExcerpt = t.RecipeExcerpt,
-                }).ToList(),
-                a.Result,
-                a.Error)).ToList(),
-            new Outcome(
-                payload.Outcome.Status,
-                payload.Outcome.Evidence.Select(e => new Evidence(
-                    e.EvidenceId,
-                    e.VerificationRoundId,
-                    e.ArtifactRevision,
-                    e.CheckId,
-                    e.Kind,
-                    e.Result,
-                    e.Producer,
-                    e.Detail,
-                    Utc(e.CapturedAt))).ToList(),
-                payload.Outcome.Reason,
-                Utc(payload.Outcome.EvaluatedAt)),
+            payload.Attempts.Select(FromV1).ToList(),
+            FromV1(payload.Outcome),
             payload.CompletionScore,
             payload.Reflection is null
                 ? null
@@ -192,22 +234,8 @@ internal static class ExperiencePayload
                 {
                     Authorship = payload.Reflection.Authorship ?? ReflectionAuthorship.Deterministic,
                 },
-            new EnvironmentFingerprint(
-                payload.Environment.HostName,
-                payload.Environment.RuntimeVersion,
-                payload.Environment.OperatingSystem,
-                payload.Environment.ApplicationVersion,
-                payload.Environment.Metadata),
-            new Provenance(
-                payload.Provenance.Source,
-                payload.Provenance.SourceVersion,
-                Utc(payload.Provenance.RecordedAt),
-                payload.Provenance.CorrelationId)
-            {
-                ExposedTo = payload.Provenance.ExposedTo is { Count: > 0 } exposedTo
-                    ? exposedTo.Select(exposure => new RunExposure(exposure.ExperienceId, exposure.Revision)).ToArray()
-                    : [],
-            },
+            FromV1(payload.Environment),
+            FromV1(payload.Provenance),
             status,
             reuseConfidence,
             supportingValidations,

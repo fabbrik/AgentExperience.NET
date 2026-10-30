@@ -719,6 +719,49 @@
         public string? TaskDescription { get; init; }
         public string TaskId { get; init; }
     }
+    public sealed class ExperienceRunGetResult : System.IEquatable<AgentExperience.Abstractions.ExperienceRunGetResult>
+    {
+        public ExperienceRunGetResult(AgentExperience.Abstractions.ExperienceRunStoreOutcome Outcome, AgentExperience.Abstractions.StoredExperienceRun? Run, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public AgentExperience.Abstractions.ExperienceRunStoreOutcome Outcome { get; init; }
+        public AgentExperience.Abstractions.StoredExperienceRun? Run { get; init; }
+    }
+    public sealed class ExperienceRunListResult : System.IEquatable<AgentExperience.Abstractions.ExperienceRunListResult>
+    {
+        public ExperienceRunListResult(AgentExperience.Abstractions.ExperienceRunStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoredExperienceRun> Runs, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public AgentExperience.Abstractions.ExperienceRunStoreOutcome Outcome { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoredExperienceRun> Runs { get; init; }
+    }
+    public sealed class ExperienceRunQuery : System.IEquatable<AgentExperience.Abstractions.ExperienceRunQuery>
+    {
+        public const int DefaultLimit = 50;
+        public const int MaxLimit = 500;
+        public const int MinLimit = 1;
+        public ExperienceRunQuery(AgentExperience.Abstractions.Scope Scope, System.DateTimeOffset? EndedBefore = default, int Limit = 50, System.Guid? AfterRunId = default) { }
+        public System.Guid? AfterRunId { get; init; }
+        public System.DateTimeOffset? EndedBefore { get; init; }
+        public int Limit { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+    }
+    public enum ExperienceRunStoreOutcome
+    {
+        Saved = 0,
+        AlreadySaved = 1,
+        Conflict = 2,
+        Found = 3,
+        NotFound = 4,
+        Updated = 5,
+        Deleted = 6,
+        Denied = 7,
+        Invalid = 8,
+    }
+    public sealed class ExperienceRunStoreResult : System.IEquatable<AgentExperience.Abstractions.ExperienceRunStoreResult>
+    {
+        public ExperienceRunStoreResult(AgentExperience.Abstractions.ExperienceRunStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public AgentExperience.Abstractions.ExperienceRunStoreOutcome Outcome { get; init; }
+    }
     public sealed class ExperienceSignatureCandidate : System.IEquatable<AgentExperience.Abstractions.ExperienceSignatureCandidate>
     {
         public ExperienceSignatureCandidate(AgentExperience.Abstractions.ExperienceRecord Record, AgentExperience.Abstractions.ExperienceSignatureMatch Match, AgentExperience.Abstractions.ExperienceSignatureResolution Resolution, bool SharedByGrant = false, System.Guid? PermittingGrantId = default) { }
@@ -989,6 +1032,14 @@
     {
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceReuseFeedbackStoreResult> RecordAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.RecordedExperienceReuseFeedback feedback, System.Threading.CancellationToken cancellationToken);
     }
+    public interface IExperienceRunStore
+    {
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunStoreResult> DeleteAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid runId, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunGetResult> GetAsync(AgentExperience.Abstractions.AuthorizationContext authorization, System.Guid runId, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunListResult> ListUnfinalizedAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRunQuery query, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunStoreResult> MarkFinalizedAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid runId, System.DateTimeOffset finalizedAt, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunStoreResult> SaveAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRun run, System.Guid completionEventId, System.Threading.CancellationToken cancellationToken);
+    }
     public interface IExperienceSignatureSource
     {
         System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSignatureSearchResult> FindBySignatureAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.ExperienceSignatureQuery query, System.Threading.CancellationToken cancellationToken);
@@ -1207,6 +1258,14 @@
         public StoreValidationError(string Path, string Message) { }
         public string Message { get; init; }
         public string Path { get; init; }
+    }
+    public sealed class StoredExperienceRun : System.IEquatable<AgentExperience.Abstractions.StoredExperienceRun>
+    {
+        public StoredExperienceRun(AgentExperience.Abstractions.ExperienceRun Run, System.Guid CompletionEventId, System.DateTimeOffset SavedAt, System.DateTimeOffset? FinalizedAt) { }
+        public System.Guid CompletionEventId { get; init; }
+        public System.DateTimeOffset? FinalizedAt { get; init; }
+        public AgentExperience.Abstractions.ExperienceRun Run { get; init; }
+        public System.DateTimeOffset SavedAt { get; init; }
     }
     public sealed class StoredLifecycleEvent : System.IEquatable<AgentExperience.Abstractions.StoredLifecycleEvent>
     {

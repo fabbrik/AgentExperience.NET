@@ -35,10 +35,13 @@ internal static class CiTriageProgram
         var projectDirectory = Path.Combine(root, "experiments", "AgentExperience.CiTriage");
         var results = options.Results ?? Path.Combine(projectDirectory, "results", options.Scripted ? "scripted" : string.Empty);
         var cache = options.Cache ?? Path.Combine(projectDirectory, ".cache");
-        // --scripted replays fake data: it always stays in memory, whatever --postgres or the variable say.
-        var postgres = options.Scripted
+        // --scripted replays fake data: it never touches PostgreSQL, whatever --postgres or the variable say. A SQLite file
+        // (--storage sqlite:<path>, story 28.7) is local, so a scripted pass may use one.
+        var sqlite = options.Sqlite;
+        var postgres = options.Scripted || sqlite is not null
             ? null
             : options.Postgres ?? (Environment.GetEnvironmentVariable(PostgresVariable) is { Length: > 0 } fromEnvironment ? fromEnvironment : null);
+        var storageName = sqlite is not null ? "SQLite" : postgres is null ? "in-memory" : "PostgreSQL";
 
         IGitHub gitHub;
         IRepository repository;
@@ -46,7 +49,7 @@ internal static class CiTriageProgram
         string modelName;
         if (options.Scripted)
         {
-            var fake = ScriptedScenario.Create();
+            var fake = ScriptedScenario.Create(waitingFixed: options.ScriptedLater);
             (gitHub, repository, model, modelName) = (fake, fake, new ScriptedTriageModel(), ScriptedTriageModel.ModelId);
         }
         else
@@ -75,8 +78,13 @@ internal static class CiTriageProgram
 
             earlier = Ledger.Read(ledgerPath);
         }
+        else if (sqlite is not null)
+        {
+            // The file is migrated on first use; its run store keeps the runs still waiting for their fix.
+            earlier = Ledger.Read(ledgerPath);
+        }
 
-        await output.WriteLineAsync($"CI triage: model {modelName}, {(postgres is null ? "in-memory storage (full replay)" : "PostgreSQL")}, budget USD {options.Budget.MaxUsd.ToString(CultureInfo.InvariantCulture)}.");
+        await output.WriteLineAsync($"CI triage: model {modelName}, {(storageName == "in-memory" ? "in-memory storage (full replay)" : storageName)}, budget USD {options.Budget.MaxUsd.ToString(CultureInfo.InvariantCulture)}.");
 
         var rows = new Dictionary<long, LedgerRow>();
         ReplayResult? result = null;
@@ -84,7 +92,7 @@ internal static class CiTriageProgram
         try
         {
             (var failures, result) = await TriagePass.RunAsync(
-                gitHub, repository, model, options.Budget, postgres, earlier, options.Scripted ? TriagePass.SeededIds(ScriptedSeed) : null, rows, CancellationToken.None);
+                gitHub, repository, model, options.Budget, postgres, earlier, options.Scripted ? TriagePass.SeededIds(ScriptedSeed) : null, rows, CancellationToken.None, sqlite);
             var o = result.Estimate.Overall;
             await output.WriteLineAsync($"{failures.Count} failures; triaged {result.Triages.Count}; treatment {o.Treatment.Successes}/{o.Treatment.Runs}, holdout {o.Holdout.Successes}/{o.Holdout.Runs}; verdict {o.Verdict}.");
         }
@@ -95,13 +103,13 @@ internal static class CiTriageProgram
         }
         finally
         {
-            // Whatever ran is written, even when the pass threw: PostgreSQL may already hold its lessons.
+            // Whatever ran is written, even when the pass threw: durable storage may already hold its lessons.
             result ??= new ReplayResult([.. rows.Values], [], ExperienceBenefitEstimator.Empty(), failed ?? "the pass did not finish", 0, 0, 0, 0m);
             var ledger = earlier.Where(row => !rows.ContainsKey(row.RunId)).Concat(rows.Values).ToList();
             Ledger.Write(ledgerPath, ledger);
             var date = DateOnly.FromDateTime(DateTime.UtcNow);
             var reportPath = Path.Combine(results, Report.FileName(date));
-            await File.WriteAllTextAsync(reportPath, Report.Render(new ReportContext(date, modelName, postgres is null ? "in-memory" : "PostgreSQL", options.Scripted), result, ledger));
+            await File.WriteAllTextAsync(reportPath, Report.Render(new ReportContext(date, modelName, storageName, options.Scripted), result, ledger));
             await output.WriteLineAsync($"Wrote {Shown(root, ledgerPath)} and {Shown(root, reportPath)}.");
         }
 
@@ -139,8 +147,14 @@ internal static class CiTriageProgram
 /// <summary>The command line.</summary>
 internal sealed record CommandLine(bool Scripted, string? Postgres, string Repository, Budget Budget, string? Results, string? Cache)
 {
+    /// <summary>Story 28.7: a SQLite file (<c>--storage sqlite:&lt;path&gt;</c>), whose run store keeps runs between passes.</summary>
+    public string? Sqlite { get; init; }
+
+    /// <summary>The scripted history a day later, when the failure waiting for its fix has one (<c>--scripted-later</c>).</summary>
+    public bool ScriptedLater { get; init; }
+
     public const string Usage =
-        "Usage: dotnet run --project experiments/AgentExperience.CiTriage -- [--scripted] [--postgres <conn>] [--repo owner/name]\n"
+        "Usage: dotnet run --project experiments/AgentExperience.CiTriage -- [--scripted [--scripted-later]] [--storage memory|sqlite:<path>|postgres:<conn>] [--postgres <conn>] [--repo owner/name]\n"
         + "       [--budget-usd 0.50] [--max-calls 400] [--max-tokens 4000000] [--input-price 0.10] [--output-price 0.50] [--results <dir>] [--cache <dir>]";
 
     public static CommandLine Parse(string[] args)
@@ -151,6 +165,8 @@ internal sealed record CommandLine(bool Scripted, string? Postgres, string Repos
         var budget = Budget.Default;
         string? results = null;
         string? cache = null;
+        string? sqlite = null;
+        var scriptedLater = false;
         for (var i = 0; i < args.Length; i++)
         {
             string Value() => i + 1 < args.Length ? args[++i] : throw new ArgumentException($"{args[i]} needs a value.");
@@ -166,6 +182,27 @@ internal sealed record CommandLine(bool Scripted, string? Postgres, string Repos
             switch (args[i])
             {
                 case "--scripted": scripted = true; break;
+                case "--scripted-later": scriptedLater = true; break;
+                case "--storage":
+                    var storage = Value();
+                    if (storage == "memory")
+                    {
+                        (sqlite, postgres) = (null, null);
+                    }
+                    else if (storage.StartsWith("sqlite:", StringComparison.Ordinal) && storage.Length > "sqlite:".Length)
+                    {
+                        sqlite = storage["sqlite:".Length..];
+                    }
+                    else if (storage.StartsWith("postgres:", StringComparison.Ordinal) && storage.Length > "postgres:".Length)
+                    {
+                        postgres = storage["postgres:".Length..];
+                    }
+                    else
+                    {
+                        throw new ArgumentException("--storage needs memory, sqlite:<path> or postgres:<conn>.");
+                    }
+
+                    break;
                 case "--postgres": postgres = Value(); break;
                 case "--repo": repository = Value(); break;
                 case "--budget-usd": budget = budget with { MaxUsd = Decimal() }; break;
@@ -179,6 +216,11 @@ internal sealed record CommandLine(bool Scripted, string? Postgres, string Repos
             }
         }
 
-        return new CommandLine(scripted, postgres, repository, budget, results, cache);
+        if (scriptedLater && !scripted)
+        {
+            throw new ArgumentException("--scripted-later needs --scripted.");
+        }
+
+        return new CommandLine(scripted, postgres, repository, budget, results, cache) { Sqlite = sqlite, ScriptedLater = scriptedLater };
     }
 }

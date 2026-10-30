@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019` and `0021`–`0031` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019` and `0021`–`0032` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -880,6 +880,31 @@ application role's table-level `SELECT` and `INSERT` cover it.
 **Deployment.** The library reads the column through `to_jsonb(g) ->> 'recipe_excerpts'`, so every read keeps working on
 a schema not yet migrated (it reads no consent), and it names the column in an insert only when a request sets it:
 migrate before issuing a grant that names recipe excerpts. An older build against this schema never names the column.
+
+### 0032: the run store
+
+`0032_experience_runs.sql` keeps completed runs so a later process can finalize them (see
+[Finalizing later](capture.md#finalizing-later)):
+
+- `agent_experience.experience_runs`: one row per completed run, keyed on `run_id` alone (run IDs are unique across every
+  scope), with the run's six scope columns, its `completion_event_id`, `execution_status`, `ended_at`, `saved_at` (the
+  database clock), `finalized_at` (set once, after finalization) and the run itself, already sanitized, as version-1
+  `jsonb` (`payload_version` 1: task ID and description, environment, provenance with its exposures, attempts, status and
+  instants, in the record payload's own JSON shapes). It is written only when the host registers
+  `AddAgentExperiencePostgresRunStore`.
+- `experience_runs_unfinalized_idx` on `(tenant_id, application_id, project_id, run_id) WHERE finalized_at IS NULL`, for
+  the listing of runs still waiting.
+- **Plaintext.** A stored run is never sealed, so the run store refuses to resolve beside `AddAgentExperiencePostgresEncryption`.
+- A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) turns the stored run a tombstoned
+  record was finalized from into a run tombstone (`erased_at` set, every column but the ID and scope cleared; check
+  constraints hold both shapes), or writes one when the run was never stored, in the record's tenant, when no other live
+  record came from that run -- `0029`'s pattern. A save under a tombstoned run ID conflicts, and the store's reads,
+  listing, marking and deletes all skip tombstones, so a capture retry can never bring an erased run back.
+- Its row-level security policies (`rls_runs_select`, `_insert`, `_update`, `_delete`): a row only inside the declared
+  bounds, for every command. A grant never admits one.
+- The application role gets `SELECT`, `INSERT`, `DELETE` and `UPDATE` of `finalized_at` only, once the table exists.
+  **Re-run `ApplyApplicationRolePrivilegesAsync` after migrating.** .NET-only: no contract privileges file grants it.
+- No existing table is rewritten; creating the trigger takes a brief lock on `experience_records`.
 
 ## Script comments that were written before the work they point at shipped
 

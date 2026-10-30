@@ -444,6 +444,49 @@ the six Go modules at one version.
 - **Experiment.** `experiments/AgentExperience.LiveReuse/recipe-amendment.md` proposes (not registered, not run) a
   recipe arm for the real-task experiment.
 
+### A SQLite store and durable capture (story 28.7)
+
+- **New package `AgentExperience.Storage.Sqlite`**: durable storage in one local SQLite file, for a single agent on one
+  machine (a coding agent, a CLI, an MCP server). `.UseSqlite(path)` on the one-call builder (or
+  `AddAgentExperienceSqliteStorage(path)`) registers `SqliteExperienceRecordStore`, `SqliteExperienceCandidateSource`
+  (FTS5 full-text search), `SqliteExperienceSignatureSource` and a reuse-feedback ledger over the file. Each passes the
+  same store conformance suite as the PostgreSQL and in-memory stores, with every request validated by the PostgreSQL
+  store's own rules, and the record payload is the PostgreSQL store's version-1 JSON.
+- **Schema**: `ExperienceSqliteSchema.MigrateAsync(path)` applies journaled, versioned scripts, each in one transaction
+  with its journal row (safe to repeat and to run from two processes at once), and puts the file in write-ahead-log
+  mode. Nothing migrates on its own unless `SqliteStorageOptions.MigrateSchemaOnFirstUse` is set. Connections run with
+  foreign keys on and a busy timeout, and every write is one `BEGIN IMMEDIATE` transaction, so two connections or
+  processes committing from one revision have exactly one winner.
+- **Search** reads a query's terms exactly as the in-memory source does, with the same any-term `MinimumMatchedTerms`
+  rule and coverage ranking, through an FTS5 index stemmed with Porter, so "invoices" matches "invoice" as it does in
+  PostgreSQL. The retrieval benchmark gains a SQLite column (`GoldenSqliteReport.txt`).
+- **Erasure**: `SqliteExperienceRecordStore.DeleteAsync` leaves a payload-free tombstone and removes the record's search
+  text, signatures, events, evidence, injection summary and holdout rows in one transaction, with `secure_delete` on, the
+  FTS5 index rewritten and the write-ahead log checkpointed afterwards. A new database file is created owner-only, and a
+  store refuses a missing, older or newer schema on its first operation.
+- **Durable capture**: a new optional port, `IExperienceRunStore` (save a completed run by run ID and completion event,
+  read it within an authorization, list a scope's unfinalized runs, mark one finalized, delete one), implemented by
+  `SqliteExperienceRunStore` (registered by `UseSqlite`) and `PostgresExperienceRunStore` (opt-in,
+  `AddAgentExperiencePostgresRunStore`, migration `0032_experience_runs.sql` with its grants and row-level security
+  policies; refused in crypto-shredding mode). With one registered, the capture service saves each run as it completes
+  it (new `InMemoryExperienceCaptureService` constructor; `CompleteRunResult.RunStoreFailure` reports a failed save, which
+  never fails the run, and the MAF adapter reports it at the new `ExperienceCaptureFailureStage.RunStore`), and
+  finalization reads a run the capture service no longer holds from the store (new `ExperienceFinalizationService`
+  constructor), with the same verification, closed-round and idempotency rules, then marks it finalized. Erasing a
+  record turns the stored run it came from into a tombstone, so a capture retry can never save it again. A save runs
+  off the caller's thread, bounded by `ExperienceRunStoreOptions.SaveTimeout` (5 s; SQLite waits at most
+  `RunSaveBusyTimeout`, 2 s, for a busy file); `ExperienceRunStoreOptions.ShouldPersistRun` keeps runs out of the store;
+  a run the host's storage decision refuses (`StorageDenied`) is deleted from it, a failed delete reported on
+  `FinalizeExperienceResult.RunStoreFailure`. The run store conformance suite runs on both stores; a run completed in
+  one service provider is finalized by another on SQLite and on PostgreSQL. Without a run store nothing changes.
+- **Try it**: the quick-start sample takes `--sqlite <path>` (one run per process: run it twice, and the second process
+  is handed the lesson the first stored), and the CI triage experiment takes `--storage sqlite:<path>`, with which a
+  failure still waiting for its fix is triaged and its run finalized by a later pass once the fix lands
+  (`--scripted --scripted-later` shows it offline).
+- **Not provided**: sharing grants and the access log, encryption and crypto-shredding, row-level security and database
+  roles, vectors, retention sweeps. Internally, the PostgreSQL payload's attempt, outcome, environment and provenance
+  mappings are each one method now, shared with the SQLite store; nothing stored changes.
+
 ### The holdout in Python and Go: contract 1.8 (story 25.6)
 
 - **Contract 1.8** ([what it adds](contract/README-1.8.md)) brings the injection holdout into the language-neutral

@@ -398,6 +398,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.ExperienceProviderHoldoutAssignmentsScriptName,
                 PostgresExperienceRecordSchema.ExperienceFailureSignaturesScriptName,
                 PostgresExperienceRecordSchema.GrantRecipeExcerptsScriptName,
+                PostgresExperienceRecordSchema.ExperienceRunsScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -412,7 +413,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
     {
         var sql = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.GrantRecipeExcerptsScriptName);
 
-        Assert.Equal(PostgresExperienceRecordSchema.GrantRecipeExcerptsScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(PostgresExperienceRecordSchema.GrantRecipeExcerptsScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
         Assert.Contains("ADD COLUMN IF NOT EXISTS recipe_excerpts jsonb NULL", sql, StringComparison.Ordinal);
         Assert.Contains("experience_grants_recipe_excerpts_level", sql, StringComparison.Ordinal);
         Assert.Contains("experience_grants_recipe_excerpts_shape", sql, StringComparison.Ordinal);
@@ -1361,8 +1362,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("least(p_minimum_matched_terms, ", TextSearchFunction.Body, StringComparison.Ordinal);
 
         // Applied after every earlier script.
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^7]);
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^8]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^8]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^9]);
     }
 
     /// <summary>
@@ -1415,7 +1416,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains(ExperienceRecordSql.RecordKeyShareLock, PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
 
         // Applied after every earlier script; 0027 to 0029 follow it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^6]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^7]);
     }
 
     /// <summary>
@@ -1472,7 +1473,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.EndsWith("ON CONFLICT (run_id, experience_id) DO NOTHING", PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
 
         // Applied after every earlier script; 0028 and 0029 follow it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^5]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^6]);
     }
 
     /// <summary>
@@ -1493,7 +1494,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_experience_records_source_run", script, StringComparison.Ordinal);
 
         // Applied after every earlier script; 0029 follows it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName, PostgresExperienceRecordSchema.ScriptNames[^4]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName, PostgresExperienceRecordSchema.ScriptNames[^5]);
     }
 
     /// <summary>
@@ -1544,7 +1545,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // Followed by 0030.
         Assert.Equal(
             PostgresExperienceRecordSchema.ExperienceProviderHoldoutAssignmentsScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^3]);
+            PostgresExperienceRecordSchema.ScriptNames[^4]);
     }
 
     /// <summary>
@@ -1619,8 +1620,61 @@ public sealed class OfflineStoreTests : IAsyncLifetime
             }
         }
 
+        // Followed by the run store's.
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceFailureSignaturesScriptName, PostgresExperienceRecordSchema.ScriptNames[^3]);
+    }
+
+    /// <summary>
+    /// Story 28.7: 0032 creates the run store's table, its unfinalized index, its erasure trigger and exactly its four
+    /// canonical policies, and switches nothing on, grants nothing and defines no SECURITY DEFINER function; the manifest
+    /// grants read, insert, delete and the finalized instant only.
+    /// </summary>
+    [Fact]
+    public void The_run_store_script_creates_the_table_its_index_its_erasure_trigger_and_its_canonical_policies_only()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.ExperienceRunsScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        Assert.Equal(
+            ["rls_runs_delete", "rls_runs_insert", "rls_runs_select", "rls_runs_update"],
+            RowLevelSecurityPolicies.NamesFor(ApplicationRolePrivileges.RunsTable));
+        foreach (var policy in RowLevelSecurityPolicies.All.Where(p => p.Table == ApplicationRolePrivileges.RunsTable))
+        {
+            Assert.Equal(1, CountOccurrences(statements, policy.Ddl));
+        }
+
+        Assert.Equal(4, CountOccurrences(statements, "CREATE POLICY "));
+        Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.experience_runs (", statements, StringComparison.Ordinal);
+        Assert.Contains("CONSTRAINT experience_runs_pkey PRIMARY KEY (run_id)", statements, StringComparison.Ordinal);
+        Assert.Contains("WHERE finalized_at IS NULL AND erased_at IS NULL;", statements, StringComparison.Ordinal);
+        Assert.Contains("AFTER UPDATE OF deleted_at ON agent_experience.experience_records", statements, StringComparison.Ordinal);
+        // Erasure leaves a run tombstone (or writes one), so a capture retry can never save the erased run again.
+        Assert.Contains("INSERT INTO agent_experience.experience_runs (run_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, erased_at)", statements, StringComparison.Ordinal);
+        Assert.Contains("CONSTRAINT experience_runs_tombstone_shape CHECK ((erased_at IS NULL) = (payload IS NOT NULL))", statements, StringComparison.Ordinal);
+        foreach (var sql in new[] { PostgresExperienceRunStore.GetSql, PostgresExperienceRunStore.ListSql, PostgresExperienceRunStore.SameRunSql, PostgresExperienceRunStore.MarkFinalizedSql, PostgresExperienceRunStore.DeleteSql })
+        {
+            Assert.Contains("erased_at IS NULL", sql, StringComparison.Ordinal);
+        }
+        Assert.Contains("ENABLE ALWAYS TRIGGER experience_records_runs_cleared", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("ROW LEVEL SECURITY", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("SECURITY DEFINER", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
+
+        var manifest = Assert.Single(ApplicationRolePrivileges.Tables, t => t.Name == ApplicationRolePrivileges.RunsTable);
+        Assert.Equal(["finalized_at"], manifest.UpdateColumns);
+        Assert.True(manifest.Delete);
+        Assert.True(manifest.Optional);
+
+        // Every write and read names the run's exact scope, or, for a read by ID, the authorization's bounds.
+        Assert.Contains(ExperienceRecordSql.ScopePredicate, PostgresExperienceRunStore.MarkFinalizedSql, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.ScopePredicate, PostgresExperienceRunStore.DeleteSql, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.ScopePredicate, PostgresExperienceRunStore.ListSql, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.ScopePredicate, PostgresExperienceRunStore.SameRunSql, StringComparison.Ordinal);
+        Assert.Contains("tenant_id = @auth_tenant", PostgresExperienceRunStore.GetSql, StringComparison.Ordinal);
+        Assert.EndsWith("ON CONFLICT (run_id) DO NOTHING", PostgresExperienceRunStore.SaveSql, StringComparison.Ordinal);
+
         // The last script.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceFailureSignaturesScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceRunsScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
     }
 
     /// <summary>
@@ -1650,7 +1704,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         {
             Assert.Equal(
                 policy.Table is ApplicationRolePrivileges.EmbeddingsTable or ApplicationRolePrivileges.InjectionsTable or ApplicationRolePrivileges.HoldoutAssignmentsTable
-                    or ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable or ApplicationRolePrivileges.FailureSignaturesTable ? 0 : 1,
+                    or ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable or ApplicationRolePrivileges.FailureSignaturesTable
+                    or ApplicationRolePrivileges.RunsTable ? 0 : 1,
                 CountOccurrences(statements, policy.Ddl));
         }
 
@@ -1749,8 +1804,10 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.False(grants.Delete);
         Assert.Equal(["revocation_reason", "revoked_at"], grants.UpdateColumns.Order(StringComparer.Ordinal));
 
-        // The only DELETE: the vectors package's derived table, and only when it exists.
-        Assert.Equal(["experience_embeddings"], ApplicationRolePrivileges.Tables.Where(t => t.Delete).Select(t => t.Name));
+        // The only DELETEs: the vectors package's derived table and (story 28.7) the run store's staging table, which is
+        // no ledger -- a stored run is deleted after finalization -- each only when it exists.
+        Assert.Equal(["experience_runs", "experience_embeddings"], ApplicationRolePrivileges.Tables.Where(t => t.Delete).Select(t => t.Name));
+        Assert.True(byName["experience_runs"].Optional);
         Assert.True(byName["experience_embeddings"].Optional);
         Assert.Equal(
             ["content_hash", "dimension", "embedding", "model_id", "source_revision", "updated_at"],
@@ -1765,7 +1822,10 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.DoesNotContain(statements, s => s.Contains("CREATE", StringComparison.Ordinal));
         Assert.DoesNotContain(statements, s => s.Contains("OWNER", StringComparison.Ordinal));
         Assert.DoesNotContain(statements, s => s.Contains("EXECUTE", StringComparison.Ordinal));
-        Assert.Single(statements, s => s.Contains("DELETE", StringComparison.Ordinal));
+        Assert.Equal(2, statements.Count(s => s.Contains("DELETE", StringComparison.Ordinal)));
+        Assert.All(
+            statements.Where(s => s.Contains("DELETE", StringComparison.Ordinal)),
+            s => Assert.True(s.Contains("experience_runs", StringComparison.Ordinal) || s.Contains("experience_embeddings", StringComparison.Ordinal), s));
 
         // No table-level UPDATE anywhere: every UPDATE names its columns.
         Assert.All(

@@ -1,0 +1,418 @@
+RETRIEVAL QUALITY: SQLite candidate source
+
+What it measures: lexical recall of IExperienceCandidateSource.SearchAsync, called directly. No model, no
+retrieval service, no clock, no environment and no ranking policy: only which records the text matches, and
+in what order.
+
+Corpus: 53 records: 30 in 5 task families (migrations, flaky-tests, docker, nuget, auth),
+16 distractors, 7 ineligible (2 out of scope, 3 in a status not eligible for reuse, 2 below the confidence floor).
+Queries: 48 (exact 8, paraphrase 8, realistic 10, morphology 7, distractor-overlap 9, stopword-heavy 6).
+Search: Limit 50, MinimumConfidence 0.50, statuses Validated, Reinforced.
+
+R@k: recall in the first k candidates, and MRR: mean reciprocal rank of the first expected record, both over
+the queries that expect a record (lab). P@k: share of the first k candidates that are expected, over the
+labelled queries that got a candidate (- when none did). FP@8: unexpected candidates in the first 8, averaged
+over every query: the noise an agent would be shown. zero: share of every query that got no candidate.
+k = 8 is what injection shows an agent by default.
+
+METRICS
+category               n  lab    R@1    R@3    R@8    P@3    P@8   FP@8    MRR   zero
+overall               48   45  0.789  0.867  0.867  0.721  0.715  0.625  0.833  0.167
+exact                  8    8  1.000  1.000  1.000  0.792  0.781  0.625  1.000  0.000
+paraphrase             8    8  0.563  0.625  0.625  1.000  1.000  0.000  0.625  0.375
+realistic             10   10  0.900  1.000  1.000  0.533  0.517  1.400  0.950  0.000
+morphology             7    7  1.000  1.000  1.000  0.929  0.929  0.143  1.000  0.000
+distractor-overlap     9    8  0.750  1.000  1.000  0.667  0.667  0.667  0.875  0.111
+stopword-heavy         6    4  0.250  0.250  0.250  0.167  0.167  0.667  0.250  0.667
+
+MISSES (expected records not in the first 8 candidates)
+paraphrase-02: ci-02 (zero candidates)
+paraphrase-03: dock-01 (zero candidates)
+paraphrase-07: auth-04 (zero candidates)
+stopword-03: auth-01 (zero candidates)
+stopword-05: ci-02 (2 candidates)
+stopword-06: mig-02 (zero candidates)
+
+FALSE POSITIVES IN THE FIRST 8 (candidates no query label expects)
+exact-01: mig-02, mig-06, mig-03
+exact-03: dis-07
+exact-04: pkg-03
+realistic-01: mig-02
+realistic-02: ci-03, ci-02, dis-10
+realistic-04: auth-04, pkg-02
+realistic-05: pkg-04, dock-03
+realistic-06: mig-01
+realistic-08: mig-05, mig-06, pkg-05
+realistic-09: mig-01
+realistic-10: ci-06
+morphology-01: dis-02
+distractor-01: dis-02
+distractor-02: dis-03
+distractor-03: dis-07
+distractor-06: dis-12, dis-11
+distractor-08: dis-05
+stopword-02: mig-04, mig-02
+stopword-05: ci-03, dis-10
+
+QUERIES
+
+exact-01 [exact]
+  text: EF Core migration fails on startup
+  expected: mig-01 (rank 1)
+  returned 4: mig-01, mig-02, mig-06, mig-03
+
+exact-02 [exact]
+  text: flaky integration test timeout
+  expected: ci-01 (rank 1)
+  returned 1: ci-01
+
+exact-03 [exact]
+  text: reduce Docker image size
+  expected: dock-01 (rank 1)
+  returned 2: dock-01, dis-07
+
+exact-04 [exact]
+  text: packages.lock.json out of date locked mode
+  expected: pkg-04 (rank 1)
+  returned 2: pkg-04, pkg-03
+
+exact-05 [exact]
+  text: JWT signature validation fails signing keys rotated
+  expected: auth-02 (rank 1)
+  returned 1: auth-02
+
+exact-06 [exact]
+  text: docker compose container cannot connect to database
+  expected: dock-04 (rank 1)
+  returned 1: dock-04
+
+exact-07 [exact]
+  text: NuGet private feed 401 Unauthorized
+  expected: pkg-02 (rank 1)
+  returned 1: pkg-02
+
+exact-08 [exact]
+  text: OAuth redirect URI mismatch
+  expected: auth-05 (rank 1)
+  returned 1: auth-05
+
+paraphrase-01 [paraphrase]
+  text: roll back a broken schema change in prod
+  expected: mig-04 (rank 1)
+  returned 1: mig-04
+
+paraphrase-02 [paraphrase]
+  text: tests break when run concurrently against the same db
+  expected: ci-02 (not returned)
+  returned: none
+
+paraphrase-03 [paraphrase]
+  text: shrink the container image for our web api
+  expected: dock-01 (not returned)
+  returned: none
+
+paraphrase-04 [paraphrase]
+  text: jwt expired, api now responds unauthorized
+  expected: auth-01 (rank 1)
+  returned 1: auth-01
+
+paraphrase-05 [paraphrase]
+  text: container gets OOM-killed on kubernetes under heavy traffic
+  expected: dock-06 (rank 1)
+  returned 1: dock-06
+
+paraphrase-06 [paraphrase]
+  text: unit test for date formatting is green on my machine but red on the build server
+  expected: ci-03 (rank 1)
+  returned 1: ci-03
+
+paraphrase-07 [paraphrase]
+  text: stop secrets showing up in our log output
+  expected: auth-04 (not returned)
+  returned: none
+
+paraphrase-08 [paraphrase]
+  text: two dependencies want different versions of the same library and the build complains about a downgrade
+  expected: pkg-01 (rank 1), pkg-06 (rank 2)
+  returned 2: pkg-01, pkg-06
+
+realistic-01 [realistic]
+  text: Hey, can you take a look at the deploy? The API pod keeps crashing on startup and the logs say something about a column that doesn't exist in the database. I think someone forgot to run the migrations again.
+  expected: mig-01 (rank 1)
+  returned 2: mig-01, mig-02
+
+realistic-02 [realistic]
+  text: our CI has been red all morning, the integration tests randomly time out maybe one run in five, can you figure out what's going on and make them stable
+  expected: ci-01 (rank 1)
+  returned 4: ci-01, ci-03, ci-02, dis-10
+
+realistic-03 [realistic]
+  text: I need the docker image for the api to be way smaller, it's like 2GB right now and pushing it to the registry takes forever. Can you rework the Dockerfile?
+  expected: dock-01 (rank 1)
+  returned 1: dock-01
+
+realistic-04 [realistic]
+  text: After the identity team rotated their keys this morning every request to our service fails token validation. Please fix the auth config so it doesn't break the next time they rotate.
+  expected: auth-02 (rank 1)
+  returned 3: auth-02, auth-04, pkg-02
+
+realistic-05 [realistic]
+  text: dotnet restore blows up in the pipeline with NU1605 detected package downgrade, can you sort out the package versions so the build goes green again
+  expected: pkg-01 (rank 1)
+  returned 3: pkg-01, pkg-04, dock-03
+
+realistic-06 [realistic]
+  text: The frontend team says their calls to our API fail in the browser with a CORS error as soon as they send the bearer token. Can you update the server so their requests go through?
+  expected: auth-03 (rank 1)
+  returned 2: auth-03, mig-01
+
+realistic-07 [realistic]
+  text: Adding the index on the orders table in the new migration keeps timing out when we deploy to staging, it's a big table with like 40 million rows. What should I change?
+  expected: mig-05 (rank 1)
+  returned 1: mig-05
+
+realistic-08 [realistic]
+  text: I merged main into my branch and now there's a conflict in the ModelSnapshot file because both of us added migrations. How do I fix this properly without breaking the migration history?
+  expected: mig-03 (rank 1)
+  returned 4: mig-03, mig-05, mig-06, pkg-05
+
+realistic-09 [realistic]
+  text: Our security scanner flagged that the app container is running as root, please update the Dockerfile so it runs as a normal user
+  expected: dock-05 (rank 1)
+  returned 2: dock-05, mig-01
+
+realistic-10 [realistic]
+  text: Some of our end to end tests fail randomly and block every merge. I want to stop them blocking the team without just deleting them, what's the right way to handle this?
+  expected: ci-05 (rank 2)
+  returned 2: ci-06, ci-05
+
+morphology-01 [morphology]
+  text: migrations timing out on large tables
+  expected: mig-05 (rank 1)
+  returned 2: mig-05, dis-02
+
+morphology-02 [morphology]
+  text: rolling back failed migrations
+  expected: mig-04 (rank 1)
+  returned 1: mig-04
+
+morphology-03 [morphology]
+  text: parallel test failures with shared databases
+  expected: ci-02 (rank 1)
+  returned 1: ci-02
+
+morphology-04 [morphology]
+  text: containers exiting immediately after start
+  expected: dock-02 (rank 1)
+  returned 1: dock-02
+
+morphology-05 [morphology]
+  text: expiring JWT tokens
+  expected: auth-01 (rank 1)
+  returned 1: auth-01
+
+morphology-06 [morphology]
+  text: redacting API keys from logs
+  expected: auth-04 (rank 1)
+  returned 1: auth-04
+
+morphology-07 [morphology]
+  text: pinned vulnerable dependencies
+  expected: pkg-03 (rank 1)
+  returned 1: pkg-03
+
+distractor-01 [distractor-overlap]
+  text: migration timeout large table
+  expected: mig-05 (rank 1)
+  returned 2: mig-05, dis-02
+
+distractor-02 [distractor-overlap]
+  text: roll back the production database migration
+  expected: mig-04 (rank 1)
+  returned 2: mig-04, dis-03
+
+distractor-03 [distractor-overlap]
+  text: reduce image size
+  expected: dock-01 (rank 2)
+  returned 2: dis-07, dock-01
+
+distractor-04 [distractor-overlap]
+  text: container memory killed under load
+  expected: dock-06 (rank 1)
+  returned 1: dock-06
+
+distractor-05 [distractor-overlap]
+  text: NuGet package version conflict
+  expected: pkg-01 (rank 1)
+  returned 1: pkg-01
+
+distractor-06 [distractor-overlap]
+  text: restore fails lock file
+  expected: pkg-04 (rank 1)
+  returned 3: pkg-04, dis-12, dis-11
+
+distractor-07 [distractor-overlap]
+  text: flaky test nightly
+  expected: ci-05 (rank 1)
+  returned 1: ci-05
+
+distractor-08 [distractor-overlap]
+  text: time zone UTC test
+  expected: ci-03 (rank 2)
+  returned 2: dis-05, ci-03
+
+distractor-09 [distractor-overlap]
+  text: order new office chairs for the team
+  expected: none
+  returned: none
+
+stopword-01 [stopword-heavy]
+  text: how do I do it again so that it does not fail like before
+  expected: none
+  returned: none
+
+stopword-02 [stopword-heavy]
+  text: why is it that the migration has not been applied
+  expected: mig-01 (rank 1)
+  returned 3: mig-01, mig-04, mig-02
+
+stopword-03 [stopword-heavy]
+  text: it is the one with the token that has to be refreshed before it is too late
+  expected: auth-01 (not returned)
+  returned: none
+
+stopword-04 [stopword-heavy]
+  text: can you do the same as last time for the docker thing
+  expected: none
+  returned: none
+
+stopword-05 [stopword-heavy]
+  text: how do I make it so the tests are not run at the same time
+  expected: ci-02 (not returned)
+  returned 2: ci-03, dis-10
+
+stopword-06 [stopword-heavy]
+  text: is there anything we should know before we add a migration
+  expected: mig-02 (not returned)
+  returned: none
+
+SIGNATURE CHANNEL
+
+What it measures: IExperienceSignatureSource.FindBySignatureAsync, called directly with the failure signature of
+a failed call seen in a sibling run (other paths, numbers, IDs and literals). exact: the same tool, error class
+and fingerprint. coarse: the same tool and error class, whatever the message. A query's expected records hold
+the same failure; a query with none expected is a failure no lesson knows, so every hit is a false positive.
+Failures: 28 records hold a failed call (24 eligible, 4 ineligible, holding a queried failure).
+Queries: 18 (15 with a lesson, 3 without). Same statuses, floor and limit as above.
+
+match                  n  lab    R@1    R@3    R@8    P@3    P@8   FP@8    MRR   zero
+exact                 18   15  0.867  0.867  0.867  1.000  1.000  0.000  0.867  0.278
+coarse                18   15  0.933  1.000  1.000  0.867  0.867  0.222  0.967  0.167
+
+sig-01 [run_app, PostgresException]
+  error: Npgsql.PostgresException (0x80004005): 42703: column "invoices.due_date" does not exist
+  expected: mig-01
+  exact: mig-01
+  coarse: mig-01
+
+sig-02 [dotnet_ef, unclassified error]
+  error: The migration '20261101120000_AddInvoiceDueDate' has already been applied to the database. Revert it and try again.
+  expected: mig-04
+  exact: mig-04
+  coarse: mig-04
+
+sig-03 [dotnet_ef, NpgsqlException]
+  error: Npgsql.NpgsqlException (0x80004005): Exception while reading from stream
+  expected: mig-05
+  exact: mig-05
+  coarse: mig-05
+
+sig-04 [run_tests, TimeoutException]
+  error: System.TimeoutException: The operation has timed out after 00:00:45 waiting for http://localhost:61022/health
+  expected: ci-01
+  exact: ci-01
+  coarse: ci-01, dis-04
+
+sig-05 [run_tests, PostgresException]
+  error: Npgsql.PostgresException (0x80004005): 23505: duplicate key value violates unique constraint "pk_invoices"
+  expected: ci-02
+  exact: ci-02
+  coarse: ci-02
+
+sig-06 [run_build, IOException]
+  error: System.IO.IOException: No space left on device : '/home/runner/work/_temp/build-9902.log'
+  expected: ci-04
+  exact: ci-04
+  coarse: ci-04
+
+sig-07 [docker_run, exit 139]
+  error: Container billing-api-11a0 exited with code 139 (segmentation fault)
+  expected: dock-02
+  exact: none
+  coarse: dock-02
+
+sig-08 [docker_run, ECONNREFUSED]
+  error: connect ECONNREFUSED 172.18.0.3:5432
+  expected: dock-04
+  exact: dock-04
+  coarse: dock-04
+
+sig-09 [docker_run, exit 137]
+  error: Container worker-5 exited with code 137 (OOMKilled)
+  expected: dock-06
+  exact: dock-06
+  coarse: dock-06
+
+sig-10 [dotnet_restore, unclassified error]
+  error: error NU1605: Detected package downgrade: Newtonsoft.Json from 13.0.3 to 12.0.1. Reference the package directly from the project to select a different version.
+  expected: pkg-01
+  exact: none
+  coarse: pkg-04, pkg-01
+
+sig-11 [dotnet_restore, HTTP 401]
+  error: error NU1301: Unable to load the service index for source https://nuget.acme.test/v3/index.json. Response status code does not indicate success: 401 (Unauthorized).
+  expected: pkg-02
+  exact: pkg-02
+  coarse: pkg-02
+
+sig-12 [call_api, HTTP 401]
+  error: HTTP 401 Unauthorized: Bearer error="invalid_token", error_description="The token expired at 2026-11-02T08:15:40Z"
+  expected: auth-01
+  exact: auth-01
+  coarse: auth-01, dis-15
+
+sig-13 [call_api, SecurityTokenInvalidSignatureException]
+  error: Microsoft.IdentityModel.Tokens.SecurityTokenInvalidSignatureException: IDX10503: Signature validation failed. Keys tried: 'kid-c41d07'.
+  expected: auth-02
+  exact: auth-02
+  coarse: auth-02
+
+sig-14 [oauth_login, unclassified error]
+  error: AADSTS50011: The redirect URI 'https://localhost:5001/signin-oidc' specified in the request does not match the redirect URIs configured for the application '0c7f2a1e-3b4d-4e5f-8a9b-1c2d3e4f5a6b'.
+  expected: auth-05
+  exact: auth-05
+  coarse: auth-05
+
+sig-15 [run_tests, EqualException]
+  error: Xunit.Sdk.EqualException: Assert.Equal() Failure: Values differ
+  expected: ci-03
+  exact: ci-03
+  coarse: ci-03, ci-06
+
+sig-16 [run_tests, NullReferenceException]
+  error: System.NullReferenceException: Object reference not set to an instance of an object.
+  expected: none
+  exact: none
+  coarse: none
+
+sig-17 [docker_run, exit 1]
+  error: Container orders-api-2 exited with code 1
+  expected: none
+  exact: none
+  coarse: none
+
+sig-18 [call_api, HTTP 403]
+  error: HTTP 403 Forbidden: missing role 'billing-admin'
+  expected: none
+  exact: none
+  coarse: none
