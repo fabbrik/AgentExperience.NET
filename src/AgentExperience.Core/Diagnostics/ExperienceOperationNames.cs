@@ -40,6 +40,9 @@ internal static class ExperienceOperationNames
     /// <summary>Retrieving experience applicable to a task (<c>ExperienceRetrievalService.RetrieveAsync</c>).</summary>
     public const string Retrieve = "retrieve";
 
+    /// <summary>Looking experience up by a failure signature (<c>ExperienceSignatureRetrievalService.FindAsync</c>, story 28.2).</summary>
+    public const string RetrieveSignature = "retrieve.signature";
+
     /// <summary>Embedding one record's retrieval summary (<c>ExperienceIndexingService.IndexAsync</c>).</summary>
     public const string Index = "index";
 

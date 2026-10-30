@@ -118,6 +118,15 @@ internal static class ExperienceDiagnostics
     /// <summary>The host-supplied correlation identifier, echoed on every outcome including a timeout. Omitted entirely, never written as an empty string, when the host supplied none.</summary>
     internal const string CorrelationIdAttribute = "agentexperience.correlation_id";
 
+    /// <summary>
+    /// The retrieval channel a lookup ran on (story 28.2): <c>signature</c> on a <c>retrieve.signature</c> span. A closed
+    /// set; the signature itself, its tool name and its error class are never telemetry values.
+    /// </summary>
+    internal const string RetrievalChannelAttribute = "agentexperience.retrieval.channel";
+
+    /// <summary>How a signature lookup matched: an <c>ExperienceSignatureMatch</c> member name (<c>Exact</c> or <c>Coarse</c>). A closed set.</summary>
+    internal const string SignatureMatchAttribute = "agentexperience.signature.match";
+
     /// <summary>The <c>FinalizationStage</c> a finalization ended at. Documented content-free at its declaration site.</summary>
     internal const string StageAttribute = "agentexperience.stage";
 

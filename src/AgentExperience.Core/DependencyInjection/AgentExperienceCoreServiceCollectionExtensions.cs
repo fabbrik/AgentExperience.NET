@@ -339,6 +339,13 @@ public static class AgentExperienceCoreServiceCollectionExtensions
                 ProvenanceSigningFrom(provider, services));
         });
 
+        // Story 28.2: the failure-signature lookup, under the same policy and clock. It resolves only where a storage
+        // package registered the optional IExperienceSignatureSource; nothing resolves it otherwise.
+        services.TryAddSingleton(provider => new ExperienceSignatureRetrievalService(
+            provider.GetRequiredService<IExperienceSignatureSource>(),
+            effectivePolicy,
+            provider.GetRequiredService<TimeProvider>()));
+
         return services;
     }
 }

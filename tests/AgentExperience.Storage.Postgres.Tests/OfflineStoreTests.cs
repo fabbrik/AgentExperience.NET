@@ -396,6 +396,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName,
                 PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName,
                 PostgresExperienceRecordSchema.ExperienceProviderHoldoutAssignmentsScriptName,
+                PostgresExperienceRecordSchema.ExperienceFailureSignaturesScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -1343,8 +1344,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("least(p_minimum_matched_terms, ", TextSearchFunction.Body, StringComparison.Ordinal);
 
         // Applied after every earlier script.
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^5]);
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^6]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^6]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^7]);
     }
 
     /// <summary>
@@ -1397,7 +1398,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains(ExperienceRecordSql.RecordKeyShareLock, PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
 
         // Applied after every earlier script; 0027 to 0029 follow it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^4]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^5]);
     }
 
     /// <summary>
@@ -1454,7 +1455,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.EndsWith("ON CONFLICT (run_id, experience_id) DO NOTHING", PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
 
         // Applied after every earlier script; 0028 and 0029 follow it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^3]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^4]);
     }
 
     /// <summary>
@@ -1475,7 +1476,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_experience_records_source_run", script, StringComparison.Ordinal);
 
         // Applied after every earlier script; 0029 follows it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName, PostgresExperienceRecordSchema.ScriptNames[^3]);
     }
 
     /// <summary>
@@ -1523,8 +1524,86 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("LEAST(@assigned_at, pg_catalog.clock_timestamp())", PostgresExperienceRecordStore.RecordProviderHoldoutAssignmentSql, StringComparison.Ordinal);
         Assert.EndsWith("ON CONFLICT (tenant_id, run_id, provider_key) DO NOTHING", PostgresExperienceRecordStore.RecordProviderHoldoutAssignmentSql, StringComparison.Ordinal);
 
+        // Followed by 0030.
+        Assert.Equal(
+            PostgresExperienceRecordSchema.ExperienceProviderHoldoutAssignmentsScriptName,
+            PostgresExperienceRecordSchema.ScriptNames[^2]);
+    }
+
+    /// <summary>
+    /// Story 28.2: 0030 creates the failure-signature table, its two tenant-leading lookup indexes, its erasure trigger
+    /// and exactly its two canonical policies, and switches nothing on, grants nothing, defines no SECURITY DEFINER
+    /// function and holds no error text.
+    /// </summary>
+    [Fact]
+    public void The_failure_signature_script_creates_the_table_its_indexes_its_erasure_trigger_and_its_canonical_policies_only()
+    {
+        var script = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.ExperienceFailureSignaturesScriptName);
+        var statements = string.Join('\n', script.Split('\n').Where(line => !line.TrimStart().StartsWith("--", StringComparison.Ordinal)));
+
+        Assert.Equal(
+            ["rls_failure_signatures_insert", "rls_failure_signatures_select"],
+            RowLevelSecurityPolicies.NamesFor(ApplicationRolePrivileges.FailureSignaturesTable));
+        foreach (var policy in RowLevelSecurityPolicies.All.Where(p => p.Table == ApplicationRolePrivileges.FailureSignaturesTable))
+        {
+            Assert.Equal(1, CountOccurrences(statements, policy.Ddl));
+        }
+
+        // The read policy is the record read policy's admission, grants included, over the signature row's own columns.
+        var read = Assert.Single(RowLevelSecurityPolicies.All, p => p.Name == "rls_failure_signatures_select");
+        Assert.Equal(Assert.Single(RowLevelSecurityPolicies.All, p => p.Name == "rls_records_select").Using, read.Using);
+
+        Assert.Equal(2, CountOccurrences(statements, "CREATE POLICY "));
+        Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.experience_failure_signatures (", statements, StringComparison.Ordinal);
+        Assert.Contains("PRIMARY KEY (experience_id, signature_version, signature_key)", statements, StringComparison.Ordinal);
+        Assert.Contains("REFERENCES agent_experience.experience_records (experience_id) ON DELETE CASCADE", statements, StringComparison.Ordinal);
+        Assert.Contains("CHECK (fingerprint ~ '^[0-9a-f]{32}$')", statements, StringComparison.Ordinal);
+        Assert.Contains("signature_key = tool_name || chr(31) || error_class || chr(31) || fingerprint)", statements, StringComparison.Ordinal);
+        Assert.Contains("ON agent_experience.experience_failure_signatures (tenant_id, signature_key);", statements, StringComparison.Ordinal);
+        Assert.Contains("ON agent_experience.experience_failure_signatures (tenant_id, tool_name, error_class);", statements, StringComparison.Ordinal);
+        Assert.Contains("AFTER UPDATE OF deleted_at ON agent_experience.experience_records", statements, StringComparison.Ordinal);
+        Assert.Contains("DELETE FROM agent_experience.experience_failure_signatures WHERE experience_id = NEW.experience_id;", statements, StringComparison.Ordinal);
+        Assert.Contains("ENABLE ALWAYS TRIGGER experience_records_failure_signatures_cleared", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("ROW LEVEL SECURITY", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("SECURITY DEFINER", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("GRANT ", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("payload", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("error_text", statements, StringComparison.Ordinal);
+        Assert.DoesNotContain("excerpt", statements, StringComparison.Ordinal);
+
+        // Append and read only, granted only when the table exists, and left out of the contract's privileges files.
+        var manifest = Assert.Single(ApplicationRolePrivileges.Tables, t => t.Name == ApplicationRolePrivileges.FailureSignaturesTable);
+        Assert.Empty(manifest.UpdateColumns);
+        Assert.False(manifest.Delete);
+        Assert.True(manifest.Optional);
+
+        // The insert copies the record's scope from a live record in exactly the caller's scope, locked against erasure,
+        // and never writes a signature twice.
+        Assert.Contains(ExperienceRecordSql.RecordKeyShareLock, PostgresExperienceRecordStore.InsertFailureSignaturesSql, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.RecordScopePredicate, PostgresExperienceRecordStore.InsertFailureSignaturesSql, StringComparison.Ordinal);
+        Assert.Contains(ExperienceRecordSql.RecordLivePredicate, PostgresExperienceRecordStore.InsertFailureSignaturesSql, StringComparison.Ordinal);
+        Assert.EndsWith("ON CONFLICT (experience_id, signature_version, signature_key) DO NOTHING", PostgresExperienceRecordStore.InsertFailureSignaturesSql, StringComparison.Ordinal);
+
+        // The search leads with the tenant and the version, through the index each match uses.
+        foreach (var match in new[] { ExperienceSignatureMatch.Exact, ExperienceSignatureMatch.Coarse })
+        {
+            foreach (var withGrants in new[] { true, false })
+            {
+                var sql = PostgresExperienceSignatureSource.Sql(withGrants, match, excludeModelAuthored: false);
+                Assert.Contains("s.tenant_id = @tenant_id AND s.signature_version = @signature_version", sql, StringComparison.Ordinal);
+                Assert.Contains(
+                    match == ExperienceSignatureMatch.Exact ? PostgresExperienceSignatureSource.ExactMatchPredicate : PostgresExperienceSignatureSource.CoarseMatchPredicate,
+                    sql,
+                    StringComparison.Ordinal);
+                Assert.Contains(withGrants ? ExperienceRecordSql.ReadableWithNamedGrantPredicate : ExperienceRecordSql.RecordScopePredicate, sql, StringComparison.Ordinal);
+                Assert.Contains(ExperienceRecordSql.RecordLivePredicate, sql, StringComparison.Ordinal);
+                Assert.DoesNotContain(PostgresExperienceCandidateSource.ModelAuthoredPredicate, sql, StringComparison.Ordinal);
+                Assert.Contains(PostgresExperienceCandidateSource.ModelAuthoredPredicate, PostgresExperienceSignatureSource.Sql(withGrants, match, excludeModelAuthored: true), StringComparison.Ordinal);
+            }
+        }
+
         // The last script.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceProviderHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceFailureSignaturesScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
     }
 
     /// <summary>
@@ -1554,7 +1633,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         {
             Assert.Equal(
                 policy.Table is ApplicationRolePrivileges.EmbeddingsTable or ApplicationRolePrivileges.InjectionsTable or ApplicationRolePrivileges.HoldoutAssignmentsTable
-                    or ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable ? 0 : 1,
+                    or ApplicationRolePrivileges.ProviderHoldoutAssignmentsTable or ApplicationRolePrivileges.FailureSignaturesTable ? 0 : 1,
                 CountOccurrences(statements, policy.Ddl));
         }
 
