@@ -92,6 +92,14 @@ var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
         "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
         "Microsoft.Extensions.Hosting.Abstractions 10.0.3",
     ],
+    // One local SQLite file: Abstractions, Microsoft.Data.Sqlite (with its bundled native SQLite) and the DI abstractions
+    // for its registration -- no Core, no other store.
+    ["AgentExperience.Storage.Sqlite"] =
+    [
+        "AgentExperience.Abstractions {self}",
+        "Microsoft.Data.Sqlite 10.0.12",
+        "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
+    ],
 };
 
 // Belt and braces for the adapter-independent packages (Abstractions, Core, and the in-memory store): even if

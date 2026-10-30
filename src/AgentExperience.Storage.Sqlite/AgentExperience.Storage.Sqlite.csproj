@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Preview, not production ready. SQLite adapter for AgentExperience.NET (story 28.7): one local database file for a single agent on one machine (a coding agent, a CLI, an MCP server). Implements the record store, the full-text candidate source (FTS5), the failure-signature source, the reuse-feedback ledger and the durable run store, and passes the same store conformance suite as the PostgreSQL adapter. Not provided: sharing grants, encryption and crypto-shredding, row-level security, vectors and retention sweeps. Requires Microsoft.Data.Sqlite 10.0.12 and Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12 or later within the same major.</Description>
+    <IsPackable>true</IsPackable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Selects this package's namespace in the shared rules linked below. -->
+    <DefineConstants>$(DefineConstants);AGENTEXPERIENCE_SQLITE</DefineConstants>
+    <!-- A new package ID: nuget.org has no published version to validate against until its first release
+         (RELEASING.md, "First publish of a new package ID"). Remove this after that release. -->
+    <DisablePackageBaselineValidation>true</DisablePackageBaselineValidation>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Floors, not exact pins, like every other shipping reference. Microsoft.Data.Sqlite brings the bundled native
+         SQLite (SQLitePCLRaw's e_sqlite3, built with FTS5). DI abstractions only, for the registration extension. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentExperience.Abstractions\AgentExperience.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The PostgreSQL store's validation rules for the core ports (story 11.2), so this store refuses exactly what
+         that one refuses, and the one authorship rule every store shares (story 17.1). -->
+    <Compile Include="..\Shared\ExperienceRecordValidator.Shared.cs" Link="Shared\ExperienceRecordValidator.Shared.cs" />
+    <Compile Include="..\Shared\ReflectionAuthorshipRule.Shared.cs" Link="Shared\ReflectionAuthorshipRule.Shared.cs" />
+    <!-- The PostgreSQL store's versioned payload shape, compiled here from the same file, so a record (and a captured
+         run's attempts) is stored in exactly the same JSON by both durable stores, and a field added to it is added to
+         both. It keeps that project's namespace; it is internal. -->
+    <Compile Include="..\AgentExperience.Storage.Postgres\ExperiencePayload.cs" Link="Shared\ExperiencePayload.cs" />
+    <!-- The in-memory candidate source's query terms (stopwords, minimum length, Unicode normalization), so the two
+         development-friendly stores read a query the same way. -->
+    <Compile Include="..\AgentExperience.Storage.InMemory\SearchText.cs" Link="Shared\SearchText.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Migrations\*.sql" LogicalName="AgentExperience.Storage.Sqlite.Migrations.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentExperience.Storage.Sqlite.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

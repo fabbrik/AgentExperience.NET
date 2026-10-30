@@ -1,20 +1,22 @@
 using AgentExperience.Abstractions;
 
 // Shared source (story 11.2): the validation rules for the core storage ports, which depend on nothing but
-// AgentExperience.Abstractions. Both AgentExperience.Storage.Postgres and AgentExperience.Storage.InMemory link this
-// file, so the two stores refuse exactly the same requests. Each project defines exactly one of the constants below,
+// AgentExperience.Abstractions. AgentExperience.Storage.Postgres, AgentExperience.Storage.InMemory and (story 28.7)
+// AgentExperience.Storage.Sqlite link this file, so the stores refuse exactly the same requests. Each project defines exactly one of the constants below,
 // which puts the validator in that project's own namespace. Keep this file free of every type only one store has:
 // the PostgreSQL-only rules (erasure, retention, sealing, grants) are in that project's
 // ExperienceRecordValidator.cs. Where a comment below says "the database", it is the PostgreSQL store's schema,
 // which states the same rule again as a CHECK.
-#if AGENTEXPERIENCE_POSTGRES && AGENTEXPERIENCE_INMEMORY
-#error Define exactly one of AGENTEXPERIENCE_POSTGRES and AGENTEXPERIENCE_INMEMORY.
+#if (AGENTEXPERIENCE_POSTGRES && AGENTEXPERIENCE_INMEMORY) || (AGENTEXPERIENCE_POSTGRES && AGENTEXPERIENCE_SQLITE) || (AGENTEXPERIENCE_INMEMORY && AGENTEXPERIENCE_SQLITE)
+#error Define exactly one of AGENTEXPERIENCE_POSTGRES, AGENTEXPERIENCE_INMEMORY and AGENTEXPERIENCE_SQLITE.
 #elif AGENTEXPERIENCE_POSTGRES
 namespace AgentExperience.Storage.Postgres;
 #elif AGENTEXPERIENCE_INMEMORY
 namespace AgentExperience.Storage.InMemory;
+#elif AGENTEXPERIENCE_SQLITE
+namespace AgentExperience.Storage.Sqlite;
 #else
-#error Define AGENTEXPERIENCE_POSTGRES or AGENTEXPERIENCE_INMEMORY to select the namespace of the shared validator.
+#error Define AGENTEXPERIENCE_POSTGRES, AGENTEXPERIENCE_INMEMORY or AGENTEXPERIENCE_SQLITE to select the namespace of the shared validator.
 #endif
 
 /// <summary>

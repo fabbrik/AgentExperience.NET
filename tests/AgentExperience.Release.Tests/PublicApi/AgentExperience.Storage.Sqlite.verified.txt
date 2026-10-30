@@ -1,0 +1,70 @@
+﻿namespace AgentExperience.Storage.Sqlite.DependencyInjection
+{
+    public static class AgentExperienceSqliteServiceCollectionExtensions
+    {
+        public static Microsoft.Extensions.DependencyInjection.IServiceCollection AddAgentExperienceSqliteStorage(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, string databasePath, System.Action<AgentExperience.Storage.Sqlite.SqliteStorageOptions>? configure = null) { }
+    }
+}
+namespace AgentExperience.Storage.Sqlite
+{
+    public static class ExperienceSqliteSchema
+    {
+        public static int CurrentVersion { get; }
+        public static System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<int>> AppliedVersionsAsync(string databasePath, System.Threading.CancellationToken cancellationToken = default) { }
+        public static string ConnectionStringFor(string databasePath) { }
+        public static System.Threading.Tasks.Task<int> MigrateAsync(Microsoft.Data.Sqlite.SqliteConnection connection, System.Threading.CancellationToken cancellationToken = default) { }
+        public static System.Threading.Tasks.Task<int> MigrateAsync(string databasePath, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class SqliteExperienceCandidateSource : AgentExperience.Abstractions.IExperienceCandidateSource
+    {
+        public SqliteExperienceCandidateSource(AgentExperience.Storage.Sqlite.SqliteExperienceRecordStore store) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceCandidateSearchResult> SearchAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceCandidateQuery query, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class SqliteExperienceDeleteResult : System.IEquatable<AgentExperience.Storage.Sqlite.SqliteExperienceDeleteResult>
+    {
+        public SqliteExperienceDeleteResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, long Revision, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public long Revision { get; init; }
+    }
+    public sealed class SqliteExperienceRecordStore : AgentExperience.Abstractions.IExperienceRecordStore
+    {
+        public SqliteExperienceRecordStore(string connectionString, System.TimeProvider? timeProvider = null) { }
+        public bool TracksHoldout { get; }
+        public bool TracksInjections { get; }
+        public bool TracksProviderHoldout { get; }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSupersessionCheckResult> CheckSupersessionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Guid replacementExperienceId, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.LifecycleEvent lifecycleEvent, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordCreateResult> CreateAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecord record, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Storage.Sqlite.SqliteExperienceDeleteResult> DeleteAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetResult> GetAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetResult> GetAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid experienceId, AgentExperience.Abstractions.ExperienceReadOptions options, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordHistoryResult> GetHistoryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordHistoryQuery query, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordGetManyResult> GetManyAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, AgentExperience.Abstractions.ExperienceReadOptions options, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordQueryResult> QueryAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordQuery query, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.HoldoutOutcomeQueryResult> QueryHoldoutOutcomesAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.HoldoutOutcomeQuery query, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ProviderHoldoutOutcomeQueryResult> QueryProviderHoldoutOutcomesAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ProviderHoldoutOutcomeQuery query, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRecordQueryResult> QueryWithInjectionsAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRecordQuery query, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceHoldoutRecordResult> RecordHoldoutAssignmentAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.HoldoutAssignment assignment, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceInjectionRecordResult> RecordInjectionAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<System.Guid> experienceIds, System.DateTimeOffset injectedAt, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceHoldoutRecordResult> RecordProviderHoldoutAssignmentAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.ProviderHoldoutAssignment assignment, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class SqliteExperienceSignatureSource : AgentExperience.Abstractions.IExperienceSignatureSource
+    {
+        public SqliteExperienceSignatureSource(AgentExperience.Storage.Sqlite.SqliteExperienceRecordStore store) { }
+        public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceSignatureSearchResult> FindBySignatureAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Abstractions.ExperienceSignatureQuery query, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class SqliteStorageOptions
+    {
+        public SqliteStorageOptions() { }
+        public bool MigrateSchemaOnFirstUse { get; set; }
+    }
+}
+namespace Microsoft.Extensions.DependencyInjection
+{
+    public static class AgentExperienceSqliteBuilderExtensions
+    {
+        public static TBuilder UseSqlite<TBuilder>(this TBuilder builder, string databasePath, System.Action<AgentExperience.Storage.Sqlite.SqliteStorageOptions>? configure = null)
+            where TBuilder : AgentExperience.Abstractions.IAgentExperienceBuilder<Microsoft.Extensions.DependencyInjection.IServiceCollection> { }
+    }
+}

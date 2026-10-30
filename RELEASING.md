@@ -15,10 +15,11 @@ push, a key, or a write permission.
 
 ## What a release is today
 
-A release ships **six packages**: `AgentExperience.Abstractions`, `AgentExperience.Core`,
-`AgentExperience.MicrosoftAgentFramework`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors`
-and, since story 11.2, `AgentExperience.Storage.InMemory` (development and tests only). Every count below — six
-packages, six symbol packages, six API baselines — is that list; `eng/verify-packages.cs` and `release.yml` hold it
+A release ships **seven packages**: `AgentExperience.Abstractions`, `AgentExperience.Core`,
+`AgentExperience.MicrosoftAgentFramework`, `AgentExperience.Storage.Postgres`, `AgentExperience.Storage.Postgres.Vectors`,
+`AgentExperience.Storage.InMemory` (development and tests only) and `AgentExperience.Storage.Sqlite` (one local
+file; new in the release after `0.1.0-preview.17`). Every count below — seven packages, seven symbol packages, seven
+API baselines — is that list; `eng/verify-packages.cs` and `release.yml` hold it
 too. The first release that carries a package ID nuget.org has never seen needs one extra check, described under
 [First publish of a new package ID](#first-publish-of-a-new-package-id).
 
@@ -202,15 +203,15 @@ dotnet test tests/AgentExperience.Storage.Postgres.Tests --no-build --configurat
 # The schema migrator reaches no console, Trace, ILogger or activity sink, on a clean run or a failing script.
 dotnet test tests/AgentExperience.Storage.Postgres.Tests --no-build --configuration Release --filter "FullyQualifiedName~MigratorLogSilenceTests"
 
-# Release gates: the public API baseline of all six assemblies, the compatibility proof's agreement with the
+# Release gates: the public API baseline of all seven assemblies, the compatibility proof's agreement with the
 # shipping pins, the security-suite map, and the workflow guard (only release.yml publishes, as step 10 describes).
 dotnet test tests/AgentExperience.Release.Tests --no-build --configuration Release
 
 # A failing baseline leaves *.received.txt behind (gitignored, so look for it directly); there must be none,
-# and all six baselines must be there.
+# and all seven baselines must be there.
 ( dir=tests/AgentExperience.Release.Tests/PublicApi
   if [ ! -d "$dir" ]; then echo "FAILED: $dir is missing"; false
-  elif [ "$(find "$dir" -name '*.verified.txt' | wc -l)" -ne 6 ]; then echo "FAILED: $dir does not hold six baselines"; false
+  elif [ "$(find "$dir" -name '*.verified.txt' | wc -l)" -ne 7 ]; then echo "FAILED: $dir does not hold seven baselines"; false
   elif [ -n "$(find "$dir" -name '*.received.*')" ]; then echo "FAILED: a public API baseline does not match: $(find "$dir" -name '*.received.*')"; false
   else echo "API baseline OK"; fi )
 ```
@@ -279,12 +280,12 @@ downloads into the NuGet cache), and any binary break that no `src/<Project>/Com
 fails the pack. A release test (step 3) checks that a declared break has a CHANGELOG bullet or heading starting with
 **Breaking**, and that the baseline is the last release in the CHANGELOG.
 
-Assertions are made against the built `.nupkg` and `.snupkg` files, not the csproj files: twelve artifacts (six packages, six symbol packages) at
+Assertions are made against the built `.nupkg` and `.snupkg` files, not the csproj files: fourteen artifacts (seven packages, seven symbol packages) at
 `0.1.0-preview.N`; license, readme, tags, and repository metadata with the SourceLink commit; "Preview" in the
 description, release notes, and readme; exactly the `net10.0` build under `lib/`, and the **exact** dependency
 set — ids and version ranges — in its dependency group, so Abstractions, Core and the in-memory store
 carry no MAF, Npgsql, DbUp, Pgvector, model-provider or OpenTelemetry dependency (and the in-memory store no Core);
-one repository commit across all six packages,
+one repository commit across all seven packages,
 equal to `git rev-parse HEAD`; and, per framework, in each symbol package, a PDB whose id matches its assembly's
 CodeView debug entry, whose every SourceLink target points at this repository, whose every path is mapped to `/_/`,
 and whose assembly is marked reproducible.
@@ -465,7 +466,8 @@ pending publisher above.
 A Trusted Publishing policy lets the workflow push packages the policy's owner (`fabbrik76`) owns, and a package ID
 that has never been pushed is owned by nobody yet. Whether nuget.org lets a Trusted Publishing key *create* a new
 ID depends on the account's policy, so a release that carries a new ID is checked, not assumed. The first release
-with `AgentExperience.Storage.InMemory` (story 11.2) is one.
+with `AgentExperience.Storage.InMemory` (story 11.2) was one; the first release with `AgentExperience.Storage.Sqlite`
+is the next.
 
 A new package also has no published version for package validation to compare with, and restore would fail trying to
 download one. Until its first release, its csproj sets `<DisablePackageBaselineValidation>true</DisablePackageBaselineValidation>`
@@ -473,21 +475,21 @@ download one. Until its first release, its csproj sets `<DisablePackageBaselineV
 the post-release step below removes it.
 
 1. Before tagging, sign in to nuget.org as `fabbrik76`, open the **Trusted Publishing** policy described above, and
-   confirm it covers new package IDs as well as the existing five. If the policy page names the packages it applies to,
-   add `AgentExperience.Storage.InMemory`.
+   confirm it covers new package IDs as well as the existing six. If the policy page names the packages it applies to,
+   add `AgentExperience.Storage.Sqlite`.
 2. Tag and approve as usual (step 10). Watch the `publish` job's push output: every package, the new one included,
    must say it was pushed or skipped as a duplicate.
 3. **If nuget.org refuses the new ID** (a 403 on that package alone, while the others are pushed), the tag and the
    other packages stand. Publish the new package once by hand, with a nuget.org API key scoped to
-   `AgentExperience.Storage.InMemory` that `fabbrik76` creates for this one push, from the packages the `verify` job
+   `AgentExperience.Storage.Sqlite` that `fabbrik76` creates for this one push, from the packages the `verify` job
    uploaded (download the `packages` artifact from the run):
 
    ```bash
-   dotnet nuget push "AgentExperience.Storage.InMemory.*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
+   dotnet nuget push "AgentExperience.Storage.Sqlite.*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
    ```
 
    Revoke that key on nuget.org straight after. From then on `fabbrik76` owns the ID, the Trusted Publishing policy
-   covers it, and every later release publishes it through OIDC like the other five; re-running the failed `publish`
+   covers it, and every later release publishes it through OIDC like the other six; re-running the failed `publish`
    job now skips it as a duplicate and creates the GitHub release.
 
 Nothing in the repository publishes anything outside `release.yml`; this is the only other push, and it is a
@@ -496,7 +498,7 @@ maintainer's, once per new ID.
 #### Fallback: publishing by hand
 
 If the workflow cannot publish (GitHub Actions or the Trusted Publishing exchange unavailable), a maintainer with a
-nuget.org API key scoped to these six packages can publish from the verified working copy instead, in the same
+nuget.org API key scoped to these seven packages can publish from the verified working copy instead, in the same
 shell that recorded `$verified`. Packages go first and the tag second, so a failed push never leaves a tag pointing
 at a release that does not exist; `--skip-duplicate` makes a retried push safe after a partial failure. The tag
 push still starts `release.yml`: approving its `publish` job then skips every package already pushed and creates
@@ -566,7 +568,7 @@ that version.
 
 ## After the release: move the package-validation baseline
 
-Not a release check: a follow-up pull request, once the release is out. When nuget.org lists all six packages at the
+Not a release check: a follow-up pull request, once the release is out. When nuget.org lists all seven packages at the
 new version (it can take an hour after the push; until then a restore of that version fails with `NU1102`), set
 `AgentExperiencePackageValidationBaseline` in `Directory.Build.props` to it, delete every
 `src/*/CompatibilitySuppressions.xml` (they declared breaks against the previous release, which the new baseline already

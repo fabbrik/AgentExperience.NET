@@ -687,6 +687,34 @@ Validation messages never contain record payload content, and the store does not
 A create whose acknowledgement was lost (cancelled or timed out after PostgreSQL committed it) returns `Conflict`
 when retried. After a `Conflict`, call `GetAsync` in your own scope to check whether the stored record is yours.
 
+## SQLite: one local file
+
+For a single agent on one machine (a coding agent, a CLI, an MCP server), `AgentExperience.Storage.Sqlite` keeps
+everything in one database file, with no server and no roles:
+
+```csharp
+await ExperienceSqliteSchema.MigrateAsync("experience.db");   // journaled and idempotent: run it on every start
+
+builder.Services
+    .AddAgentExperience(options => { /* ... */ })
+    .UseSqlite("experience.db");
+```
+
+Or opt in to migrating on first use: `.UseSqlite("experience.db", o => o.MigrateSchemaOnFirstUse = true)`. Nothing
+migrates on its own otherwise. The file is put in write-ahead-log mode, connections run with foreign keys on and a busy
+timeout, and every write is one `BEGIN IMMEDIATE` transaction, so several processes may share the file: two commits
+from the same revision still have exactly one winner, and a writer waits for another rather than failing.
+
+It registers the record store, the full-text candidate source (FTS5, Porter-stemmed: closer to PostgreSQL's matching
+than to the in-memory store's), the failure-signature source and the reuse-feedback ledger, each passing the same
+conformance suite as PostgreSQL. `SqliteExperienceRecordStore.DeleteAsync` erases a record to a tombstone, removing its
+search text and every row that named it; SQLite may keep erased bytes in free pages until `VACUUM`.
+
+**What it does not do.** No sharing grants or access log, no encryption or crypto-shredding, no row-level security or
+database roles (anything that can open the file can read and write all of it, so protect the file as you would the
+agent's other secrets), no vectors (retrieval is text and failure signature only) and no retention sweeps. For a team,
+a shared service or any of those, use PostgreSQL.
+
 ## Deploying with two roles
 
 This is the supported deployment, and the one every guarantee in these guides about append-only history and erasure

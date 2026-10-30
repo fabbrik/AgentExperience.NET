@@ -444,6 +444,28 @@ the six Go modules at one version.
 - **Experiment.** `experiments/AgentExperience.LiveReuse/recipe-amendment.md` proposes (not registered, not run) a
   recipe arm for the real-task experiment.
 
+### A SQLite store (story 28.7)
+
+- **New package `AgentExperience.Storage.Sqlite`**: durable storage in one local SQLite file, for a single agent on one
+  machine (a coding agent, a CLI, an MCP server). `.UseSqlite(path)` on the one-call builder (or
+  `AddAgentExperienceSqliteStorage(path)`) registers `SqliteExperienceRecordStore`, `SqliteExperienceCandidateSource`
+  (FTS5 full-text search), `SqliteExperienceSignatureSource` and a reuse-feedback ledger over the file. Each passes the
+  same store conformance suite as the PostgreSQL and in-memory stores, with every request validated by the PostgreSQL
+  store's own rules, and the record payload is the PostgreSQL store's version-1 JSON.
+- **Schema**: `ExperienceSqliteSchema.MigrateAsync(path)` applies journaled, versioned scripts, each in one transaction
+  with its journal row (safe to repeat and to run from two processes at once), and puts the file in write-ahead-log
+  mode. Nothing migrates on its own unless `SqliteStorageOptions.MigrateSchemaOnFirstUse` is set. Connections run with
+  foreign keys on and a busy timeout, and every write is one `BEGIN IMMEDIATE` transaction, so two connections or
+  processes committing from one revision have exactly one winner.
+- **Search** reads a query's terms exactly as the in-memory source does, with the same any-term `MinimumMatchedTerms`
+  rule and coverage ranking, through an FTS5 index stemmed with Porter, so "invoices" matches "invoice" as it does in
+  PostgreSQL. The retrieval benchmark gains a SQLite column (`GoldenSqliteReport.txt`).
+- **Erasure**: `SqliteExperienceRecordStore.DeleteAsync` leaves a payload-free tombstone and removes the record's search
+  text, signatures, events, evidence, injection summary and holdout rows in one transaction.
+- **Not provided**: sharing grants and the access log, encryption and crypto-shredding, row-level security and database
+  roles, vectors, retention sweeps. Internally, the PostgreSQL payload's attempt, outcome, environment and provenance
+  mappings are each one method now, shared with the SQLite store; nothing stored changes.
+
 ### The holdout in Python and Go: contract 1.8 (story 25.6)
 
 - **Contract 1.8** ([what it adds](contract/README-1.8.md)) brings the injection holdout into the language-neutral

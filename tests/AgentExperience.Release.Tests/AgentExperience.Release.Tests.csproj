@@ -36,6 +36,7 @@
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.Postgres.Vectors\AgentExperience.Storage.Postgres.Vectors.csproj" />
     <ProjectReference Include="..\..\src\AgentExperience.Storage.InMemory\AgentExperience.Storage.InMemory.csproj" />
+    <ProjectReference Include="..\..\src\AgentExperience.Storage.Sqlite\AgentExperience.Storage.Sqlite.csproj" />
   </ItemGroup>
 
 </Project>
