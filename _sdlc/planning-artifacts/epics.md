@@ -2360,7 +2360,12 @@ failure when its fix lands instead of replaying only failures whose fix is alrea
 
 ## Epic 27: Python and Go Reach Parity with .NET
 
-**Added:** 2026-10-29 · **Status:** in progress
+**Added:** 2026-10-29 · **Status:** stopped after 27.6c (2026-10-30)
+
+**Stopped 2026-10-30.** After the critique that opened Epic 28, the port work stops once 27.6c (reuse feedback) merges.
+Stories 27.6d, 27.6e and 27.7-27.10 (reindex, session tracking, signing, grants, encryption, schema ownership in the
+ports) are deferred, not dropped: they harden a signal no real workload has yet shown helps. They return when Epic 28's
+holdout shows benefit on real work, or when a port user asks for one.
 
 The Python and Go ports pass contract 1.8: they capture, finalize, reflect, search (text and vectors), inject, record
 exposure and the holdout, and read the lessons view. Everything after that is .NET-only today: measuring and acting on
@@ -2410,3 +2415,93 @@ purge and retention sweeps. Go needs at-rest encryption from scratch. Likely spl
 ### Story 27.10: Ports Own the Schema (optional)
 Freeze the migrations, privileges and row-level security as contract SQL, add port migrators, and give the upgrade
 tests a port leg, so a Python- or Go-only deployment needs no .NET process.
+
+## Epic 28: Lessons an Agent Can Act On, Wherever It Runs
+
+**Added:** 2026-10-30 · **Status:** in progress
+
+What no other agent memory has is here already: a lesson is stored only on the host's own verified evidence, and a
+randomized holdout measures whether lessons help. What the experiments show is that this is not yet enough:
+
+- the synthetic reuse experiment shows benefit when the working step reaches the block verbatim;
+- the transfer and real-task experiments show no overall benefit, but on the real task the lesson's content beat a
+  placebo block (p = 0.035), and mismatched lessons did worse than no memory at all;
+- the CI-triage dogfood (26.1) has too few runs for a verdict.
+
+So the content helps when it is specific and reaches the right run; the default lesson is too vague to act on, the
+match is keyed on the request text instead of the situation the agent is in, a wrong lesson costs more than no lesson,
+and only Microsoft Agent Framework agents can use the library at all. This epic fixes those, in that order, and judges
+every change with the holdout rather than with lab numbers.
+
+Design rules: everything new is opt-in or measured before it becomes a default; host consent decides what a lesson may
+quote; the block stays labelled reference material; a new surface (MCP, CLI, hooks) uses the same verification,
+sanitization and scope rules as the MAF adapter, never weaker ones; .NET first, ports only when asked.
+
+### Story 28.1: Fixes From the Critique
+Make `SingleCallParityTests` deterministic (a retrieval timeout it cannot hit, per the timing-test rule); scope the
+lifecycle's `lock-supersession-rows` statement to the caller's tenant and scope in .NET, and publish the scoped statement
+as contract 1.18 (add-only: a new statement the ports switch to); pin near-tie ranking with a contract fixture (two
+records whose scores differ in the last bits) so a cross-runtime `Math.Pow` difference fails a test instead of
+reordering silently.
+
+### Story 28.2: The Failure Signature
+Capture derives, per failed tool call, a **failure signature**: tool name, error class, and a normalized fingerprint of
+the error excerpt (numbers, paths, hex IDs, GUIDs and quoted literals replaced by placeholders, then hashed). A record
+stores the signatures of its failed calls and of the call that worked after them. Both stores index them (in memory, and
+a PostgreSQL migration with grants and row-level security), and retrieval gains a signature channel beside text and
+vectors: an exact signature match is a strong, explainable reason (`Matched: failure signature run_tests/exit 2`). The
+retrieval benchmark gets signature queries, and the golden reports show the channel's recall and false positives.
+
+### Story 28.3: Recall at the Moment of Failure
+Opt-in `IChatClient` middleware (`UseAgentExperienceRecall`) that runs between model calls inside one agent run: when
+the latest tool result failed (thrown, or classified by `ClassifyToolResult`) with a signature that a reusable lesson
+matches, it adds one short labelled hint before the next model call, naming what worked after that same failure. At
+most one hint per signature per run, within a byte budget, through the same eligibility, scope and authorship rules as
+the block, recorded as exposure, and under the same holdout (a held-out run gets no hint, and both arms are recorded),
+so the estimate says whether the hint helps.
+
+### Story 28.4: The Recipe
+With host consent, a lesson can carry the step that worked, not only its tool name: `RecipeArguments` (per tool, the
+argument keys whose values may be shown, sanitized at capture as today) and `RecipeResultExcerpt` (a host callback that
+returns a short excerpt of a successful call's result it vouches for, sanitized and bounded). The block renders a
+`Recipe:` line for the working attempt. Provenance claims v4 sign the recipe, and a record whose recipe no v4 signature
+confirms renders without it when signing is on. Off by default; the real-task experiment gets an amendment comparing
+recipe against plain lessons before any default changes.
+
+### Story 28.5: Precision Before Recall
+A wrong lesson costs more than none, so the block must earn its place. A minimum match strength for injection
+(`MinimumInjectionMatch`: a signature match, or text coverage plus semantic similarity above a floor), records below it
+are not injected even when retrieved, and the lessons view says why. The floor is chosen by a rule fixed before the run,
+on the retrieval benchmark's distractor queries, and its effect is read from the holdout.
+
+### Story 28.6: One Living Lesson per Situation
+Deterministic consolidation: validated records in one scope that share a failure signature and the same working tool
+sequence are merged into one consolidated lesson (the working approach, how many independent runs confirmed it, the
+environments it held in, what failed before it), which supersedes its sources through the existing lifecycle, keeps
+their provenance and exposure links, and gains confidence from each source run once. Run on demand
+(`ConsolidateAsync`), never on the hot path; a contradiction of the consolidated lesson contests it as today.
+
+### Story 28.7: A SQLite Store and Durable Capture
+`AgentExperience.Storage.Sqlite`: records, lifecycle, text search (FTS5), signatures and the holdout in one local file,
+passing the storage conformance suite, for a single agent on one machine. With it, captured runs persist: a run can be
+finalized from another process, days later, when its verdict arrives (a CI result, a merged pull request). This closes
+story 26.2 for SQLite and adds the same durable capture to PostgreSQL.
+
+### Story 28.8: Any Agent, Through MCP and a CLI
+`AgentExperience.Mcp`, a .NET tool exposing the loop as Model Context Protocol tools over the SQLite or PostgreSQL store:
+`recall` (the block, or a hint for a failure signature), `record_attempt`, `finalize` (with a host-configured verifier
+command, never the model's word) and `lessons`. An `aexp` CLI with the same verbs for scripts and hooks. Identity and
+scope come from the server's configuration, never from tool arguments; the verifier is a command the operator
+configures, and the model can only ask for it to run.
+
+### Story 28.9: A Claude Code Recipe
+A documented hooks recipe that turns a coding agent's work into verified lessons with no code: `PostToolUse` records
+each tool call through `aexp`, a `Stop` hook finalizes on the project's test command exit code, `SessionStart` and a
+`PostToolUse` failure path inject the block and the failure hint, and measured lessons are synced into a managed
+section of `CLAUDE.md` or `AGENTS.md` (a sink that rewrites only its own fenced section of an existing file).
+
+### Story 28.10: Dogfood on This Repository
+Run the recipe on this repository's own development: every pull request's CI run is the verifier, the holdout runs at
+0.5, and a results page reports the estimate after enough runs per arm, with the same pre-registered reading rules as
+the live experiments. The README then says what the library has shown on real work, whichever way it comes out, and
+leads with what it is for in one paragraph and one example.
