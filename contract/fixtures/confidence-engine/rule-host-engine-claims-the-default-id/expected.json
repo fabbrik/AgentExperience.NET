@@ -1,0 +1,8 @@
+{
+  "recorded": null,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "confidenceEngine",
+    "message": "A host confidence engine may not use the default engine's RuleId 'reuse-heuristic': its scores would be recorded as if the heuristic had produced them."
+  }
+}

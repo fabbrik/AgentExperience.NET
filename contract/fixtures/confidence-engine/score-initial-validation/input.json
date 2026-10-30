@@ -1,0 +1,6 @@
+{
+  "description": "One supporting validation (the one a record is finalized with): 2/3.",
+  "operation": "score",
+  "supportingValidations": 1,
+  "contradictions": 0
+}

@@ -1,0 +1,10 @@
+{
+  "description": "The lifetime is checked before the key.",
+  "operation": "options",
+  "options": {
+    "verification": "Verified",
+    "assessmentTokenKey": "00",
+    "assessmentTokenLifetimeTicks": 0,
+    "nowUnixMs": 1772442000000
+  }
+}

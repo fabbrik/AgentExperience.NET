@@ -1,0 +1,6 @@
+{
+  "description": "Contradictions only: 1/(2 + F), towards 0 without reaching it.",
+  "operation": "score",
+  "supportingValidations": 0,
+  "contradictions": 1000
+}

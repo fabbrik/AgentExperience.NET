@@ -1,0 +1,11 @@
+{
+  "assessmentId": null,
+  "token": null,
+  "issuedAtUnixMs": null,
+  "expiresAtUnixMs": null,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "runId",
+    "message": "The run must not be an empty GUID."
+  }
+}

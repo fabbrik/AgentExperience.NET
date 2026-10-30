@@ -1,0 +1,6 @@
+{
+  "description": "Both counters at int.MaxValue: computed in double, no overflow.",
+  "operation": "score",
+  "supportingValidations": 2147483647,
+  "contradictions": 2147483647
+}

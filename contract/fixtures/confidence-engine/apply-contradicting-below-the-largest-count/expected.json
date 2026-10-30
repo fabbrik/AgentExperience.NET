@@ -1,0 +1,33 @@
+{
+  "acceptsEvidence": true,
+  "statusAfter": "Contested",
+  "update": {
+    "evidenceId": "000000f6-0000-4000-8000-000000000300",
+    "kind": "Supporting",
+    "source": "Machine",
+    "runId": "000000f6-0000-4000-8000-000000000100",
+    "verificationRoundId": "000000f6-0000-4000-8000-000000000200",
+    "reviewerIdentity": null,
+    "ruleVersion": "1.0.0",
+    "priorReuseConfidence": 0.01,
+    "newReuseConfidence": 1.3969838599716539E-09,
+    "priorSupportingValidations": 1,
+    "newSupportingValidations": 2,
+    "priorContradictions": 2147483647,
+    "newContradictions": 2147483647,
+    "detail": null,
+    "counted": true
+  },
+  "recordedOnly": {
+    "newReuseConfidence": 0.01,
+    "newSupportingValidations": 1,
+    "newContradictions": 2147483647,
+    "counted": false
+  },
+  "independenceKey": {
+    "source": "Machine",
+    "value": "machine:000000f6-0000-4000-8000-000000000100:000000f6-0000-4000-8000-000000000200",
+    "refusal": null
+  },
+  "refusal": null
+}

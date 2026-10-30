@@ -1,0 +1,11 @@
+{
+  "assessmentId": null,
+  "token": null,
+  "issuedAtUnixMs": null,
+  "expiresAtUnixMs": null,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "reviewer",
+    "message": "The reviewer's PrincipalId must be non-blank and carry no leading or trailing whitespace: it is the reviewer the evidence is counted under."
+  }
+}

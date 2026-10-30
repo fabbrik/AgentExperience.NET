@@ -1,0 +1,9 @@
+{
+  "description": "Letters, digits, '.', '_' and '-' are allowed, 64 characters at most.",
+  "operation": "rule",
+  "engine": {
+    "ruleId": "A.b_c-9",
+    "ruleVersion": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
+    "score": "bayes"
+  }
+}

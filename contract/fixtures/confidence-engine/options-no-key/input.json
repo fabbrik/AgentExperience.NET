@@ -1,0 +1,10 @@
+{
+  "description": "No key: an issuer cannot be built.",
+  "operation": "options",
+  "options": {
+    "verification": "Verified",
+    "assessmentTokenKey": null,
+    "assessmentTokenLifetimeTicks": 864000000000,
+    "nowUnixMs": 1772442000000
+  }
+}

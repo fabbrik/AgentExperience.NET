@@ -1,0 +1,8 @@
+{
+  "accepted": false,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "options",
+    "message": "An assessment token issuer needs ExperienceIndependenceOptions.AssessmentTokenKey."
+  }
+}

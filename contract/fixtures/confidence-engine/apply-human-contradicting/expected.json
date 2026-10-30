@@ -1,0 +1,33 @@
+{
+  "acceptsEvidence": true,
+  "statusAfter": "Contested",
+  "update": {
+    "evidenceId": "000000f6-0000-4000-8000-000000000300",
+    "kind": "Contradicting",
+    "source": "Human",
+    "runId": "000000f6-0000-4000-8000-000000000100",
+    "verificationRoundId": null,
+    "reviewerIdentity": "reviewer-1",
+    "ruleVersion": "1.0.0",
+    "priorReuseConfidence": 0.6666666666666666,
+    "newReuseConfidence": 0.5,
+    "priorSupportingValidations": 1,
+    "newSupportingValidations": 1,
+    "priorContradictions": 0,
+    "newContradictions": 1,
+    "detail": null,
+    "counted": true
+  },
+  "recordedOnly": {
+    "newReuseConfidence": 0.6666666666666666,
+    "newSupportingValidations": 1,
+    "newContradictions": 0,
+    "counted": false
+  },
+  "independenceKey": {
+    "source": "Human",
+    "value": "human:reviewer-1:000000f6-0000-4000-8000-000000000100",
+    "refusal": null
+  },
+  "refusal": null
+}

@@ -1,0 +1,8 @@
+{
+  "recorded": null,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "confidenceEngine",
+    "message": "The confidence engine's RuleVersion must be 1 to 64 characters from [A-Za-z0-9._-]."
+  }
+}

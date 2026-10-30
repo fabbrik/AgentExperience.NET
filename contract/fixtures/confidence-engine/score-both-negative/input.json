@@ -1,0 +1,6 @@
+{
+  "description": "Both negative: the supporting count is checked first.",
+  "operation": "score",
+  "supportingValidations": -1,
+  "contradictions": -1
+}

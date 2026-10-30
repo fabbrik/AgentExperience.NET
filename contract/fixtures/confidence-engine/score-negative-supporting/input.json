@@ -1,0 +1,6 @@
+{
+  "description": "A negative supporting count is refused, naming supportingValidations.",
+  "operation": "score",
+  "supportingValidations": -1,
+  "contradictions": 0
+}

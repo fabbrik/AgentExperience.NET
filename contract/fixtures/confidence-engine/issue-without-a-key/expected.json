@@ -1,0 +1,11 @@
+{
+  "assessmentId": null,
+  "token": null,
+  "issuedAtUnixMs": null,
+  "expiresAtUnixMs": null,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "options",
+    "message": "An assessment token issuer needs ExperienceIndependenceOptions.AssessmentTokenKey."
+  }
+}
