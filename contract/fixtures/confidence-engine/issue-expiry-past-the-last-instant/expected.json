@@ -1,0 +1,11 @@
+{
+  "assessmentId": null,
+  "token": null,
+  "issuedAtUnixMs": null,
+  "expiresAtUnixMs": null,
+  "refusal": {
+    "exception": "ArgumentOutOfRangeException",
+    "parameter": "milliseconds",
+    "message": null
+  }
+}

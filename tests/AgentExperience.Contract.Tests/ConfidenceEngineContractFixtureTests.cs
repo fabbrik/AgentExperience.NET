@@ -87,7 +87,7 @@ public sealed partial class ContractFixtureTests
             results.Where(entry => entry.Value.Input["operation"]!.GetValue<string>() == "options")
                 .Select(entry => Refused(entry.Value.Expected) ?? "accepted").Distinct().Order(StringComparer.Ordinal));
         Assert.Equal(
-            ["ArgumentException:experienceIds", "ArgumentException:kind", "ArgumentException:options", "ArgumentException:reviewer", "ArgumentException:runId", "ArgumentException:scope", "issued"],
+            ["ArgumentException:experienceIds", "ArgumentException:kind", "ArgumentException:options", "ArgumentException:reviewer", "ArgumentException:runId", "ArgumentException:scope", "ArgumentOutOfRangeException:milliseconds", "issued"],
             results.Where(entry => entry.Value.Input["operation"]!.GetValue<string>() == "issue")
                 .Select(entry => Refused(entry.Value.Expected) ?? "issued").Distinct().Order(StringComparer.Ordinal));
         Assert.Equal(

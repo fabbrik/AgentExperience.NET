@@ -189,6 +189,8 @@ internal static class ConfidenceEngineContract
             ("apply-repeated-evidence", "Repeated independent support far along: S 41 -> 42, still below 1.", Record(ExperienceStatus.Reinforced, 41d / 42d, 40, 0), machine, null),
             ("apply-conflicting-evidence", "Support against a record with as many contradictions: the counters, not the stored score, decide.", Record(ExperienceStatus.Contested, 0.5, 5, 5), machine, null),
             ("apply-stored-score-ignored", "The stored score is only the prior: the new score is computed from the counters alone.", Record(ExperienceStatus.Validated, 0.01, 1, 0), machine, null),
+            ("apply-stored-score-above-one", "A stored score above 1 is only the prior: carried as it is, and the new score is computed.", Record(ExperienceStatus.Validated, 1.5, 1, 0), machine, null),
+            ("apply-stored-score-below-zero", "A stored score below 0 is only the prior: carried as it is, and the new score is computed.", Record(ExperienceStatus.Validated, -0.5, 1, 0), machine, null),
             ("apply-zero-counters", "A record with no evidence at all (written by hand): S 0 -> 1, 1/2 -> 2/3.", Record(ExperienceStatus.Validated, 0.5, 0, 0), machine, null),
             ("apply-supporting-at-the-largest-count", "A supporting count at int.MaxValue cannot take one more: refused, naming record.", Record(ExperienceStatus.Validated, 0.99, int.MaxValue, 0), machine, null),
             ("apply-contradicting-at-the-largest-count", "A contradiction count at int.MaxValue cannot take one more: refused, naming record.", Record(ExperienceStatus.Contested, 0.01, 1, int.MaxValue), machineAgainst, null),
@@ -211,6 +213,11 @@ internal static class ConfidenceEngineContract
             ("apply-host-engine-just-above-one", "The next double above 1 is refused.", Record(ExperienceStatus.Validated, 2d / 3d, 1, 0), machine, Engine("high", "1", Math.BitIncrement(1d))),
             ("apply-host-engine-just-below-zero", "The smallest negative double is refused, written in exponent form.", Record(ExperienceStatus.Validated, 2d / 3d, 1, 0), machine, Engine("low", "1", -double.Epsilon)),
             ("apply-host-engine-large", "A large value is refused, written in exponent form.", Record(ExperienceStatus.Validated, 2d / 3d, 1, 0), machine, Engine("high", "1", 1e17)),
+            ("apply-host-engine-large-fixed", "1e16 is refused, written without an exponent: .NET's \"R\" switches to exponent form at 1e17.", Record(ExperienceStatus.Validated, 2d / 3d, 1, 0), machine, Engine("high", "1", 1e16)),
+            ("apply-host-engine-seventeen-digits-fixed", "A 17-digit value below 1e17 is written in full.", Record(ExperienceStatus.Validated, 2d / 3d, 1, 0), machine, Engine("high", "1", 12345678901234568d)),
+            ("apply-host-engine-seventeen-digits-exponent", "A 17-digit value from 1e17 is written in exponent form.", Record(ExperienceStatus.Validated, 2d / 3d, 1, 0), machine, Engine("high", "1", 1.2345678901234568e17)),
+            ("apply-host-engine-small-fixed", "-0.0001 is refused, written without an exponent.", Record(ExperienceStatus.Validated, 2d / 3d, 1, 0), machine, Engine("low", "1", -0.0001)),
+            ("apply-host-engine-small-exponent", "-1e-5 is refused, written in exponent form with a two-digit exponent.", Record(ExperienceStatus.Validated, 2d / 3d, 1, 0), machine, Engine("low", "1", -1e-5)),
             ("apply-host-engine-nan", "NaN is refused.", Record(ExperienceStatus.Validated, 2d / 3d, 1, 0), machine, Engine("nan", "1", "NaN")),
             ("apply-host-engine-infinity", "Positive infinity is refused.", Record(ExperienceStatus.Validated, 2d / 3d, 1, 0), machine, Engine("inf", "1", "Infinity")),
             ("apply-host-engine-negative-infinity", "Negative infinity is refused.", Record(ExperienceStatus.Validated, 2d / 3d, 1, 0), machine, Engine("inf", "1", "-Infinity")),
@@ -425,6 +432,7 @@ internal static class ConfidenceEngineContract
             ("issue-scope-before-run", "Scope and run both wrong: the scope is checked first.", Options(), Reviewer("reviewer-1", "other-tenant"), Scope, Guid.Empty, "Supporting", [Record1]),
             ("issue-run-before-kind", "Run and kind both wrong: the run is checked first.", Options(), reviewer, Scope, Guid.Empty, "Sideways", [Record1]),
             ("issue-kind-before-records", "Kind and records both wrong: the kind is checked first.", Options(), reviewer, Scope, Run, "Sideways", []),
+            ("issue-expiry-past-the-last-instant", "A clock a few seconds before the last instant .NET can represent: the expiry cannot be represented, refused (the runtime's ArgumentOutOfRangeException).", Options(nowUnixMs: DateTimeOffset.MaxValue.ToUnixTimeMilliseconds() - 1000), reviewer, Scope, Run, "Supporting", [Record1]),
             ("issue-without-a-key", "With no key, no issuer can be built at all.", Options(key: null), reviewer, Scope, Run, "Supporting", [Record1]),
         };
 
@@ -477,7 +485,7 @@ internal static class ConfidenceEngineContract
                 ["token"] = null,
                 ["issuedAtUnixMs"] = null,
                 ["expiresAtUnixMs"] = null,
-                ["refusal"] = Refusal(ex),
+                ["refusal"] = Refusal(ex, libraryMessage: ex is not ArgumentOutOfRangeException),
             };
         }
     }
@@ -495,6 +503,7 @@ internal static class ConfidenceEngineContract
         var sixtyFour = Mint(bound, [.. Enumerable.Range(1, ExperienceReuseFeedback.MaxExposedRecords).Select(n => Fixed.Id(F, 0x500 + n))]);
         var full = new Binding(FullScope, Run, "Rêviewer:Ω", ConfidenceEvidenceKind.Contradicting);
         var lone = new Binding(Scope, Run, "rev\uD800iewer", ConfidenceEvidenceKind.Supporting);
+        var pair = new Binding(Scope with { TeamId = "t\uDC00\uDC00" }, Run, "rev\uD800\uD800iewer", ConfidenceEvidenceKind.Supporting);
         var encoded = genuine[AssessmentTokenCodec.Prefix.Length..];
 
         var cases = new List<(string Name, string Description, string? Token, Binding Binding, long Now, string Key)>
@@ -504,6 +513,11 @@ internal static class ConfidenceEngineContract
             ("verify-genuine-most-records", "A genuine token covering 64 records.", sixtyFour, bound, Now, Key),
             ("verify-genuine-every-scope-field", "A genuine contradicting token over a scope with every field set and a non-ASCII reviewer.", Mint(full, one), full, Now, Key),
             ("verify-genuine-lone-surrogate-reviewer", "Minted for a reviewer holding a lone surrogate, which .NET signs as U+FFFD (and JSON carries as U+FFFD): the reviewer spelled with U+FFFD verifies.", Mint(lone, one), lone with { Reviewer = "rev\uFFFDiewer" }, Now, Key),
+            ("verify-genuine-adjacent-lone-surrogates", "A reviewer and a team each holding two adjacent lone surrogates (given as UTF-16 code units in utf16): each surrogate is its own U+FFFD.", Mint(pair, one), pair, Now, Key),
+            ("verify-adjacent-lone-surrogates-are-two-characters", "So the same reviewer with one U+FFFD in place of the two surrogates is another reviewer.", Mint(pair, one), pair with { Reviewer = "rev\uFFFDiewer" }, Now, Key),
+            ("verify-trailing-line-feed", "A trailing line feed is outside the alphabet.", genuine + "\n", bound, Now, Key),
+            ("verify-trailing-carriage-return", "A trailing carriage return is outside the alphabet.", genuine + "\r", bound, Now, Key),
+            ("verify-undefined-kind", "A genuine token presented with a kind that is not defined.", genuine, bound with { Kind = (ConfidenceEvidenceKind)2 }, Now, Key),
             ("verify-missing", "No token: AssessmentTokenMissing.", null, bound, Now, Key),
             ("verify-empty", "An empty token: AssessmentTokenMissing.", "", bound, Now, Key),
             ("verify-prefix-only", "The prefix and nothing else: too short to be a token.", AssessmentTokenCodec.Prefix, bound, Now, Key),
@@ -550,7 +564,7 @@ internal static class ConfidenceEngineContract
 
         foreach (var (name, description, token, binding, now, key) in cases)
         {
-            yield return (name, new JsonObject
+            var input = new JsonObject
             {
                 ["description"] = description,
                 ["operation"] = "verify",
@@ -559,19 +573,40 @@ internal static class ConfidenceEngineContract
                 ["scope"] = ScopeJson(binding.Scope),
                 ["runId"] = D(binding.Run),
                 ["reviewer"] = binding.Reviewer,
-                ["kind"] = binding.Kind.ToString(),
-            });
+                ["kind"] = Enum.IsDefined(binding.Kind) ? binding.Kind.ToString() : "Sideways",
+            };
+
+            // JSON cannot carry a lone surrogate (it is written as U+FFFD), so a binding holding one also gives the
+            // reviewer and team as UTF-16 code units, which a port reads instead.
+            if (binding.Reviewer.Any(char.IsSurrogate) || (binding.Scope.TeamId?.Any(char.IsSurrogate) ?? false))
+            {
+                input["utf16"] = new JsonObject
+                {
+                    ["reviewer"] = Units(binding.Reviewer),
+                    ["teamId"] = binding.Scope.TeamId is { } team ? Units(team) : null,
+                };
+            }
+
+            yield return (name, input);
         }
     }
 
     private static JsonObject Verify(JsonObject input)
     {
         var codec = AssessmentTokenCodec.Create(ReadOptions(input["options"]!.AsObject()))!;
+        var scope = ReadScope(input["scope"]!.AsObject());
+        var reviewer = input["reviewer"]!.GetValue<string>();
+        if (input["utf16"] is JsonObject utf16)
+        {
+            reviewer = FromUnits(utf16["reviewer"]!);
+            scope = scope with { TeamId = utf16["teamId"] is { } team ? FromUnits(team) : null };
+        }
+
         var (refusal, assessmentId, covered) = codec.Verify(
             input["token"]?.GetValue<string>(),
-            ReadScope(input["scope"]!.AsObject()),
+            scope,
             Guid.Parse(input["runId"]!.GetValue<string>()),
-            input["reviewer"]!.GetValue<string>(),
+            reviewer,
             ReadKind(input["kind"]!.GetValue<string>()));
         return new JsonObject
         {
@@ -743,6 +778,10 @@ internal static class ConfidenceEngineContract
         scope["teamId"]?.GetValue<string>(),
         scope["agentId"]?.GetValue<string>(),
         scope["userId"]?.GetValue<string>());
+
+    private static JsonArray Units(string text) => new([.. text.Select(unit => (JsonNode)(int)unit)]);
+
+    private static string FromUnits(JsonNode units) => new([.. units.AsArray().Select(unit => (char)unit!.GetValue<int>())]);
 
     private static int Int(JsonNode? node) => checked((int)node!.GetValue<long>());
 
