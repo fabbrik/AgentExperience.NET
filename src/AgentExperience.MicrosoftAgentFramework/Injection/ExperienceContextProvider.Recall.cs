@@ -12,6 +12,12 @@ public sealed partial class ExperienceContextProvider
     /// <summary>How many records one signature search may return, before resolution, session and eligibility filters.</summary>
     internal const int RecallCandidateLimit = 20;
 
+    /// <summary>
+    /// How many lookups one run may start, as a multiple of <see cref="ExperienceRecallOptions.MaxHintsPerRun"/>: lookups that
+    /// time out or fail release their signature, so this caps how hard a run can lean on a slow or failing store.
+    /// </summary>
+    internal const int LookupCapMultiplier = 4;
+
     /// <summary>The fixed failure reason when the failed call's context carries no chat options to put the hint in.</summary>
     internal const string NoInstructionsReason =
         "The failed call's function invocation context carries no chat options, so a hint could not reach the next model call.";
@@ -105,7 +111,21 @@ public sealed partial class ExperienceContextProvider
         try
         {
             InjectionDiagnostics.Tag(trace, InjectionDiagnostics.CorrelationIdAttribute, run.Request.CorrelationId);
-            var result = await RecallCoreAsync(run, capture, options, toolName, error, recall, lookup, cancellationToken).ConfigureAwait(false);
+            ExperienceRecallResult result;
+            try
+            {
+                result = await RecallCoreAsync(run, capture, options, toolName, error, recall, lookup, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
+            {
+                // Anything else that escaped the lookup is a failed recall, reported as one: no hint, the call's own outcome stands.
+                result = new ExperienceRecallResult(run.RunId, SignatureOf(toolName, error), ExperienceRecallOutcome.Failed, NoIds)
+                {
+                    CorrelationId = run.Request.CorrelationId,
+                    Failure = new InjectionFailure($"Recall threw {ex.GetType().FullName}, so no hint was given.", ex),
+                };
+            }
+
             InjectionDiagnostics.Tag(trace, InjectionDiagnostics.SignatureMatchAttribute, result.Match?.ToString());
             InjectionDiagnostics.Tag(trace, InjectionDiagnostics.RecordCountAttribute, result.ExperienceIds.Count + result.WithheldExperienceIds.Count);
             try
@@ -123,7 +143,8 @@ public sealed partial class ExperienceContextProvider
         }
         catch (Exception ex)
         {
-            // Only the caller's cancellation reaches here; it ends this lookup, and the call's own outcome stands.
+            // The caller's cancellation (or a throwing OnRecall reporting path, which is caught above): the lookup ends, and the
+            // call's own outcome stands. Every other exception was reported above as a Failed recall.
             InjectionDiagnostics.Faulted(trace, ex, cancellationToken);
         }
         finally
@@ -143,20 +164,64 @@ public sealed partial class ExperienceContextProvider
         ExperienceSignatureRetrievalService lookup,
         CancellationToken cancellationToken)
     {
-        var request = run.Request;
-        var signature = ExperienceFailureSignature.From(toolName, error);
-        ExperienceRecallResult Result(ExperienceRecallOutcome outcome) =>
-            new(run.RunId, signature, outcome, NoIds) { CorrelationId = request.CorrelationId };
-
+        var signature = SignatureOf(toolName, error);
         if (signature is null)
         {
-            return Result(ExperienceRecallOutcome.NoMatch);
+            return new ExperienceRecallResult(run.RunId, null, ExperienceRecallOutcome.NoMatch, NoIds) { CorrelationId = run.Request.CorrelationId };
         }
 
-        if (!run.TryClaim(signature.Key, recall.MaxHintsPerRun))
+        if (!run.TryClaim(signature.Key, recall.MaxHintsPerRun, recall.MaxHintsPerRun * LookupCapMultiplier))
         {
-            return Result(ExperienceRecallOutcome.Bounded);
+            return new ExperienceRecallResult(run.RunId, signature, ExperienceRecallOutcome.Bounded, NoIds) { CorrelationId = run.Request.CorrelationId };
         }
+
+        ExperienceRecallResult result;
+        try
+        {
+            result = await LookUpAsync(run, capture, options, toolName, error, signature, recall, lookup, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            run.Release(signature.Key);
+            throw;
+        }
+
+        // A lookup that timed out or failed says nothing about the failure: the signature may be looked up again.
+        if (result.Outcome is ExperienceRecallOutcome.TimedOut or ExperienceRecallOutcome.Failed)
+        {
+            run.Release(signature.Key);
+        }
+
+        return result;
+    }
+
+    /// <summary>The failure's signature, or <see langword="null"/> when it has none (or deriving it throws).</summary>
+    private static ExperienceFailureSignature? SignatureOf(string toolName, string error)
+    {
+        try
+        {
+            return ExperienceFailureSignature.From(toolName, error);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private async Task<ExperienceRecallResult> LookUpAsync(
+        RecallRun run,
+        CaptureScope capture,
+        ChatOptions? options,
+        string toolName,
+        string error,
+        ExperienceFailureSignature signature,
+        ExperienceRecallOptions recall,
+        ExperienceSignatureRetrievalService lookup,
+        CancellationToken cancellationToken)
+    {
+        var request = run.Request;
+        ExperienceRecallResult Result(ExperienceRecallOutcome outcome) =>
+            new(run.RunId, signature, outcome, NoIds) { CorrelationId = request.CorrelationId };
 
         if (options is null)
         {
@@ -362,34 +427,65 @@ public sealed partial class ExperienceContextProvider
             .ToList();
         var bytes = System.Text.Encoding.UTF8.GetByteCount(hint);
 
-        // The same arm as the block: a pure function of the run ID, so a run is never in two arms.
-        var arm = _options.Holdout.Active ? HoldoutAssignmentFunction.Assign(run.RunId, _options.Holdout.Salt, _options.Holdout.Rate) : (HoldoutArm?)null;
-        if (arm == HoldoutArm.Holdout)
+        // Reserved atomically: a call failing in parallel cannot hint (or charge) the same record, and the run's answer
+        // bound is taken here, by what is actually answered, never by a lookup.
+        switch (run.TryReserve(included, recall.MaxHintsPerRun))
         {
-            run.Note(included);
-            StartRecordingHoldout(request, new HoldoutAssignment(run.RunId, HoldoutArm.Holdout, exposures, _options.TimeProvider.GetUtcNow()));
-            return Result(ExperienceRecallOutcome.Withheld) with { Match = matched, Omitted = omitted, WithheldExperienceIds = included };
+            case RecallReservation.Bounded:
+                return Result(ExperienceRecallOutcome.Bounded) with { Match = matched, Omitted = omitted };
+            case RecallReservation.Held:
+                omitted.AddRange(included.Select(experienceId => new OmittedExperience(experienceId, InjectionOmissionReason.AlreadyDelivered, AlreadyDeliveredDetail)));
+                return Result(ExperienceRecallOutcome.NoMatch) with { Match = matched, Omitted = omitted };
         }
 
-        // Charged to the session before the hint is handed over: a hint the account does not know about would be neither
-        // charged nor withdrawn later. If it cannot be charged, nothing is given.
-        if (_options.SessionLimits is { } limits && run.Session is { } agentSession)
+        // The same arm as the block: a pure function of the run ID, so a run is never in two arms. Drawn here, used only
+        // once the budget has been read.
+        var arm = _options.Holdout.Active ? HoldoutAssignmentFunction.Assign(run.RunId, _options.Holdout.Salt, _options.Holdout.Rate) : (HoldoutArm?)null;
+        var answered = false;
+        try
         {
-            var charge = await ChargeSessionAsync(agentSession, limits, hintable, included, borrowedArgumentsShown, bytes, cancellationToken).ConfigureAwait(false);
-            if (charge is not null)
+            // The session's budget, read before the arm is drawn, so both arms are bounded alike: a hint the budget cannot
+            // take is Bounded in either arm and assigns nothing.
+            if (_options.SessionLimits is { } budget && session is not null && !Fits(session, budget, included.Count, bytes))
             {
-                return charge.Value
-                    ? Result(ExperienceRecallOutcome.Bounded) with { Match = matched, Omitted = omitted }
-                    : Result(ExperienceRecallOutcome.Failed) with
-                    {
-                        Match = matched,
-                        Omitted = omitted,
-                        Failure = new InjectionFailure("Charging the hint to the session's injection state failed, so no hint was given.", Exception: null),
-                    };
+                return Result(ExperienceRecallOutcome.Bounded) with { Match = matched, Omitted = omitted };
+            }
+
+            if (arm == HoldoutArm.Holdout)
+            {
+                answered = true;
+                StartRecordingHoldout(request, new HoldoutAssignment(run.RunId, HoldoutArm.Holdout, exposures, _options.TimeProvider.GetUtcNow()));
+                return Result(ExperienceRecallOutcome.Withheld) with { Match = matched, Omitted = omitted, WithheldExperienceIds = included };
+            }
+
+            // Charged to the session before the hint is handed over: a hint the account does not know about would be
+            // neither charged nor withdrawn later. If it cannot be charged, nothing is given.
+            if (_options.SessionLimits is { } limits && run.Session is { } agentSession)
+            {
+                var charge = await ChargeSessionAsync(agentSession, limits, hintable, included, borrowedArgumentsShown, bytes, cancellationToken).ConfigureAwait(false);
+                if (charge is not null)
+                {
+                    return charge.Value
+                        ? Result(ExperienceRecallOutcome.Bounded) with { Match = matched, Omitted = omitted }
+                        : Result(ExperienceRecallOutcome.Failed) with
+                        {
+                            Match = matched,
+                            Omitted = omitted,
+                            Failure = new InjectionFailure("Charging the hint to the session's injection state failed, so no hint was given.", Exception: null),
+                        };
+                }
+            }
+
+            run.Deliver(options, hint);
+            answered = true;
+        }
+        finally
+        {
+            if (!answered)
+            {
+                run.Unreserve(included);
             }
         }
-
-        run.Deliver(options, hint, included);
 
         // Exactly as the block's: the run's exposure, the lessons view's injection record, and the treatment arm's assignment.
         try
@@ -415,6 +511,11 @@ public sealed partial class ExperienceContextProvider
             HintBytes = bytes,
         };
     }
+
+    /// <summary>Whether the session's account, as decisions read it, can take <paramref name="records"/> more records of <paramref name="bytes"/> bytes.</summary>
+    private static bool Fits(InjectionSessionState state, ExperienceInjectionSessionLimits limits, int records, int bytes) =>
+        Math.Min((long)limits.MaxRecords - state.RecordsUsed, ExperienceInjectionSessionLimits.MaxTrackedRecords - state.Delivered.Count) >= records
+        && limits.MaxBytes - state.BytesUsed >= bytes;
 
     /// <summary>The session's account as every decision reads it, or <see langword="null"/> without tracking or a session.</summary>
     private InjectionSessionState? OpenRecallSession(AgentSession? agentSession, out bool unreadable)
@@ -465,11 +566,7 @@ public sealed partial class ExperienceContextProvider
                 return false;
             }
 
-            var decisions = stored.ForDecisions();
-            var remainingRecords = Math.Min(
-                (long)limits.MaxRecords - decisions.RecordsUsed,
-                ExperienceInjectionSessionLimits.MaxTrackedRecords - decisions.Delivered.Count);
-            if (remainingRecords < included.Count || limits.MaxBytes - decisions.BytesUsed < bytes)
+            if (!Fits(stored.ForDecisions(), limits, included.Count, bytes))
             {
                 return true;
             }
@@ -520,6 +617,7 @@ internal sealed class RecallRun(
     private readonly HashSet<string> _signatures = new(StringComparer.Ordinal);
     private readonly HashSet<Guid> _held = [];
     private int _looked;
+    private int _answered;
 
     /// <summary>The provider that set this run up.</summary>
     public ExperienceContextProvider Provider { get; } = provider;
@@ -549,18 +647,30 @@ internal sealed class RecallRun(
         }
     }
 
-    /// <summary>Claims a lookup of <paramref name="key"/>: refused when it was looked up already or the run's bound is reached.</summary>
-    public bool TryClaim(string key, int maxPerRun)
+    /// <summary>
+    /// Claims a lookup of <paramref name="key"/>: refused when it is claimed already, when the run has answered
+    /// <paramref name="maxAnswers"/> failures, or when it has started <paramref name="maxLookups"/> lookups.
+    /// </summary>
+    public bool TryClaim(string key, int maxAnswers, int maxLookups)
     {
         lock (_gate)
         {
-            if (_looked >= maxPerRun || !_signatures.Add(key))
+            if (_answered >= maxAnswers || _looked >= maxLookups || !_signatures.Add(key))
             {
                 return false;
             }
 
             _looked++;
             return true;
+        }
+    }
+
+    /// <summary>Releases a claimed signature whose lookup timed out or failed, so a later failure may look it up again.</summary>
+    public void Release(string key)
+    {
+        lock (_gate)
+        {
+            _signatures.Remove(key);
         }
     }
 
@@ -582,13 +692,60 @@ internal sealed class RecallRun(
         }
     }
 
-    /// <summary>Appends <paramref name="hint"/> to the instructions of the run's next model call, and notes its records.</summary>
-    public void Deliver(ChatOptions options, string hint, IEnumerable<Guid> experienceIds)
+    /// <summary>
+    /// Reserves <paramref name="experienceIds"/> for one answer, atomically: <see cref="RecallReservation.Held"/> when any is
+    /// already held or reserved, <see cref="RecallReservation.Bounded"/> when the run has answered
+    /// <paramref name="maxAnswers"/> failures; otherwise they are held and the answer is counted.
+    /// </summary>
+    public RecallReservation TryReserve(IReadOnlyList<Guid> experienceIds, int maxAnswers)
+    {
+        lock (_gate)
+        {
+            if (experienceIds.Any(_held.Contains))
+            {
+                return RecallReservation.Held;
+            }
+
+            if (_answered >= maxAnswers)
+            {
+                return RecallReservation.Bounded;
+            }
+
+            _held.UnionWith(experienceIds);
+            _answered++;
+            return RecallReservation.Reserved;
+        }
+    }
+
+    /// <summary>Gives back a reservation whose answer was not given (a charge that failed or did not fit).</summary>
+    public void Unreserve(IEnumerable<Guid> experienceIds)
+    {
+        lock (_gate)
+        {
+            _held.ExceptWith(experienceIds);
+            _answered--;
+        }
+    }
+
+    /// <summary>Appends <paramref name="hint"/> to the instructions of the run's next model call.</summary>
+    public void Deliver(ChatOptions options, string hint)
     {
         lock (_gate)
         {
             options.Instructions = string.IsNullOrEmpty(options.Instructions) ? hint : options.Instructions + "\n\n" + hint;
-            _held.UnionWith(experienceIds);
         }
     }
+}
+
+/// <summary>What <see cref="RecallRun.TryReserve"/> answered.</summary>
+internal enum RecallReservation
+{
+    /// <summary>Reserved: the records are held for this answer.</summary>
+    Reserved,
+
+    /// <summary>A record is already held by the run.</summary>
+    Held,
+
+    /// <summary>The run has answered as many failures as it may.</summary>
+    Bounded,
 }

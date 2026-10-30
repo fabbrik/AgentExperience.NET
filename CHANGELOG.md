@@ -367,12 +367,15 @@ the six Go modules at one version.
   own result or error, and a thrown exception is rethrown unchanged. Off by default; with it off nothing changes.
 - **The block's rules apply**: the signature source's eligible records, exact match first (coarse only with
   `AllowCoarseMatch`), then the same final eligibility re-read, grant disclosure (a `LessonOnly` grant gives no hint),
-  model-authored policy, capability gate and host decision. A lookup is bounded by `LookupTimeout` (300 ms); a signature
-  is looked up once per run, and a run at most `MaxHintsPerRun` (3) times; a record the run or session already holds is
-  not hinted again; a hint is charged to the session's budget.
+  model-authored policy, capability gate and host decision. A lookup is bounded by `LookupTimeout` (300 ms); a run
+  answers at most `MaxHintsPerRun` (3) failures, looks a signature up once (again only after a timeout or failure) and
+  starts at most four times that many lookups; a record the run or session already holds is not hinted again, parallel
+  failures never hint one record twice; a hint is charged to the session's budget, which is read before the arm is drawn.
+  The hint is delivered as system-level instructions for the rest of the run: its labels are hygiene, not a control.
 - **Measured by the holdout**: the same arm as the block. A held-out run gets no hint and its would-be hinted records are
   recorded as its assignment; a treatment run's hinted records are recorded as assignment and exposure. Assignment rows
-  do not say whether a block or a hint delivered a record, so the estimate covers both.
+  do not say whether a block or a hint delivered a record, so the estimate covers both; recall rows arise only after a
+  matched failure, so the guide says how to read them.
 - **Reported** through `ExperienceRecallOptions.OnRecall` (`ExperienceRecallResult`: run, signature, outcome, record
   IDs) and a new `recall` telemetry operation (`agentexperience.record_count`, `agentexperience.signature.match`);
   `docs/telemetry-names.json` gains both. Without a signature source recall is reported once through

@@ -1101,10 +1101,17 @@ the tool call too. So it reaches the model's next call in that run, and every la
 never part of the tool's result, so what capture records for the call is the tool's own result or error, a thrown
 exception is rethrown unchanged (the function-invoking client still counts it as an error), and the session's chat
 history never holds the hint. It works under `UseAgentExperience` as it stands, with no change to the host's chat
-client. Like a block sent in the system role, it reads as instructions to the model: it carries the same
-untrusted-reference label, and that label is [hygiene, not a control](#labeling-is-not-a-security-control). A
-function invocation that carries no chat options (MAF invoking a tool outside the function-invoking client) gets no
-hint (`Failed`).
+client. A function invocation that carries no chat options (MAF invoking a tool outside the function-invoking client)
+gets no hint (`Failed`).
+
+**Security: the hint is delivered with system-level trust.** Providers send `Instructions` as the system (or developer)
+prompt, so the hint reaches the model in the system role, whatever `MessageRole` says for the block, and stays there for
+every remaining model call of the run. That is more authority than the block has by default (a user-role message).
+The `UNTRUSTED REFERENCE MATERIAL` label and the model-authored fence are hygiene only, exactly as for the block
+([labeling is not a security control](#labeling-is-not-a-security-control)): the tool authorization around the agent is
+what stops a call it may not make. The hint's content is bounded as the block's is (tool names and argument values
+neutralized and cut, only allowlisted arguments, nothing of an earlier error or result), and it comes only from records
+that passed the block's eligibility checks; turn recall on only where you would accept that content as system text.
 
 **What a hint says.** One fixed shape, at most `MaxHintBytes` (600 by default) UTF-8 bytes, records dropped whole,
 never cut, at most `MaxRecordsPerHint` (1) records:
@@ -1137,13 +1144,17 @@ its grant [shows the approach](#records-shared-by-a-grant) (a `LessonOnly` grant
 left out is reported with its reason, as the block's omissions are.
 
 **Bounds.** One failure's lookup — the signature search and the re-read together — is bounded by `LookupTimeout`
-(300 ms by default) on the provider's `TimeProvider`; past it the failure gets no hint (`TimedOut`). A signature is
-looked up at most once per run, and a run looks up at most `MaxHintsPerRun` (3) failures; beyond either a failure is
-`Bounded`. A lookup runs inside the tool call, after the tool returned or threw and before the function-invoking client
+(300 ms by default) on the provider's `TimeProvider`; past it the failure gets no hint (`TimedOut`). A run answers at
+most `MaxHintsPerRun` (3) failures, counting only those it hinted or withheld; a signature is looked up once per run,
+unless its lookup timed out or failed, which frees it for a later failure; and a run starts at most four times
+`MaxHintsPerRun` lookups in all, so a slow or failing store is not leaned on. Beyond any of these a failure is
+`Bounded`. Parallel tool calls that fail at once never hint the same record twice: a hint's records are reserved
+before it is charged or delivered. A lookup runs inside the tool call, after the tool returned or threw and before the function-invoking client
 hands the result back, so a failure the lesson does not resolve costs at most that bound. Runs are counted per captured
 invocation. With [session tracking](#reused-sessions-a-budget-no-repeats-and-withdrawal-notices), a hint is charged to
 the session's budget (a hint that does not fit is `Bounded`) and its records are tracked so a later block can withdraw
-them, but as unsure: the session's history never holds the hint, so a later turn may still be given them.
+them, but as unsure: the session's history never holds the hint, so a later turn may still be given them. The budget
+is read before the holdout arm is drawn, so a hint that would not fit is `Bounded` in both arms and assigns nothing.
 
 **Measurement.** The run's arm is the [holdout](#measuring-benefit-the-holdout)'s, from the same run ID, salt and rate,
 so a run is never in two arms. A held-out run gets no hint (`Withheld`, with `WithheldExperienceIds`), and the records
@@ -1151,6 +1162,16 @@ it would have been hinted are recorded as its assignment; a treatment run's hint
 assignment, as its exposure, and as "last injected", exactly as a block's. A run that had nothing to inject before it
 started but is hinted is assigned then. The estimate therefore covers block and hint together: assignment rows do not
 say which delivered a record.
+
+**Reading the estimate with recall on.** The arm itself is still drawn from the run ID alone, before anything happens,
+so whether a run is held out never depends on how it went. But a hint's assignment row exists only because the run hit
+a matching failure, which happens after the draw and is itself an outcome of the run: runs that failed in that way are
+over-represented among a lesson's rows, and such runs are less likely to verify in either arm. Rows from recall are
+therefore not exchangeable with the block's pre-run rows. The comparison between the two arms of recall rows is still
+fair, because both arms are recorded under the same condition (a matched failure, the same budget), so read it as "given
+the run hit this failure, did the hint help?"; do not pool it with the block's effect, or compare a lesson's recall rows
+with its block rows. To measure the block alone, run with recall off; to measure recall alone, use a scope or period in
+which the block injects nothing (for example `ResolveRequest` returning a request that matches no lesson).
 
 **What the host sees.** `ExperienceRecallOptions.OnRecall` is called for every failure recall looks at, with an
 `ExperienceRecallResult`: the run ID, the signature, the outcome (`Hinted`, `Withheld`, `NoMatch`, `TimedOut`,

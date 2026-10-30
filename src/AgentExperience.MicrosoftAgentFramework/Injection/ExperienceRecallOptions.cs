@@ -79,8 +79,9 @@ public sealed record ExperienceRecallOptions
     public int MaxRecordsPerHint { get; init; } = DefaultMaxRecordsPerHint;
 
     /// <summary>
-    /// The most failures one run looks up and answers, from 1 to <see cref="MaxHintsPerRunLimit"/>; defaults to 3. A
-    /// signature is looked up at most once per run whatever the bound, and a failure past either is
+    /// The most failures one run answers (hinted, or withheld from a held-out run), from 1 to
+    /// <see cref="MaxHintsPerRunLimit"/>; defaults to 3. A signature is looked up once per run unless its lookup timed out
+    /// or failed, and a run starts at most four times this many lookups; a failure past any of these is
     /// <see cref="ExperienceRecallOutcome.Bounded"/>.
     /// </summary>
     public int MaxHintsPerRun { get; init; } = DefaultMaxHintsPerRun;
@@ -149,8 +150,9 @@ public enum ExperienceRecallOutcome
     Failed,
 
     /// <summary>
-    /// The failure was not looked up: its signature was already looked up in this run, or the run reached
-    /// <see cref="ExperienceRecallOptions.MaxHintsPerRun"/>, or the session's budget has nothing left.
+    /// No hint was given for a bound: the signature was already looked up in this run, the run answered
+    /// <see cref="ExperienceRecallOptions.MaxHintsPerRun"/> failures or started its most lookups, or the session's budget
+    /// cannot take the hint (in either holdout arm).
     /// </summary>
     Bounded,
 }
