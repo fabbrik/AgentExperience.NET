@@ -74,7 +74,7 @@ public sealed class CrossLanguageLifecycleRacePostgresTests(ContractPostgresData
                 ["reason"] = $"the {writer} writer's decision in round {round}",
                 ["producer"] = $"lifecycle-race/{writer}",
                 ["occurredAt"] = ContractJson.Timestamp(Fixed.T0.AddMinutes(round)),
-                ["expectedRevision"] = 1,
+                ["expectedRevision"] = 1L,
                 ["replacementExperienceId"] = null,
             };
         }
