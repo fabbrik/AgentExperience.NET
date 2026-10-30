@@ -177,6 +177,7 @@ namespace AgentExperience.Storage.Postgres
         public const string GrantAccessRetentionScriptName = "0012_grant_access_retention.sql";
         public const string GrantArgumentDisclosureScriptName = "0017_grant_argument_disclosure.sql";
         public const string GrantDisclosureScriptName = "0011_grant_disclosure.sql";
+        public const string GrantRecipeExcerptsScriptName = "0031_grant_recipe_excerpts.sql";
         public const string GrantsScriptName = "0005_create_experience_grants.sql";
         public const string InitialScriptName = "0001_create_experience_records.sql";
         public const string LibraryReflectorAuthorshipScriptName = "0022_library_reflector_authorship.sql";

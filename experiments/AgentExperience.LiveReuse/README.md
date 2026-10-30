@@ -509,6 +509,9 @@ the lesson and 9 without, the sibling's lesson ranks first in every memory-enabl
 benefit. That proves the harness (the library's capture, verification, reflection, storage, retrieval and injection run for
 real; the stores, conditions and gate behave as registered). It says nothing about any model.
 
+A recipe arm (story 28.4: the working call's vouched result excerpt on top of the path) is proposed in
+[recipe-amendment.md](recipe-amendment.md); it is not registered and has not been run.
+
 ### What a result will and will not show
 
 - A pass shows that, on twelve synthetic services, one model needed fewer tool calls with a lesson from a sibling service

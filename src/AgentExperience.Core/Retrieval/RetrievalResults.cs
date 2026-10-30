@@ -165,6 +165,14 @@ public sealed record RankedExperience(
     IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null)
 {
     /// <summary>
+    /// The permitting grant's <see cref="ExperienceGrant.RecipeExcerpts"/>, the tool names whose recipe excerpts its
+    /// owner consented to show, filled in by the same pre-injection re-read under a level that shows the approach, and
+    /// <see langword="null"/> otherwise, including on everything retrieval itself returns. Anything that renders a
+    /// shared record treats <see langword="null"/> as naming no tool.
+    /// </summary>
+    public IReadOnlyList<string>? GrantRecipeExcerpts { get; init; }
+
+    /// <summary>
     /// The level of the grant the candidate source's own predicate matched this record under, copied from
     /// <see cref="ExperienceCandidate.GrantDisclosure"/> when <see cref="SharedByGrant"/> is <see langword="true"/>,
     /// and <see langword="null"/> otherwise. Unlike <see cref="GrantDisclosure"/>, it is filled in by retrieval and

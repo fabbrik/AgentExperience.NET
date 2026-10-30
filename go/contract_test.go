@@ -47,15 +47,15 @@ func TestTheContractVersionIsOneThisPackageSupports(t *testing.T) {
 	if version != ae.ContractVersion {
 		t.Fatalf("the lock is contract %s, this package implements %s", version, ae.ContractVersion)
 	}
-	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16, 1.17, 1.18" {
+	if strings.Join(ae.SupportedContractVersions, ", ") != "1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16, 1.17, 1.18, 1.19" {
 		t.Fatalf("supported versions: %v", ae.SupportedContractVersions)
 	}
 }
 
 func TestAnUnsupportedContractVersionFailsWithAClearMessage(t *testing.T) {
-	for _, version := range []any{"2.0", "1.19", nil} {
+	for _, version := range []any{"2.0", "1.20", nil} {
 		_, err := ct.CheckContractVersion(ae.NewObject(ae.Member{Key: "contractVersion", Value: version}))
-		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16, 1.17, 1.18") {
+		if !errors.Is(err, ct.ErrUnsupportedContractVersion) || !strings.Contains(err.Error(), "supports only 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16, 1.17, 1.18, 1.19") {
 			t.Fatalf("version %v: %v", version, err)
 		}
 	}
@@ -378,12 +378,19 @@ func TestInject(t *testing.T) {
 					approach[m.Key] = append(approach[m.Key], key.(string))
 				}
 			}
+			var recipe []string
+			if tools, ok := get("recipeExcerpts").([]any); ok {
+				for _, tool := range tools {
+					recipe = append(recipe, tool.(string))
+				}
+			}
 			block, err := ae.RenderBlock(ranked, ae.BlockOptions{
 				Rendering:         ae.Rendering(get("rendering").(string)),
 				FailureDetail:     ae.FailureDetail(get("failureDetail").(string)),
 				MaxRecords:        number("maxRecords"),
 				MaxBytes:          number("maxBytes"),
 				ApproachArguments: approach,
+				RecipeExcerpts:    recipe,
 			})
 			if err != nil {
 				t.Fatal(err)

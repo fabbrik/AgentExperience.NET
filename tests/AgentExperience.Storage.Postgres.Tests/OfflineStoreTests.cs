@@ -397,6 +397,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
                 PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName,
                 PostgresExperienceRecordSchema.ExperienceProviderHoldoutAssignmentsScriptName,
                 PostgresExperienceRecordSchema.ExperienceFailureSignaturesScriptName,
+                PostgresExperienceRecordSchema.GrantRecipeExcerptsScriptName,
             ],
             PostgresExperienceRecordSchema.ScriptNames);
         Assert.Contains("CREATE SCHEMA IF NOT EXISTS agent_experience", sql, StringComparison.Ordinal);
@@ -404,6 +405,22 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("jsonb", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("vector", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Throws<ArgumentException>(() => PostgresExperienceRecordSchema.GetScript("9999_missing.sql"));
+    }
+
+    [Fact]
+    public void The_grant_recipe_excerpts_script_adds_one_nullable_column_two_unvalidated_checks_and_the_immutable_pin()
+    {
+        var sql = PostgresExperienceRecordSchema.GetScript(PostgresExperienceRecordSchema.GrantRecipeExcerptsScriptName);
+
+        Assert.Equal(PostgresExperienceRecordSchema.GrantRecipeExcerptsScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Contains("ADD COLUMN IF NOT EXISTS recipe_excerpts jsonb NULL", sql, StringComparison.Ordinal);
+        Assert.Contains("experience_grants_recipe_excerpts_level", sql, StringComparison.Ordinal);
+        Assert.Contains("experience_grants_recipe_excerpts_shape", sql, StringComparison.Ordinal);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(sql, "NOT VALID;").Count);
+        Assert.Contains("OR NEW.recipe_excerpts IS DISTINCT FROM OLD.recipe_excerpts", sql, StringComparison.Ordinal);
+        Assert.Contains("SET search_path = pg_catalog, agent_experience, pg_temp;", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("DROP", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotMatch("(?m)^\\s*GRANT ", sql);
     }
 
     [Fact]
@@ -1344,8 +1361,8 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("least(p_minimum_matched_terms, ", TextSearchFunction.Body, StringComparison.Ordinal);
 
         // Applied after every earlier script.
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^6]);
-        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^7]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchAnyTermScriptName, PostgresExperienceRecordSchema.ScriptNames[^7]);
+        Assert.Equal(PostgresExperienceRecordSchema.TextSearchFunctionScriptName, PostgresExperienceRecordSchema.ScriptNames[^8]);
     }
 
     /// <summary>
@@ -1398,7 +1415,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains(ExperienceRecordSql.RecordKeyShareLock, PostgresExperienceRecordStore.RecordInjectionSql, StringComparison.Ordinal);
 
         // Applied after every earlier script; 0027 to 0029 follow it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^5]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceInjectionsScriptName, PostgresExperienceRecordSchema.ScriptNames[^6]);
     }
 
     /// <summary>
@@ -1455,7 +1472,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.EndsWith("ON CONFLICT (run_id, experience_id) DO NOTHING", PostgresExperienceRecordStore.RecordHoldoutAssignmentSql, StringComparison.Ordinal);
 
         // Applied after every earlier script; 0028 and 0029 follow it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^4]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceHoldoutAssignmentsScriptName, PostgresExperienceRecordSchema.ScriptNames[^5]);
     }
 
     /// <summary>
@@ -1476,7 +1493,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Contains("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_experience_records_source_run", script, StringComparison.Ordinal);
 
         // Applied after every earlier script; 0029 follows it.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName, PostgresExperienceRecordSchema.ScriptNames[^3]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceRecordsSourceRunScriptName, PostgresExperienceRecordSchema.ScriptNames[^4]);
     }
 
     /// <summary>
@@ -1527,7 +1544,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         // Followed by 0030.
         Assert.Equal(
             PostgresExperienceRecordSchema.ExperienceProviderHoldoutAssignmentsScriptName,
-            PostgresExperienceRecordSchema.ScriptNames[^2]);
+            PostgresExperienceRecordSchema.ScriptNames[^3]);
     }
 
     /// <summary>
@@ -1603,7 +1620,7 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         }
 
         // The last script.
-        Assert.Equal(PostgresExperienceRecordSchema.ExperienceFailureSignaturesScriptName, PostgresExperienceRecordSchema.ScriptNames[^1]);
+        Assert.Equal(PostgresExperienceRecordSchema.ExperienceFailureSignaturesScriptName, PostgresExperienceRecordSchema.ScriptNames[^2]);
     }
 
     /// <summary>

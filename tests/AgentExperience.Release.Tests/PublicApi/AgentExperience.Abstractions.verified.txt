@@ -213,6 +213,7 @@
         public const int MaxApproachArgumentToolNameLength = 256;
         public const int MaxApproachArgumentTools = 32;
         public const int MaxListLimit = 500;
+        public const int MaxRecipeExcerptTools = 32;
         public const int MinListLimit = 1;
         public ExperienceGrant(System.Guid GrantId, System.Guid ExperienceId, AgentExperience.Abstractions.Scope RecordScope, AgentExperience.Abstractions.Scope RecipientScope, string Reason, string AdministratorPrincipalId, System.DateTimeOffset IssuedAt, System.DateTimeOffset ExpiresAt, System.DateTimeOffset? RevokedAt, string? RevocationReason, AgentExperience.Abstractions.ExperienceGrantDisclosure Disclosure = 0, System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? ApproachArguments = null) { }
         public string AdministratorPrincipalId { get; init; }
@@ -223,6 +224,7 @@
         public System.Guid GrantId { get; init; }
         public System.DateTimeOffset IssuedAt { get; init; }
         public string Reason { get; init; }
+        public System.Collections.Generic.IReadOnlyList<string>? RecipeExcerpts { get; init; }
         public AgentExperience.Abstractions.Scope RecipientScope { get; init; }
         public AgentExperience.Abstractions.Scope RecordScope { get; init; }
         public string? RevocationReason { get; init; }
@@ -349,6 +351,7 @@
         public System.DateTimeOffset ExpiresAt { get; init; }
         public System.Guid GrantId { get; init; }
         public string Reason { get; init; }
+        public System.Collections.Generic.IReadOnlyList<string>? RecipeExcerpts { get; init; }
         public AgentExperience.Abstractions.Scope RecipientScope { get; init; }
         public AgentExperience.Abstractions.Scope RecordScope { get; init; }
     }
@@ -489,6 +492,7 @@
         public const string HmacSha256 = "HMAC-SHA256";
         public const string HmacSha256ClaimsV2 = "HMAC-SHA256.aexp-prov.v2";
         public const string HmacSha256ClaimsV3 = "HMAC-SHA256.aexp-prov.v3";
+        public const string HmacSha256ClaimsV4 = "HMAC-SHA256.aexp-prov.v4";
         public ExperienceProvenanceSignature(string KeyId, string Algorithm, System.ReadOnlyMemory<byte> Value) { }
         public string Algorithm { get; init; }
         public string KeyId { get; init; }
@@ -576,6 +580,7 @@
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
         public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? GrantApproachArguments { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
+        public System.Collections.Generic.IReadOnlyList<string>? GrantRecipeExcerpts { get; init; }
         public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
         public System.Guid? PermittingGrantId { get; init; }
         public AgentExperience.Abstractions.ExperienceRecord? Record { get; init; }
@@ -1223,6 +1228,8 @@
         public System.Collections.Generic.IReadOnlyDictionary<string, object?> Arguments { get; init; }
         public System.TimeSpan Duration { get; init; }
         public string? Error { get; init; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string? RecipeExcerpt { get; init; }
         public string? Result { get; init; }
         public int SequenceNumber { get; init; }
         public System.DateTimeOffset StartedAt { get; init; }

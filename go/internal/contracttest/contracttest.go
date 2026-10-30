@@ -32,7 +32,7 @@ var Repository = func() string {
 var (
 	Contract   = filepath.Join(Repository, "contract")
 	Fixtures   = filepath.Join(Contract, "fixtures")
-	Schema     = filepath.Join(Contract, "schema", "experience-record.v1.json")
+	Schema     = filepath.Join(Contract, "schema", "experience-record.v1-1.19.json")
 	Migrations = filepath.Join(Repository, "src", "AgentExperience.Storage.Postgres", "Migrations")
 	// VectorMigrations are the vectors package's migrations (contract 1.6), which need the pgvector extension.
 	VectorMigrations = filepath.Join(Repository, "src", "AgentExperience.Storage.Postgres.Vectors", "Migrations")

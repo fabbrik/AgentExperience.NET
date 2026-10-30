@@ -404,6 +404,46 @@ the six Go modules at one version.
   `OnCaptureFailure` at the new stage `Recall`. The quick-start demo shows a hint with `--recall`. .NET only: the
   Python and Go ports and the contract are unchanged.
 
+### The recipe: what the working call produced (story 28.4)
+
+- **A vouched result excerpt on the working attempt.** `ExperienceCaptureOptions.RecipeResultExcerpt` (off by default)
+  lets the host vouch, per call that returned, for a short excerpt of its result. Capture sanitizes it with the
+  `ToolResult` policy, cuts it after sanitization to `CaptureLimits.MaxRecipeExcerptLength` (200) characters, never
+  between a surrogate pair, and stores it as `ToolCallRecord.RecipeExcerpt` (an init-only property, in the payload only
+  when set). A failed call never gets one; a callback that throws records nothing and is reported once per run at the
+  new stage `ExperienceCaptureFailureStage.RecipeExcerpt`, by type only. Injection shows it only on the `Worked:`
+  attempt, for a tool `ExperienceInjectionOptions.RecipeExcerpts` names, as `tool(...) [returned: "…"]`, quoted and
+  bounded like an argument string; the recall hint's `worked:` line renders the same way. With none of it set, every
+  record, payload, block and fixture is byte for byte what it was.
+- **One place to consent.** `AgentExperienceOptions.Recipe(toolName, arguments, resultExcerpt)` sets the capture
+  argument allowlist, `ApproachArguments`, the excerpt callback and `RecipeExcerpts` for a tool together. The
+  quick-start sample's `--recipe` switch shows one.
+- **Signed: claims version 4, fail closed.** `SignClaimsVersion = 4` signs `HMAC-SHA256.aexp-prov.v4`
+  (`ExperienceProvenanceSignature.HmacSha256ClaimsV4`), version 3 plus each call's excerpt. The default stays 3, which
+  signs every record as before and leaves excerpts unsigned, so with signing on an excerpt is shown only under a version
+  4 signature that verifies (`ExperienceRetrievalService.AreRecipeExcerptsConfirmed`); records trusted unsigned or listed
+  as reviewed never show one. To show recipe excerpts with signing on, set `SignClaimsVersion = 4` once every verifying
+  node runs this release (an earlier build refuses a version 4 signature). `HistoricalReferenceWriteSettings` shows
+  excerpts only with `AreRecipeExcerptsConfirmed` or the explicit `ShowRecipeExcerptsWithoutSigning`. A lone surrogate
+  in an excerpt becomes U+FFFD at capture, so the record can always be signed and stored; an excerpt that is empty once
+  cleaned keeps the call's `[returned]` marker.
+- **Grants.** `ExperienceGrantRequest.RecipeExcerpts` / `ExperienceGrant.RecipeExcerpts` name the tools whose excerpts
+  an owner consents to show a recipient (only under a level that shows the approach), surfaced on reads as
+  `ExperienceRecordGetResult.GrantRecipeExcerpts`, `RankedExperience.GrantRecipeExcerpts` and
+  `ExperienceInjectionDecisionContext.GrantRecipeExcerpts`. PostgreSQL migration `0031_grant_recipe_excerpts.sql` adds
+  the immutable `experience_grants.recipe_excerpts` column; reads use `to_jsonb`, so they keep working on a schema not
+  yet migrated, and only issuing a grant that names recipe excerpts needs it.
+- **Contract 1.19** ([what it adds](contract/README-1.19.md)), add-only: a tool call's optional `recipeExcerpt`
+  payload member, `schema/experience-record.v1-1.19.json` (the 1.0 schema plus that member, which a 1.19 port validates
+  against), the inject option `recipeExcerpts` and three `inject` cases (`recipe-excerpt`, `-verbose`,
+  `-not-allowlisted`). Every 1.0-1.18 file is unchanged. **The Python and Go ports** read, keep and write the excerpt
+  back unchanged, and render it under `recipe_excerpts` / `RecipeExcerpts` exactly as .NET does; they do not capture or
+  sign one, and grants stay .NET-only. **Port limitation:** a port cannot verify signatures, so with its allowlist on it
+  renders any stored excerpt, signed or not, where a signing .NET reader would suppress an unconfirmed one (off by
+  default; see [contract 1.19](contract/README-1.19.md)).
+- **Experiment.** `experiments/AgentExperience.LiveReuse/recipe-amendment.md` proposes (not registered, not run) a
+  recipe arm for the real-task experiment.
+
 ### The holdout in Python and Go: contract 1.8 (story 25.6)
 
 - **Contract 1.8** ([what it adds](contract/README-1.8.md)) brings the injection holdout into the language-neutral

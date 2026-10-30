@@ -476,6 +476,33 @@ with: do not change them.
 - **Threads.** It runs on the tool-invocation thread and can run concurrently with itself when MAF invokes tools
   concurrently, so keep it fast and free of shared mutable state.
 
+## The recipe: a vouched result excerpt
+
+`ExperienceCaptureOptions.RecipeResultExcerpt` (off by default) lets the host vouch for a short excerpt of what a
+working call returned, for a later agent to see on the lesson's working attempt (see
+[Injection](injection.md#showing-what-worked-the-recipe); `AgentExperienceOptions.Recipe` sets it with the matching
+allowlists):
+
+```csharp
+options.Capture = capture => capture.RecipeResultExcerpt = call =>
+    call.ToolName == "pin_dependency" && call.Result?.ToString() is { } text && text.StartsWith("pinned ", StringComparison.Ordinal)
+        ? text
+        : null;
+```
+
+- It gets the same `ExperienceToolResultContext` as `ClassifyToolResult`, and runs only for a call capture records as
+  returned: never for a thrown call or one the classifier named a failure.
+- What it returns is stored on the call as `ToolCallRecord.RecipeExcerpt`, after the `ToolResult` sanitization policy
+  (a redacted or omitted value leaves no excerpt; one the sanitizer refuses is dropped, never the attempt) and cut to
+  `CaptureLimits.MaxRecipeExcerptLength` characters (200 by default) after sanitization, never between a surrogate
+  pair. A lone surrogate becomes U+FFFD, so a host that slices its excerpt mid-pair never makes signing or the store
+  refuse the record. A cut or a refusal is reported on the append's truncated fields. The record's payload carries the member only
+  when it is set.
+- A callback that throws records no excerpt and is reported once per run through `OnCaptureFailure` at stage
+  `RecipeExcerpt`, naming only the exception type.
+- It runs inline on the tool-invocation thread, possibly concurrently with itself; keep it fast, and change nothing in
+  its context. The arguments are the raw ones, before sanitization.
+
 ## MAF caveats (1.22.0 and later 1.x)
 
 - **Reusing a `ChatClientAgentRunOptions` instance for one invocation after another is safe from 1.22.0.** At 1.20.0,

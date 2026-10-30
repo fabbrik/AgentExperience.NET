@@ -93,7 +93,7 @@ public static class AgentExperienceServiceCollectionExtensions
         // its own constructors, so nothing registered here ever resolves to null.
         services.AddSingleton(provider => new AgentExperienceEmbeddingsRuntime(options, provider));
         services.AddAgentExperienceCoreWithIndexing(
-            options.Sanitization,
+            options.EffectiveSanitization(),
             options.CaptureLimits,
             provider => provider.GetRequiredService<AgentExperienceEmbeddingsRuntime>().Indexing());
         ApplyFinalizationOptions(services, options);

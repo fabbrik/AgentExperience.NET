@@ -32,9 +32,15 @@ var label = string.IsNullOrEmpty(key)
 
 // --recall shows recall at the moment of failure instead: run 2 is a different ticket, so no lesson is injected before
 // it starts, and the lesson reaches the model when its first call fails the way run 1's did.
+// --recipe shows the recipe: one AgentExperienceOptions.Recipe call consents to the strategy argument and to an excerpt
+// of what the working call returned, and run 2's block shows that excerpt on the attempt that worked.
 if (args.Contains("--recall", StringComparer.Ordinal))
 {
     await QuickStart.RunRecallAsync(model, label, Console.Out);
+}
+else if (args.Contains("--recipe", StringComparer.Ordinal))
+{
+    await QuickStart.RunRecipeAsync(model, label, Console.Out);
 }
 else
 {
@@ -59,6 +65,14 @@ public static class QuickStart
         RunAsync(model, modelLabel, output, recall: false);
 
     /// <summary>
+    /// <c>--recipe</c>: the same two runs, wired with one <see cref="AgentExperienceOptions.Recipe"/> call in place of the
+    /// separate sanitization and injection allowlists. It also vouches for the working call's result, so run 2's block
+    /// shows <c>[returned: "exit=0 the refund is released"]</c> on the attempt that worked.
+    /// </summary>
+    public static Task<IReadOnlyList<QuickStartRun>> RunRecipeAsync(IChatClient model, string modelLabel, TextWriter output) =>
+        RunAsync(model, modelLabel, output, recall: false, recipe: true);
+
+    /// <summary>
     /// <c>--recall</c>: the same wiring with <c>options.Recall</c> on. Run 1 learns on <see cref="Ticket"/>; run 2 is
     /// <see cref="OtherTicket"/>, whose words match nothing stored, so it starts with no lesson, and is shown run 1's fix
     /// when its first call fails the same way.
@@ -66,7 +80,7 @@ public static class QuickStart
     public static Task<IReadOnlyList<QuickStartRun>> RunRecallAsync(IChatClient model, string modelLabel, TextWriter output) =>
         RunAsync(model, modelLabel, output, recall: true);
 
-    private static async Task<IReadOnlyList<QuickStartRun>> RunAsync(IChatClient model, string modelLabel, TextWriter output, bool recall)
+    private static async Task<IReadOnlyList<QuickStartRun>> RunAsync(IChatClient model, string modelLabel, TextWriter output, bool recall, bool recipe = false)
     {
         // The tool, and the state Verify reads. Under --recall the working strategy is the last one tried, so the hint shows.
         var desk = recall ? new RefundDesk(RecallWorkingStrategy) : new RefundDesk();
@@ -85,9 +99,19 @@ public static class QuickStart
                     Evidence: [context.CreateEvidence("refund-released", "ToolExitCode", result, producer: "refund-desk", "quick-start")],
                     ArtifactRevision: "quick-start"));
             };
-            // Keep the strategy argument at capture, and let the injected Tried: line show it.
-            options.Sanitization = AgentExperienceDefaults.SanitizationAllowing("strategy");
-            options.Injection = injection => injection.ApproachArguments[RefundDesk.ToolName] = ["strategy"];
+            if (recipe)
+            {
+                // The recipe: one place to consent to what a later run may see of how this tool worked -- the strategy
+                // argument, and the exit line the working call returned (a known, short shape; never free text).
+                options.Recipe(RefundDesk.ToolName, arguments: ["strategy"], resultExcerpt: call => call.Result?.ToString());
+            }
+            else
+            {
+                // Keep the strategy argument at capture, and let the injected Tried: line show it.
+                options.Sanitization = AgentExperienceDefaults.SanitizationAllowing("strategy");
+                options.Injection = injection => injection.ApproachArguments[RefundDesk.ToolName] = ["strategy"];
+            }
+
             // A fixed environment, so the output is the same on every machine. A real host keeps the default.
             options.Capture = capture => capture.Environment = RefundDesk.Environment;
             // Recall at the moment of failure: off by default.
@@ -162,6 +186,12 @@ public static class QuickStart
         await output.WriteLineAsync();
         await output.WriteLineAsync(runs[1].Block?.TrimEnd() ?? "(nothing: no lesson was injected)");
         await output.WriteLineAsync();
+        if (recipe)
+        {
+            await output.WriteLineAsync("The recipe: the working call's own result, vouched for by the host at capture, is shown on the attempt");
+            await output.WriteLineAsync("that worked; a failed call never carries one.");
+        }
+
         await output.WriteLineAsync("Run 1 was verified by the desk's own state and stored as a lesson; run 2 found it by its task text.");
         await output.WriteLineAsync("With the stand-in, this shows the loop working, not that it helps a real model: see \"Does it help?\"");
         await output.WriteLineAsync("in the repository README for a live experiment.");

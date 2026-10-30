@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from ._text import (
@@ -53,6 +53,13 @@ CALL_RETURNED = "[returned]"
 CALL_FAILED = "[failed]"
 CALL_FAILED_CLASS_PREFIX = "[failed: "
 CALL_MARKER_END = "]"
+CALL_RETURNED_EXCERPT_PREFIX = "[returned: "
+"""What opens the marker of a call on the ``Worked:`` attempt whose recipe excerpt is shown, in place of
+``[returned]`` (contract 1.19)."""
+MAX_RECIPE_EXCERPT_LENGTH = 200
+"""The most characters of a recipe excerpt a marker shows, counted before quoting (contract 1.19)."""
+MAX_RECIPE_TOOL_NAME_LENGTH = 256
+"""The most characters one ``recipe_excerpts`` tool name may have."""
 WORKED_SUFFIX = " (the final attempt)"
 MAX_TRIED_ATTEMPTS = 4
 MAX_ERROR_EXCERPT_LENGTH = 120
@@ -175,13 +182,15 @@ class RankedRecord:
 @dataclass(frozen=True)
 class BlockOptions:
     """The options that change the block. ``approach_arguments`` maps a tool name to the argument keys whose stored
-    values its ``Tried:`` lines may show."""
+    values its ``Tried:`` lines may show. ``recipe_excerpts`` names the tools whose recipe excerpts (contract 1.19) the
+    ``Worked:`` attempt's line may show, matched ordinally; empty (the default) shows none."""
 
     rendering: Rendering = "Compact"
     failure_detail: FailureDetail = "ErrorClass"
     max_records: int = DEFAULT_MAX_RECORDS
     max_bytes: int = DEFAULT_MAX_BYTES
     approach_arguments: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    recipe_excerpts: Sequence[str] = ()
 
     def __post_init__(self) -> None:
         if self.rendering not in ("Compact", "Verbose"):
@@ -206,6 +215,25 @@ class BlockOptions:
                         f"{MAX_ARGUMENT_KEY_LENGTH} characters, or contains whitespace, a control, format or surrogate "
                         f"character, or one of the line's own delimiters ({FORBIDDEN_KEY_CHARACTERS})."
                     )
+        if isinstance(self.recipe_excerpts, (str, bytes)):
+            raise ValueError("The recipe-excerpt allowlist must be a list of tool names, not a string.")
+        seen: set[str] = set()
+        for tool in self.recipe_excerpts:
+            if (
+                not isinstance(tool, str)
+                or is_null_or_whitespace(tool)
+                or utf16_len(tool) > MAX_RECIPE_TOOL_NAME_LENGTH
+                or any(category(c) == "Cc" for c in tool)
+            ):
+                raise ValueError(
+                    "A recipe-excerpt allowlist entry names a tool that is blank, longer than "
+                    f"{MAX_RECIPE_TOOL_NAME_LENGTH} characters, or holds a control character."
+                )
+            if tool in seen:
+                raise ValueError(f"The recipe-excerpt allowlist names tool '{tool}' twice.")
+            seen.add(tool)
+        # A snapshot: a host's list changed later does not change the options.
+        object.__setattr__(self, "recipe_excerpts", tuple(self.recipe_excerpts))
 
 
 def _forbidden_key_character(ch: str) -> bool:
@@ -308,7 +336,8 @@ def render_lesson_text(record: ExperienceRecord, options: BlockOptions | None = 
     record's delimiters or its source, confidence, ranking, recording, environment, verification and evidence lines
     (.NET's ``HistoricalReferenceWriter.RenderLesson``): what an export carries (contract 1.14).
     """
-    return _lesson_lines(record, _attempt_lines(record, options or BlockOptions()))
+    # The export never shows a recipe excerpt, as .NET's RenderLesson does not.
+    return _lesson_lines(record, _attempt_lines(record, replace(options or BlockOptions(), recipe_excerpts=())))
 
 
 def _render_compact(ranked: RankedRecord, ordinal: int, options: BlockOptions) -> str:
@@ -454,7 +483,8 @@ def _attempt_lines(record: ExperienceRecord, options: BlockOptions) -> str | Non
         calls, clamped = _ordered_calls(attempt)
         outcome = ATTEMPT_COMPLETED if attempt.error is None else _failure(attempt.error, options.failure_detail)
         text.append(
-            f"  - attempt {attempt.sequence_number}: {_calls(calls, clamped, options)}{OUTCOME_SEPARATOR}{outcome}\n"
+            f"  - attempt {attempt.sequence_number}: {_calls(calls, clamped, options, attempt is worked)}"
+            f"{OUTCOME_SEPARATOR}{outcome}\n"
         )
     if worked is not None:
         text.append(f"Worked: attempt {worked.sequence_number}{WORKED_SUFFIX}\n")
@@ -504,7 +534,7 @@ class _ArgumentBudget:
     exhausted: bool = False
 
 
-def _calls(calls: list[ToolCall], clamped: bool, options: BlockOptions) -> str:
+def _calls(calls: list[ToolCall], clamped: bool, options: BlockOptions, worked: bool = False) -> str:
     if not calls:
         return NO_TOOL_CALLED
     budget = _ArgumentBudget()
@@ -514,12 +544,35 @@ def _calls(calls: list[ToolCall], clamped: bool, options: BlockOptions) -> str:
         keys = options.approach_arguments.get(call.tool_name, ()) if options.approach_arguments else ()
         shown = _arguments(call, keys, budget) if options.approach_arguments else None
         step = name if shown is None else f"{name}({shown})"
-        steps.append(f"{step} {_call_outcome(call.error, options.failure_detail)}")
+        # Contract 1.19: on the Worked: attempt only, a call that returned and whose tool recipe_excerpts names shows
+        # its stored excerpt in place of its [returned] marker.
+        excerpt = _recipe_marker(call, options.recipe_excerpts) if worked else None
+        steps.append(f"{step} {excerpt or _call_outcome(call.error, options.failure_detail)}")
     return (
         TOOL_SEPARATOR.join(steps)
         + (ATTEMPT_TOOLS_CLAMPED if clamped else "")
         + (ATTEMPT_ARGUMENTS_CLAMPED if budget.exhausted else "")
     )
+
+
+def _recipe_marker(call: ToolCall, recipe_excerpts: Sequence[str]) -> str | None:
+    """The ``[returned: "…"]`` marker of ``call``'s recipe excerpt, or ``None`` when it shows none: the call recorded an
+    error, has no (or a blank, or an only-invisible) excerpt, or its tool is not in ``recipe_excerpts``. The excerpt is
+    quoted and bounded exactly as an argument string is, cut to ``MAX_RECIPE_EXCERPT_LENGTH``."""
+    excerpt = call.recipe_excerpt
+    if (
+        not recipe_excerpts
+        or call.error is not None
+        or excerpt is None
+        or is_null_or_whitespace(excerpt)
+        or call.tool_name not in recipe_excerpts
+    ):
+        return None
+    quoted = _quoted(excerpt, MAX_RECIPE_EXCERPT_LENGTH)
+    # An excerpt of only invisible characters is empty once cleaned: the call keeps its [returned] marker.
+    if quoted == '""':
+        return None
+    return CALL_RETURNED_EXCERPT_PREFIX + quoted + CALL_MARKER_END
 
 
 def _call_outcome(error: str | None, detail: FailureDetail) -> str:

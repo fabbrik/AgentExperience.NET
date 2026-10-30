@@ -9,7 +9,7 @@ import (
 )
 
 // The Experience Record and its stored form: one row of agent_experience.experience_records, as the record columns
-// plus the payload column at payload_version 1 (contract/schema/experience-record.v1.json). Enums are their .NET
+// plus the payload column at payload_version 1 (contract/schema/experience-record.v1-1.19.json since contract 1.19). Enums are their .NET
 // member names, exactly as written.
 
 // PayloadVersion is the payload version this package reads and writes: plaintext.
@@ -145,6 +145,10 @@ type ToolCall struct {
 	Duration       Duration
 	Result         *string
 	Error          *string
+	// RecipeExcerpt is the excerpt of what the call returned that a host vouched for at capture (contract 1.19),
+	// nil when absent: the payload then has no recipeExcerpt member. This port reads and writes it back; it never
+	// captures one.
+	RecipeExcerpt *string
 }
 
 // Attempt is one stored attempt.
@@ -354,16 +358,20 @@ func attemptJSON(a *Attempt) *Object {
 		if arguments == nil {
 			arguments = &Object{}
 		}
-		calls[i] = NewObject(
-			Member{"toolCallId", call.ToolCallID.String()},
-			Member{"sequenceNumber", integer(call.SequenceNumber)},
-			Member{"toolName", call.ToolName},
-			Member{"arguments", arguments},
-			Member{"startedAt", call.StartedAt.String()},
-			Member{"duration", call.Duration.String()},
-			Member{"result", optionalString(call.Result)},
-			Member{"error", optionalString(call.Error)},
-		)
+		members := []Member{
+			{"toolCallId", call.ToolCallID.String()},
+			{"sequenceNumber", integer(call.SequenceNumber)},
+			{"toolName", call.ToolName},
+			{"arguments", arguments},
+			{"startedAt", call.StartedAt.String()},
+			{"duration", call.Duration.String()},
+			{"result", optionalString(call.Result)},
+			{"error", optionalString(call.Error)},
+		}
+		if call.RecipeExcerpt != nil {
+			members = append(members, Member{"recipeExcerpt", *call.RecipeExcerpt})
+		}
+		calls[i] = NewObject(members...)
 	}
 	return NewObject(
 		Member{"attemptId", a.AttemptID.String()},
@@ -715,6 +723,7 @@ func readAttempt(o *Object) Attempt {
 			Duration:       readDuration(call, "duration"),
 			Result:         readOptionalString(call, "result"),
 			Error:          readOptionalString(call, "error"),
+			RecipeExcerpt:  readOptionalString(call, "recipeExcerpt"),
 		})
 	}
 	return attempt

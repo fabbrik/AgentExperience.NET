@@ -42,6 +42,8 @@ internal sealed class UpgradeReport(string subject, int major)
         ["approachArguments"] = "ExperienceGrant, 0.1.0-preview.2 (0017)",
         ["grantDisclosure"] = "ExperienceRecordGetResult, 0.1.0-preview.2 (0011); ExperienceCandidate, unreleased (story 20.8)",
         ["grantApproachArguments"] = "ExperienceRecordGetResult, 0.1.0-preview.2 (0017)",
+        ["recipeExcerpts"] = "ExperienceGrant, unreleased (story 28.4, 0031): null when absent",
+        ["grantRecipeExcerpts"] = "ExperienceRecordGetResult, unreleased (story 28.4, 0031): null when absent",
         ["injections"] = "ExperienceRecordQueryResult, unreleased (story 21.8, 0026): QueryWithInjectionsAsync's summaries; null from QueryAsync",
     };
 

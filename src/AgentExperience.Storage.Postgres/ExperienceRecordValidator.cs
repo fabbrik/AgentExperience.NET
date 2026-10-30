@@ -259,6 +259,7 @@ internal static partial class ExperienceRecordValidator
         else
         {
             ValidateGrantApproachArguments(request.Disclosure, request.ApproachArguments, errors);
+            ValidateGrantRecipeExcerpts(request.Disclosure, request.RecipeExcerpts, errors);
         }
 
         if (request.RecordScope is { } record && request.RecipientScope is { } recipient)
@@ -353,6 +354,48 @@ internal static partial class ExperienceRecordValidator
                     errors.Add(new(Path, $"holds an argument key that is blank, longer than {ExperienceGrant.MaxApproachArgumentKeyLength} characters, contains whitespace, a control, format or surrogate character or one of {ForbiddenApproachArgumentKeyCharacters}, or is listed twice for one tool."));
                     return;
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The owner's recipe-excerpt consent on a grant request: absent, or under a level that shows the approach a
+    /// non-empty, bounded list of distinct tool names. Every error is reported on <c>RecipeExcerpts</c> and names the
+    /// rule, never the offending text.
+    /// </summary>
+    private static void ValidateGrantRecipeExcerpts(
+        ExperienceGrantDisclosure disclosure,
+        IReadOnlyList<string>? tools,
+        List<StoreValidationError> errors)
+    {
+        const string Path = "RecipeExcerpts";
+        if (tools is null)
+        {
+            return;
+        }
+
+        if (disclosure is not (ExperienceGrantDisclosure.LessonAndApproach or ExperienceGrantDisclosure.LessonApproachAndArguments))
+        {
+            errors.Add(new(Path, "must be null unless Disclosure is LessonAndApproach or LessonApproachAndArguments."));
+            return;
+        }
+
+        if (tools.Count == 0 || tools.Count > ExperienceGrant.MaxRecipeExcerptTools)
+        {
+            errors.Add(new(Path, $"must name between 1 and {ExperienceGrant.MaxRecipeExcerptTools} tools."));
+            return;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var tool in tools)
+        {
+            if (string.IsNullOrWhiteSpace(tool)
+                || tool.Length > ExperienceGrant.MaxApproachArgumentToolNameLength
+                || tool.Any(char.IsControl)
+                || !seen.Add(tool))
+            {
+                errors.Add(new(Path, $"names a tool that is blank, longer than {ExperienceGrant.MaxApproachArgumentToolNameLength} characters, contains a control character, or is named twice."));
+                return;
             }
         }
     }

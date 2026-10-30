@@ -81,6 +81,9 @@ func InjectOptionsOf(value any) (*InjectOptionsCase, error) {
 			c.Block.ApproachArguments[m.Key] = append(c.Block.ApproachArguments[m.Key], text(key))
 		}
 	}
+	for _, tool := range list(get(options, "recipeExcerpts")) {
+		c.Block.RecipeExcerpts = append(c.Block.RecipeExcerpts, text(tool))
+	}
 	if limit := get(options, "requestLimit"); limit != nil {
 		c.RequestLimit = int(integer(limit))
 	}

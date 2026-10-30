@@ -309,6 +309,14 @@ public sealed record ExperienceInjectionDecisionContext(
     IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null)
 {
     /// <summary>
+    /// The tool names whose recipe excerpts the owner named on the permitting grant, from the same re-read, when
+    /// <see cref="SharedByGrant"/> is <see langword="true"/> and the grant shows the approach; <see langword="null"/>
+    /// otherwise. The block shows a borrowed excerpt only for a tool this names <em>and</em>
+    /// <see cref="ExperienceInjectionOptions.RecipeExcerpts"/> names. Informational.
+    /// </summary>
+    public IReadOnlyList<string>? GrantRecipeExcerpts { get; init; }
+
+    /// <summary>
     /// The provider's verdict on <see cref="Current"/>: <see langword="true"/> when it will render the record as
     /// model-authored, fenced and labelled. That is when its reflection's authorship is anything but
     /// <see cref="ReflectionAuthorship.Deterministic"/>, its producer names the library's own model-backed reflector,
@@ -657,6 +665,37 @@ public sealed class ExperienceInjectionOptions
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
     /// <summary>
+    /// Optional, empty by default: the tool names whose recipe excerpts (<see cref="ToolCallRecord.RecipeExcerpt"/>, the
+    /// short part of a working call's result its host vouched for at capture) the block may show. Leave it empty and
+    /// the block is byte for byte what it is without this option.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Where an excerpt appears.</b> Only on the attempt the <c>Worked:</c> line names, after the call it belongs
+    /// to, in place of its <c>[returned]</c> marker: <c>pin_dependency(package="lib") [returned: "pinned lib to 2.4.1"]</c>.
+    /// A failed call never has one, and an earlier attempt's line never shows one. The recall hint's <c>worked:</c>
+    /// line renders the same way.
+    /// </para>
+    /// <para>
+    /// <b>Every bound on it.</b> It is the excerpt as capture stored it -- sanitized, at most
+    /// <c>CaptureLimits.MaxRecipeExcerptLength</c> characters -- and it is written like an argument string: whitespace
+    /// and invisible characters collapsed, the block's markers neutralized, double quotes and look-alikes turned into
+    /// single quotes, <c>-&gt;</c> broken up, cut to <see cref="HistoricalReferenceWriter.MaxRecipeExcerptLength"/>
+    /// characters with the cut marked outside the quotes. The record as a whole still counts against
+    /// <see cref="ExperienceInjectionLimits.MaxBytes"/>. With provenance signing configured, an excerpt is shown only
+    /// when a claims version 4 signature confirms it (<see cref="ExperienceRetrievalService.AreRecipeExcerptsConfirmed"/>);
+    /// otherwise the record renders without it. A record borrowed through a grant shows an excerpt only when the grant
+    /// shows the approach and names the tool (<see cref="ExperienceGrantRequest.RecipeExcerpts"/>) <em>and</em> this
+    /// list names it; under <see cref="ExperienceGrantDisclosure.LessonOnly"/> never.
+    /// </para>
+    /// <para>
+    /// Snapshotted when the provider is constructed; a blank tool name, one longer than 256 characters, one holding a
+    /// control character, or one listed twice is refused with an <see cref="ArgumentException"/> there.
+    /// </para>
+    /// </remarks>
+    public ICollection<string> RecipeExcerpts { get; set; } = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>
     /// How much a <c>Tried:</c> line says about an attempt that ended with an error.
     /// <see cref="AttemptFailureDetail.ErrorClass"/> (the default) shows the error's class -- an exception type name,
     /// an exit code, an HTTP status, a POSIX errno name or a timeout, built only from tokens the library recognises
@@ -751,6 +790,7 @@ public sealed class ExperienceInjectionOptions
             Dictionary<string, IReadOnlyList<string>> dictionary => new Dictionary<string, IReadOnlyList<string>>(dictionary, dictionary.Comparer),
             _ => new Dictionary<string, IReadOnlyList<string>>(ApproachArguments, StringComparer.Ordinal),
         };
+        copy.RecipeExcerpts = RecipeExcerpts is null ? null! : new List<string>(RecipeExcerpts);
         return copy;
     }
 
@@ -821,6 +861,15 @@ public sealed class ExperienceInjectionOptions
         }
 
         return ApproachArgumentAllowlist.From(ApproachArguments, $"{paramName}.{nameof(ApproachArguments)}");
+    }
+
+    /// <summary>Validates and snapshots <see cref="RecipeExcerpts"/>.</summary>
+    /// <exception cref="ArgumentNullException"><see cref="RecipeExcerpts"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">A tool name in it is malformed or listed twice.</exception>
+    internal RecipeExcerptAllowlist ValidateRecipeExcerpts(string paramName)
+    {
+        ArgumentNullException.ThrowIfNull(RecipeExcerpts, $"{paramName}.{nameof(RecipeExcerpts)}");
+        return RecipeExcerptAllowlist.From(RecipeExcerpts, $"{paramName}.{nameof(RecipeExcerpts)}");
     }
 
     /// <summary>Refuses a <see cref="SessionStateKey"/> that could not name one account, unambiguously, in a state bag.</summary>

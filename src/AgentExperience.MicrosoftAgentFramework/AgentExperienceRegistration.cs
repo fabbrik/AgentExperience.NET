@@ -58,6 +58,21 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
                 ? recall with { SignatureSource = services.GetService<IExperienceSignatureSource>() }
                 : Options.Recall,
         };
+
+        // AgentExperienceOptions.Recipe (story 28.4): each tool's argument keys and, when it has an excerpt, the tool.
+        foreach (var recipe in Options.Recipes)
+        {
+            if (recipe.Arguments.Count > 0)
+            {
+                injection.ApproachArguments[recipe.ToolName] = recipe.Arguments;
+            }
+
+            if (recipe.ResultExcerpt is not null)
+            {
+                injection.RecipeExcerpts.Add(recipe.ToolName);
+            }
+        }
+
         Options.Injection?.Invoke(injection);
 
         return new ExperienceContextProvider(
@@ -103,6 +118,11 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
             capture.ResolveFinalizationAsync = (context, cancellationToken) => ResolveFinalizationAsync(verify, binding, context, cancellationToken);
         }
 
+        if (RecipeExcerpts() is { } excerpts)
+        {
+            capture.RecipeResultExcerpt = excerpts;
+        }
+
         Options.Capture?.Invoke(capture);
         services.GetRequiredService<AgentExperienceEmbeddingsRuntime>().Report(capture);
 
@@ -117,6 +137,27 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
         binding.NewId = capture.NewId;
         binding.Clock = capture.TimeProvider;
         return capture;
+    }
+
+    /// <summary>
+    /// The one excerpt callback the recipes set through <see cref="AgentExperienceOptions.Recipe"/> make: each call goes
+    /// to the callback of its own tool (ordinal), and a tool with none gets no excerpt. <see langword="null"/> when no
+    /// recipe has one.
+    /// </summary>
+    private Func<ExperienceToolResultContext, string?>? RecipeExcerpts()
+    {
+        var byTool = new Dictionary<string, Func<ExperienceToolResultContext, string?>>(StringComparer.Ordinal);
+        foreach (var recipe in Options.Recipes)
+        {
+            if (recipe.ResultExcerpt is { } excerpt)
+            {
+                byTool[recipe.ToolName] = excerpt;
+            }
+        }
+
+        return byTool.Count == 0
+            ? null
+            : context => byTool.TryGetValue(context.ToolName, out var excerpt) ? excerpt(context) : null;
     }
 
     /// <summary>

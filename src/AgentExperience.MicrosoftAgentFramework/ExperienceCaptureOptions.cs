@@ -258,6 +258,12 @@ public enum ExperienceCaptureFailureStage
     /// provider, on the first captured run it would have served.
     /// </summary>
     Recall,
+
+    /// <summary>
+    /// The host's <see cref="ExperienceCaptureOptions.RecipeResultExcerpt"/> threw: the call is recorded without an
+    /// excerpt, exactly as it would be with no callback. Reported once per run, naming only the exception's type.
+    /// </summary>
+    RecipeExcerpt,
 }
 
 /// <summary>
@@ -431,6 +437,38 @@ public sealed class ExperienceCaptureOptions
     /// a single error-class token. It is a token itself, so a <c>Tried:</c> line shows it: <c>[failed: ToolReportedError]</c>.
     /// </summary>
     public const string ToolReportedErrorClass = "ToolReportedError";
+
+    /// <summary>
+    /// Optional, off by default: the <em>recipe</em>. For a tool call that returned and that capture records as returned
+    /// (not failed, <see cref="ClassifyToolResult"/> included), it gets the same context the classifier gets -- the
+    /// call, the tool, the raw arguments and the raw result -- and returns a short excerpt of the result the host
+    /// vouches for as what the working call produced (the version that was pinned, the key that was set), or
+    /// <see langword="null"/> for none. Used only when <see cref="CaptureToolCalls"/> is on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What happens to the excerpt.</b> It is stored on the call as <see cref="ToolCallRecord.RecipeExcerpt"/> after
+    /// the capture sanitizer's text rules (the <c>ToolResult</c> policy that results go through; a refused excerpt is
+    /// dropped, never the call), cut to <c>CaptureLimits.MaxRecipeExcerptLength</c> characters (200 by default) after
+    /// sanitization and never between a surrogate pair. It is signed with the record (claims version 4). A later
+    /// agent sees it only on the <c>Worked:</c> attempt's line, as <c>tool(...) [returned: "excerpt"]</c>, and only for a
+    /// tool its <c>ExperienceInjectionOptions.RecipeExcerpts</c> names; a failed call never has one. Nothing else of the
+    /// result is ever shown. <c>AgentExperienceOptions.Recipe</c> sets this, the argument allowlists and the injection
+    /// allowlist together.
+    /// </para>
+    /// <para>
+    /// <b>Vouch only for what a later model may read.</b> The excerpt is text a later model is shown: return a value
+    /// from a small, known shape (a version, a flag, a file name), never free text, personal data, or anything a secret
+    /// could be written into. The sanitizer classifies by field name, not content.
+    /// </para>
+    /// <para>
+    /// A callback that throws leaves the call recorded without an excerpt and is reported once per run through
+    /// <see cref="OnCaptureFailure"/> at <see cref="ExperienceCaptureFailureStage.RecipeExcerpt"/>, the reason naming only the
+    /// exception's type. It runs inline, on the tool-invocation thread, possibly concurrently with itself, and its
+    /// context's values are the live objects the model works with: keep it fast, and change nothing.
+    /// </para>
+    /// </remarks>
+    public Func<ExperienceToolResultContext, string?>? RecipeResultExcerpt { get; set; }
 
     /// <summary>
     /// The upper bound on the whole post-invocation step per run: append the attempt, complete the

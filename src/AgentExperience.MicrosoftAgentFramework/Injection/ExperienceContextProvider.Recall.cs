@@ -411,7 +411,8 @@ public sealed partial class ExperienceContextProvider
             recall.MaxHintBytes,
             out var included,
             out var borrowedArgumentsShown,
-            out var overBudget);
+            out var overBudget,
+            _recipe);
         foreach (var experienceId in overBudget)
         {
             omitted.Add(new OmittedExperience(experienceId, InjectionOmissionReason.OverByteBudget, $"The record did not fit the hint's {recall.MaxHintBytes}-byte budget."));

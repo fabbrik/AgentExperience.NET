@@ -36,7 +36,7 @@ namespace AgentExperience.Core.Confidence;
 /// </para>
 /// <para>
 /// <b>What it does to authorship.</b> With these options registered, a record's content is <em>confirmed</em> only
-/// when it carries a version 3 or version 2 signature under a key in the ring that verifies, carries no signature and its ID is in
+/// when it carries a version 4, version 3 or version 2 signature under a key in the ring that verifies, carries no signature and its ID is in
 /// <see cref="TrustUnsignedRecordIds"/>, or is confirmed by <see cref="ConfirmV1Content"/> or
 /// <see cref="ConfirmContentRecordIds"/>. A record whose content is not confirmed -- a version 1 signature, none, an
 /// unknown key, one that does not verify, or content that cannot be encoded -- counts as model-authored: <c>ExperienceRetrievalService</c> excludes
@@ -163,9 +163,10 @@ public sealed class ExperienceProvenanceSigningOptions
 
     /// <summary>
     /// The claims version finalization signs new records with: 3 (the default) signs the finalization claims and a
-    /// digest of the record's content, attempt and tool-call error text included; 2 signs the same digest without any
+    /// digest of the record's content, attempt and tool-call error text included, but not a recipe excerpt
+    /// (<see cref="ToolCallRecord.RecipeExcerpt"/>); 4 signs the same with every excerpt added; 2 signs the same digest without any
     /// error text, as <c>0.1.0-preview.7</c> through <c>0.1.0-preview.9</c> did; 1 signs the finalization claims only,
-    /// as <c>0.1.0-preview.6</c> and earlier did. Verification accepts all three whatever this says.
+    /// as <c>0.1.0-preview.6</c> and earlier did. Verification accepts all four whatever this says.
     /// </summary>
     /// <remarks>
     /// Lower it only for the duration of a rolling deploy in which nodes on an earlier build still verify: they refuse
@@ -175,16 +176,22 @@ public sealed class ExperienceProvenanceSigningOptions
     /// <c>[returned]</c>/<c>[failed: …]</c> marker of a version 2 record are unsigned. Set it to 1 only when nodes on
     /// <c>0.1.0-preview.6</c> or earlier still verify: records signed version 1 have content nothing confirms, so with
     /// signing on they are fenced as model-authored at injection (unless <see cref="ConfirmV1Content"/> is set).
+    /// <para>
+    /// <b>Recipe excerpts need 4.</b> Under 3, 2 or 1 a record's excerpts are left unsigned, and with signing configured
+    /// injection never shows an excerpt that no version 4 signature confirms (the rest of the record renders as
+    /// before). To show recipe excerpts with signing on, set 4 once every node that verifies runs a build that knows
+    /// version 4: a node on an earlier build refuses a version 4 signature as one it cannot check.
+    /// </para>
     /// </remarks>
-    /// <exception cref="ArgumentOutOfRangeException">Set to anything but 1, 2 or 3.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">Set to anything but 1, 2, 3 or 4.</exception>
     public int SignClaimsVersion
     {
         get => _signClaimsVersion;
         init
         {
-            if (value is not (1 or 2 or 3))
+            if (value is not (1 or 2 or 3 or 4))
             {
-                throw new ArgumentOutOfRangeException(nameof(value), value, "The provenance claims version must be 1, 2 or 3.");
+                throw new ArgumentOutOfRangeException(nameof(value), value, "The provenance claims version must be 1, 2, 3 or 4.");
             }
 
             _signClaimsVersion = value;
@@ -397,6 +404,12 @@ internal enum ProvenanceSignatureCheck
 /// string (that byte is its presence byte, so the length and UTF-8 bytes follow it when present); per tool call,
 /// <see cref="ToolCallRecord.Error"/> follows its arguments as a string. Every other byte is the version 2 byte.
 /// </para>
+/// <para>
+/// Claims version 4 (<see cref="EncodeV4"/>) is the version 3 encoding under the tag <c>aexp-prov:v4</c>, followed by
+/// the digest of <see cref="EncodeContentV4"/>: the version 3 content encoding with each tool call's
+/// <see cref="ToolCallRecord.RecipeExcerpt"/> following its error as a string (a presence byte of 0 when it has none).
+/// Every other byte is the version 3 byte.
+/// </para>
 /// </remarks>
 internal sealed class ProvenanceSigner
 {
@@ -405,6 +418,8 @@ internal sealed class ProvenanceSigner
     internal const string VersionTagV2 = "aexp-prov:v2";
 
     internal const string VersionTagV3 = "aexp-prov:v3";
+
+    internal const string VersionTagV4 = "aexp-prov:v4";
 
     /// <summary>The one sentence a caller is told for any signature that does not vouch: no oracle for which check failed.</summary>
     internal const string RefusalText = "its provenance signature does not vouch for it";
@@ -468,12 +483,24 @@ internal sealed class ProvenanceSigner
     {
         1 => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256, HMACSHA256.HashData(_keys[_currentKeyId], Encode(record))),
         2 => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256ClaimsV2, HMACSHA256.HashData(_keys[_currentKeyId], EncodeV2(record))),
-        _ => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256ClaimsV3, HMACSHA256.HashData(_keys[_currentKeyId], EncodeV3(record))),
+        3 => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256ClaimsV3, HMACSHA256.HashData(_keys[_currentKeyId], EncodeV3(record))),
+        _ => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256ClaimsV4, HMACSHA256.HashData(_keys[_currentKeyId], EncodeV4(record))),
     };
 
     /// <summary>
+    /// Whether <paramref name="record"/>'s recipe excerpts (<see cref="ToolCallRecord.RecipeExcerpt"/>) are confirmed:
+    /// it carries a claims version 4 signature, under a key in the ring, that verifies. No other signature covers an
+    /// excerpt, and neither the cutover set nor <see cref="ExperienceProvenanceSigningOptions.ConfirmContentRecordIds"/>
+    /// confirms one.
+    /// </summary>
+    internal bool ConfirmsRecipeExcerpts(ExperienceRecord record) =>
+        record.ProvenanceSignature is { } signature
+        && string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV4, StringComparison.Ordinal)
+        && Verify(record) == ProvenanceSignatureCheck.Valid;
+
+    /// <summary>
     /// Whether <paramref name="record"/>'s content -- everything the injection writer renders from it (see
-    /// <see cref="EncodeContent"/>) -- is confirmed: it carries a claims version 3 or version 2 signature, under a key
+    /// <see cref="EncodeContent"/>) -- is confirmed: it carries a claims version 4, version 3 or version 2 signature, under a key
     /// in the ring, that verifies (version 2 covers no error text); or a version 1 signature that verifies while
     /// <see cref="ExperienceProvenanceSigningOptions.ConfirmV1Content"/> is set or its ID is in
     /// <see cref="ExperienceProvenanceSigningOptions.ConfirmContentRecordIds"/>; or no signature, and its ID is in the
@@ -487,7 +514,8 @@ internal sealed class ProvenanceSigner
             return listed || _trustUnsigned.Contains(record.ExperienceId);
         }
 
-        var v3 = string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV3, StringComparison.Ordinal);
+        var v3 = string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV3, StringComparison.Ordinal)
+            || string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV4, StringComparison.Ordinal);
         var v2 = string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV2, StringComparison.Ordinal);
         var v1 = string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256, StringComparison.Ordinal);
         return (v3 || v2 || (v1 && (_confirmV1Content || listed))) && Verify(record) == ProvenanceSignatureCheck.Valid;
@@ -513,7 +541,11 @@ internal sealed class ProvenanceSigner
         }
 
         Func<ExperienceRecord, byte[]> encode;
-        if (string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV3, StringComparison.Ordinal))
+        if (string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV4, StringComparison.Ordinal))
+        {
+            encode = EncodeV4;
+        }
+        else if (string.Equals(signature.Algorithm, ExperienceProvenanceSignature.HmacSha256ClaimsV3, StringComparison.Ordinal))
         {
             encode = EncodeV3;
         }
@@ -607,6 +639,19 @@ internal sealed class ProvenanceSigner
     });
 
     /// <summary>
+    /// The canonical encoding of <paramref name="record"/>'s claims version 4: its finalization claims under the tag
+    /// <c>aexp-prov:v4</c>, then the SHA-256 digest of <see cref="EncodeContentV4"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">A claim or a content field has no canonical encoding.</exception>
+    internal static byte[] EncodeV4(ExperienceRecord record) => Guarded(() =>
+    {
+        using var buffer = new MemoryStream();
+        WriteClaims(buffer, record, VersionTagV4);
+        buffer.Write(SHA256.HashData(EncodeContentCore(record, includeErrors: true, includeRecipes: true)));
+        return buffer.ToArray();
+    });
+
+    /// <summary>
     /// The canonical encoding of <paramref name="record"/>'s content -- everything the injection writer can render
     /// from it -- in the order the type's remarks pin.
     /// </summary>
@@ -620,7 +665,15 @@ internal sealed class ProvenanceSigner
     /// <exception cref="ArgumentException">A string is not well-formed UTF-16, or an argument value has no JSON form.</exception>
     internal static byte[] EncodeContentV3(ExperienceRecord record) => Guarded(() => EncodeContentCore(record, includeErrors: true));
 
-    private static byte[] EncodeContentCore(ExperienceRecord record, bool includeErrors)
+    /// <summary>
+    /// The canonical content encoding of claims version 4: <see cref="EncodeContentV3"/> with every tool call's
+    /// <see cref="ToolCallRecord.RecipeExcerpt"/> added, as a string, after its error.
+    /// </summary>
+    /// <exception cref="ArgumentException">A string is not well-formed UTF-16, or an argument value has no JSON form.</exception>
+    internal static byte[] EncodeContentV4(ExperienceRecord record) =>
+        Guarded(() => EncodeContentCore(record, includeErrors: true, includeRecipes: true));
+
+    private static byte[] EncodeContentCore(ExperienceRecord record, bool includeErrors, bool includeRecipes = false)
     {
         ArgumentNullException.ThrowIfNull(record);
 
@@ -720,6 +773,12 @@ internal sealed class ProvenanceSigner
                     if (includeErrors)
                     {
                         WriteString(buffer, call.Error);
+                    }
+
+                    // Claims version 4: the recipe excerpt the Worked: attempt's marker can show, after the error.
+                    if (includeRecipes)
+                    {
+                        WriteString(buffer, call.RecipeExcerpt);
                     }
                 }
             }

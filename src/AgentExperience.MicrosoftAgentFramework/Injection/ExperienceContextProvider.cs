@@ -167,6 +167,7 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
     private readonly IExperienceRecordStore _store;
     private readonly ExperienceInjectionOptions _options;
     private readonly ApproachArgumentAllowlist _approachArguments;
+    private readonly RecipeRendering _recipe;
     private readonly CapabilityGate? _capabilityGate;
     private readonly bool _excludeModelAuthored;
     private readonly string _stateKey;
@@ -206,12 +207,14 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
         // A copy: the options are settable, and what was validated here must be what every invocation runs under.
         options = options.Snapshot();
         var approachArguments = options.Validate(nameof(options));
+        var recipeExcerpts = options.ValidateRecipeExcerpts(nameof(options));
         var capabilityGate = CapabilityGate.Create(options.ReceivingAgent, nameof(options));
 
         _retrieval = retrieval;
         _store = store;
         _options = options;
         _approachArguments = approachArguments;
+        _recipe = recipeExcerpts.IsEmpty ? RecipeRendering.None : new RecipeRendering(recipeExcerpts, retrieval.AreRecipeExcerptsConfirmed);
         _capabilityGate = capabilityGate;
         _excludeModelAuthored = options.ModelAuthoredLessons == ModelAuthoredLessonPolicy.Exclude;
 
@@ -242,7 +245,8 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
             sessionBytesRemaining: null,
             _retrieval.IsContentConfirmed,
             _options.FailureDetail,
-            _options.Rendering);
+            _options.Rendering,
+            _recipe);
 
     /// <summary>
     /// <paramref name="record"/>'s lesson alone, as this provider's writer and options render it, without the block's or
@@ -696,7 +700,8 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
                 session?.RemainingBytes,
                 _retrieval.IsContentConfirmed,
                 _options.FailureDetail,
-                _options.Rendering);
+                _options.Rendering,
+                _recipe);
         }
         catch (Exception ex)
         {
@@ -750,7 +755,8 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
                         session?.RemainingBytes,
                         _retrieval.IsContentConfirmed,
                         _options.FailureDetail,
-                        _options.Rendering);
+                        _options.Rendering,
+                        _recipe);
                 }
                 catch (Exception ex)
                 {
@@ -1119,6 +1125,30 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
             limits,
             _options.Rendering,
             dirty: legacy || current.Pending.Count != state.Pending.Count);
+    }
+
+    /// <summary>
+    /// A read-only copy of a store's owner recipe-excerpt tool list, or <see langword="null"/> when there is none or it
+    /// cannot be read -- which shows no borrowed excerpt.
+    /// </summary>
+    private static IReadOnlyList<string>? FrozenGrantTools(IReadOnlyList<string>? stored)
+    {
+        if (stored is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var copy = stored.ToArray();
+            return copy.Any(tool => tool is null) ? null : Array.AsReadOnly(copy);
+        }
+#pragma warning disable CA1031 // A custom store's collection that throws names no tool; it must not fail the block.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -1763,6 +1793,14 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
                     && result.PermittingGrantId is not null
                         ? FrozenGrantArguments(result.GrantApproachArguments)
                         : null,
+
+                // Story 28.4: the owner's recipe-excerpt consent, under the same rules: a borrowed record, a level that
+                // shows the approach, a named grant, and a read-only copy.
+                GrantRecipeExcerpts = result.SharedByGrant
+                    && result.GrantDisclosure is ExperienceGrantDisclosure.LessonAndApproach or ExperienceGrantDisclosure.LessonApproachAndArguments
+                    && result.PermittingGrantId is not null
+                        ? FrozenGrantTools(result.GrantRecipeExcerpts)
+                        : null,
             };
 
             // Model-authored lessons the host excluded (story 14.3). Select already dropped every candidate that
@@ -1806,6 +1844,7 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
                         refreshed.GrantApproachArguments)
                     {
                         ModelAuthored = modelAuthored,
+                        GrantRecipeExcerpts = refreshed.GrantRecipeExcerpts,
                     });
                 }
                 catch (Exception ex)

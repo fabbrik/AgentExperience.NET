@@ -2,7 +2,8 @@ package postgres
 
 // The record schema check. It lives in this module, not the core's, because it needs a JSON Schema validator and the
 // core module lists no third-party requirement. Every stored record in the fixtures, and every record the core
-// writes for a finalize fixture, validates against contract/schema/experience-record.v1.json.
+// writes for a finalize fixture, validates against contract/schema/experience-record.v1-1.19.json (contract 1.19's
+// schema: the 1.0 one plus a tool call's optional recipeExcerpt).
 
 import (
 	"bytes"
@@ -61,11 +62,11 @@ func schema(t *testing.T) *jsonschema.Schema {
 		}
 		compiler := jsonschema.NewCompiler()
 		compiler.UseRegexpEngine(ecmaRegexp)
-		if err := compiler.AddResource("experience-record.v1.json", document); err != nil {
+		if err := compiler.AddResource("experience-record.v1-1.19.json", document); err != nil {
 			recordSchemaEr = err
 			return
 		}
-		recordSchema, recordSchemaEr = compiler.Compile("experience-record.v1.json")
+		recordSchema, recordSchemaEr = compiler.Compile("experience-record.v1-1.19.json")
 	})
 	if recordSchemaEr != nil {
 		t.Fatalf("the record schema does not compile: %v", recordSchemaEr)

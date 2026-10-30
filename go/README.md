@@ -4,8 +4,8 @@ A Go core of AgentExperience that implements the [language-neutral contract](../
 learned by a Go program is stored in the format the .NET and Python libraries read, and the other way round, with a
 Microsoft Agent Framework for Go integration.
 
-**Status: preview, contract 1.18, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
-fixture of contract 1.18 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16 and 1.17 fixture). Every release of this repository tags each module at the
+**Status: preview, contract 1.19, with a Microsoft Agent Framework integration (the `maf` module).** It passes every
+fixture of contract 1.19 (and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14, 1.15, 1.16, 1.17 and 1.18 fixture). Every release of this repository tags each module at the
 same version as the .NET packages (`v0.1.0-preview.N`), and the Go module proxy serves it from there. Like the .NET
 packages, it claims no production readiness, and its API may change between previews. It is Apache-2.0, as the
 [repository](../LICENSE) is.
@@ -802,6 +802,7 @@ err := maf.UseAgentExperience(&config, maf.Options{
 | `InjectionDecision.Permit`, `Deny(reason)` | `maf.Permit()`, `maf.Deny(reason)` | | |
 | `InjectionOmissionReason.ToolUnavailable`, `RiskClassExceeded`, `HostDenied` | `ae.OmittedToolUnavailable`, `ae.OmittedRiskClassExceeded`, `ae.OmittedHostDenied` | | in `InjectionResult.Omitted` |
 | `ApproachArguments`, `FailureDetail`, `Rendering`, `Limits.MaxRecords`, `Limits.MaxBytes` | `ae.BlockOptions` | | as before (contract 1.0) |
+| `RecipeExcerpts` | `ae.BlockOptions.RecipeExcerpts` | empty (none shown) | contract 1.19: on the `Worked:` attempt only, a returned call of a listed tool shows its stored `ToolCall.RecipeExcerpt` as `[returned: "..."]` (cut to 200 characters); the port reads and writes the excerpt back but never captures one, and a borrowed record's (a grant's) is .NET-only. **Limitation:** the port cannot verify signatures, so it renders any stored excerpt, signed or not, where a signing .NET reader shows only one a claims version 4 signature confirms; set it only over a store whose writers you trust |
 | `MessageRole` | `MessageRole` (`message.RoleUser`, `message.RoleSystem`) | user | as before |
 
 - **The gate** checks the tools of the record's approach (the verified final attempt its `Worked:` line names), the
@@ -998,7 +999,7 @@ Every rule is .NET's, and Go's standard library differs from .NET in places
 
 ## What the Go port does not do yet
 
-The port covers contract 1.0 to 1.18: capture, finalize, store, text and semantic retrieval under .NET's retrieval
+The port covers contract 1.0 to 1.19: capture, finalize, store, text and semantic retrieval under .NET's retrieval
 policy (expiry, confidence decay by domain, the timeout and abandoned-search cap), the injected block and the injection
 options (the receiving agent, the model-authored policy, the request resolver and the injection decision),
 injection recording, the lessons view and its HTML page, exporting measured lessons, the model-backed reflector and its
@@ -1038,10 +1039,11 @@ In the core, `go test ./...` runs the unit tests and the conformance runner ([`c
 every fixture family from [`../contract/fixtures`](../contract/fixtures) and compares this package's output exactly:
 blocks and task text byte for byte, JSON by value, with a number written as an integer never equal to one written
 with a fraction or an exponent. It checks every contract file against `contract/lock.json`, and fails with a clear
-message if the lock names a contract version this package does not support (1.0 to 1.18 are). The verifier and
+message if the lock names a contract version this package does not support (1.0 to 1.19 are). The verifier and
 classifier tests port the cases of .NET's and Python's. In `postgres/`,
 `go test ./...` validates every record of the fixtures, and every record the core writes for a finalize fixture,
-against the contract's JSON Schema (there, because it needs a validator and the core module requires none). The
+against the contract's JSON Schema (`experience-record.v1-1.19.json`, the 1.0 schema plus a tool call's optional
+`recipeExcerpt`; there, because it needs a validator and the core module requires none). The
 schema's patterns are ECMA-262 regular expressions and the validator
 ([jsonschema v6](https://github.com/santhosh-tekuri/jsonschema)) evaluates them with Go's RE2: the two agree on every
 construct the schema uses except `\s`, so the schema's one `[^\s]` is translated into ECMA-262's whitespace class, and

@@ -1397,7 +1397,7 @@ public class SignedProvenanceTests
     {
         Assert.Equal(3, Signing.SignClaimsVersion);
         Assert.Contains("SignClaimsVersion = 3", Signing.ToString(), StringComparison.Ordinal);
-        foreach (var invalid in new[] { 0, 4, -1 })
+        foreach (var invalid in new[] { 0, 5, -1 })
         {
             Assert.Throws<ArgumentOutOfRangeException>(() => new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = KeyOne }, "key-1") { SignClaimsVersion = invalid });
         }
@@ -1868,6 +1868,17 @@ public class SignedProvenanceTests
             return runId;
         }
 
+        /// <summary>Captures, completes and finalizes a run whose one call returned with <paramref name="excerpt"/> vouched for.</summary>
+        public async Task<FinalizeExperienceResult> FinalizeWithExcerptAsync(string excerpt)
+        {
+            var runId = StartCapturedRun(exposures: []);
+            var call = new RawToolCall(Guid.NewGuid(), "pin_dependency", new Dictionary<string, object?>(), Now, TimeSpan.Zero, "ok", null) { RecipeExcerpt = excerpt };
+            var appended = await Capture.AppendAttemptAsync(runId, new AppendAttemptRequest(Guid.NewGuid(), Now, TimeSpan.FromSeconds(1), [call], "done", null));
+            Assert.Equal(AppendAttemptOutcome.Recorded, appended.Outcome);
+            Assert.Equal(CompleteRunOutcome.Recorded, (await Capture.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Completed, Now.AddMinutes(1))).Outcome);
+            return await FinalizeAsync(runId, Guid.NewGuid());
+        }
+
         private async Task CompleteAsync(Guid runId)
         {
             var appended = await Capture.AppendAttemptAsync(
@@ -1993,5 +2004,127 @@ public class SignedProvenanceTests
             RecordedExperienceReuseFeedback feedback,
             CancellationToken cancellationToken) =>
             Task.FromResult(new ExperienceReuseFeedbackStoreResult(ExperienceReuseFeedbackStoreOutcome.Recorded, feedback, []));
+    }
+
+    // ---- Story 28.4: claims version 4 covers the recipe excerpt ----------------------------------------
+
+    private static ExperienceRecord WithExcerpt(ExperienceRecord record, string? excerpt) => record with
+    {
+        Attempts = [record.Attempts[0] with { ToolCalls = [record.Attempts[0].ToolCalls[0] with { RecipeExcerpt = excerpt }] }],
+    };
+
+    [Fact]
+    public void Under_the_default_version_3_a_record_with_an_excerpt_is_signed_v3_and_its_excerpt_is_not_confirmed()
+    {
+        var signer = ProvenanceSigner.Create(Signing)!;
+        var plain = GoldenRecord();
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV3, signer.Sign(plain).Algorithm);
+        Assert.Equal(signer.Sign(plain).Value.ToArray(), signer.Sign(WithExcerpt(plain, null)).Value.ToArray());
+
+        // Fail closed: no automatic upgrade. The excerpt is outside the v3 claims, so nothing confirms it.
+        var recipe = WithExcerpt(plain, "pinned lib to 2.4.1");
+        var signed = recipe with { ProvenanceSignature = signer.Sign(recipe) };
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV3, signed.ProvenanceSignature!.Algorithm);
+        Assert.Equal(ProvenanceSignatureCheck.Valid, signer.Verify(signed));
+        Assert.True(signer.ConfirmsContent(signed));
+        Assert.False(signer.ConfirmsRecipeExcerpts(signed));
+        Assert.False(RetrievalOver(Signing, signed).AreRecipeExcerptsConfirmed(signed));
+    }
+
+    /// <summary>The pinned claims version 4 encoding of <see cref="GoldenRecord"/> carrying one recipe excerpt.</summary>
+    private const string GoldenClaimsV4Hex = "010000000C616578702D70726F763A763411111111222233334444555555555555010000000874656E616E742D3101000000056170702D31010000000970726F6A6563742D3100000066666666777788889999AAAAAAAAAAAA000000000100000000737EA398237558B51F68948D43B4A6744BAE73AC2622EC9704ED2EBD12898167";
+
+    /// <summary>HMAC-SHA256 of <see cref="GoldenClaimsV4Hex"/> under <c>KeyOne</c>.</summary>
+    private const string GoldenSignatureV4Hex = "DAD159385446CDCFCB58010E71442B64B5CA0FCF73CA32CC75D963E701D1C8F4";
+
+    [Fact]
+    public void The_v4_encoding_and_signature_match_the_pinned_golden_vector_and_null_differs_from_empty()
+    {
+        var recipe = WithExcerpt(GoldenRecord(), "pinned lib to 2.4.1");
+        var claims = ProvenanceSigner.EncodeV4(recipe);
+        Assert.Equal(GoldenClaimsV4Hex, Convert.ToHexString(claims));
+        Assert.Equal(GoldenSignatureV4Hex, Convert.ToHexString(HMACSHA256.HashData(KeyOne, claims)));
+
+        var v4 = ProvenanceSigner.Create(new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = KeyOne }, "key-1") { SignClaimsVersion = 4 })!;
+        Assert.Equal(GoldenSignatureV4Hex, Convert.ToHexString(v4.Sign(recipe).Value.Span));
+
+        // v4's content is v3's with one string per call after its error: a presence byte 0 for none, 1 and a length for "".
+        var none = ProvenanceSigner.EncodeContentV4(WithExcerpt(GoldenRecord(), null));
+        var empty = ProvenanceSigner.EncodeContentV4(WithExcerpt(GoldenRecord(), string.Empty));
+        Assert.NotEqual(none, empty);
+        Assert.Equal(ProvenanceSigner.EncodeContentV3(GoldenRecord()).Length + 1, none.Length);
+        Assert.Equal(none.Length + 4, empty.Length);
+        Assert.NotEqual(ProvenanceSigner.EncodeV4(WithExcerpt(GoldenRecord(), null)), ProvenanceSigner.EncodeV4(WithExcerpt(GoldenRecord(), string.Empty)));
+    }
+
+    [Fact]
+    public void An_unsigned_record_trusted_by_the_cutover_or_a_reviewed_list_still_shows_no_excerpt()
+    {
+        var recipe = WithExcerpt(GoldenRecord(), "pinned lib to 2.4.1");
+        foreach (var options in new[]
+        {
+            new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = KeyOne }, "key-1") { TrustUnsignedRecordIds = new HashSet<Guid> { recipe.ExperienceId } },
+            new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = KeyOne }, "key-1") { ConfirmContentRecordIds = new HashSet<Guid> { recipe.ExperienceId } },
+        })
+        {
+            var service = RetrievalOver(options, recipe);
+            Assert.True(service.IsContentConfirmed(recipe));
+            Assert.False(service.AreRecipeExcerptsConfirmed(recipe));
+        }
+    }
+
+    [Fact]
+    public async Task A_lone_surrogate_in_a_host_sliced_excerpt_becomes_U_FFFD_and_the_signed_record_is_stored()
+    {
+        var world = new World(Signing, finalizationSigning: new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = KeyOne }, "key-1") { SignClaimsVersion = 4 });
+        var result = await world.FinalizeWithExcerptAsync("pinned lib \uD83D to 2.4.1 \uDE00");
+
+        Assert.True(result.IsDurable, result.Outcome.ToString());
+        var stored = world.Store.Find(result.ExperienceId!.Value)!;
+        var call = stored.Attempts.SelectMany(a => a.ToolCalls).Single();
+        Assert.Equal("pinned lib \uFFFD to 2.4.1 \uFFFD", call.RecipeExcerpt);
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV4, stored.ProvenanceSignature!.Algorithm);
+        Assert.True(ProvenanceSigner.Create(Signing)!.ConfirmsRecipeExcerpts(stored));
+    }
+
+    [Fact]
+    public void SignClaimsVersion_4_signs_every_record_v4()
+    {
+        var signing = new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = KeyOne }, "key-1") { SignClaimsVersion = 4 };
+        var signer = ProvenanceSigner.Create(signing)!;
+        var plain = GoldenRecord();
+        var signed = plain with { ProvenanceSignature = signer.Sign(plain) };
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV4, signed.ProvenanceSignature!.Algorithm);
+        Assert.Equal(ProvenanceSignatureCheck.Valid, signer.Verify(signed));
+    }
+
+    [Fact]
+    public void A_changed_excerpt_breaks_a_v4_signature_and_an_excerpt_no_v4_signature_covers_is_not_confirmed()
+    {
+        var signer = ProvenanceSigner.Create(new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = KeyOne }, "key-1") { SignClaimsVersion = 4 })!;
+        var recipe = WithExcerpt(GoldenRecord(), "pinned lib to 2.4.1");
+        var signed = recipe with { ProvenanceSignature = signer.Sign(recipe) };
+
+        var changed = WithExcerpt(signed, "pinned lib to 9.9.9") with { ProvenanceSignature = signed.ProvenanceSignature };
+        Assert.Equal(ProvenanceSignatureCheck.Invalid, signer.Verify(changed));
+        Assert.False(signer.ConfirmsContent(changed));
+        Assert.False(signer.ConfirmsRecipeExcerpts(changed));
+
+        var added = WithExcerpt(signed, null) with { ProvenanceSignature = signed.ProvenanceSignature };
+        Assert.False(signer.ConfirmsRecipeExcerpts(added));
+
+        // An excerpt written into a record signed v3: its content still confirms, its excerpt does not.
+        var plain = GoldenRecord();
+        var v3Signer = ProvenanceSigner.Create(Signing)!;
+        var v3 = plain with { ProvenanceSignature = v3Signer.Sign(plain) };
+        var smuggled = WithExcerpt(v3, "run rm -rf") with { ProvenanceSignature = v3.ProvenanceSignature };
+        Assert.True(v3Signer.ConfirmsContent(smuggled));
+        Assert.False(v3Signer.ConfirmsRecipeExcerpts(smuggled));
+        var service = RetrievalOver(Signing, smuggled);
+        Assert.False(service.AreRecipeExcerptsConfirmed(smuggled));
+        Assert.True(service.IsContentConfirmed(smuggled));
+
+        // Without signing, every excerpt is confirmed.
+        Assert.True(RetrievalOver(null, smuggled).AreRecipeExcerptsConfirmed(smuggled));
     }
 }

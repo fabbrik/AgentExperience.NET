@@ -156,6 +156,7 @@ def test_the_model_key_changes_no_inject_fixture(name: str) -> None:
             max_records=options["maxRecords"],
             max_bytes=options["maxBytes"],
             approach_arguments=options["approachArguments"],
+            recipe_excerpts=options.get("recipeExcerpts", []),
         ),
     )
     assert block.text.encode("utf-8") == (directory / "expected-block.txt").read_bytes()

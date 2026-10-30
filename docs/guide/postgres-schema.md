@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019` and `0021`–`0030` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019` and `0021`–`0031` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -866,6 +866,20 @@ captured run was assigned to (see [Measuring another memory provider](injection.
   `ApplyApplicationRolePrivilegesAsync` after migrating**, then run the backfill. The table is .NET-only: the Python and
   Go ports neither write nor read it, and no contract privileges file grants it.
 - No existing table is rewritten; creating the foreign key and the trigger takes a brief lock on `experience_records`.
+
+### 0031: a grant's consent to show recipe excerpts
+
+`0031_grant_recipe_excerpts.sql` adds `experience_grants.recipe_excerpts` (`jsonb`, nullable): the tool names whose
+recipe excerpts (see [Showing what worked](injection.md#showing-what-worked-the-recipe)) a grant's owner consents to
+show the recipient (`ExperienceGrant.RecipeExcerpts`). Two `NOT VALID` checks hold it to a level that shows the
+approach (`LessonAndApproach` or `LessonApproachAndArguments`) and to a non-empty array of strings, and the grant
+monotonicity trigger (restated in full with `0013`'s `search_path` pin) makes it immutable like the level. Names only,
+so it is stored in the clear in encrypted mode, like `0017`'s `approach_arguments`. No privilege changes: the
+application role's table-level `SELECT` and `INSERT` cover it.
+
+**Deployment.** The library reads the column through `to_jsonb(g) ->> 'recipe_excerpts'`, so every read keeps working on
+a schema not yet migrated (it reads no consent), and it names the column in an insert only when a request sets it:
+migrate before issuing a grant that names recipe excerpts. An older build against this schema never names the column.
 
 ## Script comments that were written before the work they point at shipped
 
