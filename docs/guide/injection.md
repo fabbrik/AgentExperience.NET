@@ -194,8 +194,8 @@ checked once, on the ranked record. Python cannot use `UseRunTools` for tools pa
 agent-framework does not hand them to a context provider, so only the agent's own tools and those an earlier provider
 added count. In Go a zero window multiplier means 4, and `Deny("")` reports the default detail. Still .NET-only: session
 tracking, withdrawal and the final re-read (`SessionLimits`, `SessionStateKey`, `Limits.EligibilityCheckTimeout`,
-`Limits.MaxAbandonedReads`: story 27.6), unconfirmed content (27.7), the decision context's grant fields (27.8) and
-required environment attributes.
+`Limits.MaxAbandonedReads`), unconfirmed content, the decision context's grant fields and required environment
+attributes.
 
 ## What the agent sees
 
