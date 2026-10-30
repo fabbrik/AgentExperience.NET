@@ -50,9 +50,9 @@ func firstDifference(expected, actual string) string {
 func TestHTMLEncodeIsWebUtilityHtmlEncode(t *testing.T) {
 	for input, expected := range map[string]string{
 		`<a href="x">'&'</a>`: "&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;",
-		"\u00a0é\u00ff\u0100":  "&#160;&#233;&#255;\u0100",
-		"😀 雪 \u009f":           "&#128512; 雪 \u009f",
-		"bad\xffbyte":          "bad\uFFFDbyte",
+		"\u00a0é\u00ff\u0100": "&#160;&#233;&#255;\u0100",
+		"😀 雪 \u009f":          "&#128512; 雪 \u009f",
+		"bad\xffbyte":         "bad\uFFFDbyte",
 	} {
 		if actual := ae.HTMLEncode(input); actual != expected {
 			t.Errorf("%q: %q, not %q", input, actual, expected)

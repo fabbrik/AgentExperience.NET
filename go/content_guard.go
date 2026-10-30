@@ -97,9 +97,15 @@ func isDecimalU(r rune) bool { return bmp(r) && category(r) == "Nd" }
 
 func isLN(r rune) bool { return isLetterU(r) || isNumberU(r) }
 
-// lowerInvariant is .NET's ToLowerInvariant: each character's simple lower-case mapping.
+// lowerInvariant is .NET's ToLowerInvariant: each character's simple lower-case mapping, but for the dotted capital
+// I (U+0130), which the invariant culture leaves as it is.
 func lowerInvariant(text string) string {
-	return strings.Map(unicode.ToLower, text)
+	return strings.Map(func(r rune) rune {
+		if r == 0x0130 {
+			return r
+		}
+		return unicode.ToLower(r)
+	}, text)
 }
 
 // ---- The fixed lists -------------------------------------------------------------------------------------------

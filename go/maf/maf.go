@@ -261,6 +261,11 @@ type Options struct {
 	// Verify decides from your own facts whether a run is stored (see ae.ToolSucceeded and the others); without it
 	// nothing is stored.
 	Verify ae.Verifier
+	// Reflector writes the lesson of a verified run (contract 1.14): the deterministic reflector when nil. Opt in to a
+	// model with NewChatClientReflector; its call runs inside FinalizationTimeout, so raise that above the reflector's
+	// own Timeout. A reflector that fails, or whose reflection screening refuses, stores the run Quarantined, with no
+	// lesson (FinalizedExperience.ReflectionFailure, ScreeningRefusal).
+	Reflector ae.Reflector
 	// ClassifyToolResult marks a returned tool call as failed (see ae.ExitCode and ae.HTTPStatus).
 	ClassifyToolResult ae.ToolResultClassifier
 	// TaskID is the task ID runs are captured under; when empty, the agent's name reduced to an identifier, else
