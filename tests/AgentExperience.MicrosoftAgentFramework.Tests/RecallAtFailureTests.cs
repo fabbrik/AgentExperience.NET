@@ -492,6 +492,9 @@ public sealed partial class RecallAtFailureTests
                             ArtifactRevision: "recall-tests"));
                     };
                     configure?.Invoke(options);
+                    // On the system clock's timestamps a loaded machine can spend the default 300 ms bound before the
+                    // lookup ends (seen in CI). A test that wants the bound to pass sets its own clock and advances it.
+                    var realElapsed = options.TimeProvider is NeverFiringTimers;
                     var injection = options.Injection;
                     options.Injection = settings =>
                     {
@@ -500,7 +503,13 @@ public sealed partial class RecallAtFailureTests
                         settings.OnContextInjected = Injections.Add;
                         if (settings.Recall is { } recall)
                         {
-                            settings.Recall = recall with { OnRecall = result => { lock (Recalls) { Recalls.Add(result); } } };
+                            settings.Recall = recall with
+                            {
+                                LookupTimeout = realElapsed && recall.LookupTimeout == ExperienceRecallOptions.DefaultLookupTimeout
+                                    ? TimeSpan.FromHours(1)
+                                    : recall.LookupTimeout,
+                                OnRecall = result => { lock (Recalls) { Recalls.Add(result); } },
+                            };
                         }
                     };
                     options.Capture = capture =>
