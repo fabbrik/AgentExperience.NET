@@ -170,6 +170,33 @@ it through its own redaction first. It recognises no language: no stemming, no s
 | `TimeProvider` | `TimeProvider.System` | The clock the final eligibility check measures record expiry and its own timeout with. |
 | `Holdout` | `Rate = 0` (off) | The injection holdout: on a deterministic, run-ID-derived share (`Rate`, 0 to 1) of captured runs that have a block, the block is withheld (`Withheld`), and both arms are recorded for measuring benefit. A rate outside 0..1 or not a number, or an empty `Salt`, throws when the provider is constructed. See [Measuring benefit: the holdout](#measuring-benefit-the-holdout). |
 
+### In Python and Go
+
+Since contract 1.13 ([what it adds](../../contract/README-1.13.md)), the Python and Go agents take the same options,
+with .NET's defaults and validation, and inject the same block with the same omissions as a .NET agent configured the
+same way. A PostgreSQL test runs .NET, Python and Go agents with the same receiving agent and model-authored policy over
+the same rows and compares the blocks byte for byte. Each port's README maps the names.
+
+| .NET | Python (`use_agent_experience(...)`) | Go (`maf.Options`) |
+| --- | --- | --- |
+| `ResolveRequest` / `ResolveRequestAsync` | `resolve_request`: one callable, sync or async, given a `RequestContext`, returning an `InjectionRequest` or `None` | `ResolveRequest func(ctx, RequestContext) (*InjectionRequest, error)` |
+| `DecideInjection` | `decide_injection`, returning `InjectionDecision.permit()` / `deny(reason)` | `DecideInjection`, returning `InjectionDecision` (the zero value denies) |
+| `ReceivingAgent`, `ToolRiskClass` | `receiving_agent=ReceivingAgent(...)`, `ToolRiskClass` (`"Low"` to `"Critical"`) | `ReceivingAgent *ae.ReceivingAgent`, `ae.ToolRiskClass` |
+| `ModelAuthoredLessons` | `model_authored_lessons="Include"` / `"Exclude"` (`exclude_model_authored=True` still works) | `ModelAuthoredLessons` (`ExcludeModelAuthored` still works) |
+| `ApproachArguments`, `FailureDetail`, `Rendering`, `MessageRole`, `Limits.MaxRecords`/`MaxBytes` | as before (block options, `message_role`) | as before (`BlockOptions`, `MessageRole`) |
+
+The ports' request carries the task text, and optionally the preferred environment, a limit, the model-authored
+exclusion and a correlation ID; the authorization and scope come from the agent's identity, which is resolved first.
+A resolver that returns nothing is `Skipped`, one that fails is `Failed`, and a request retrieval would refuse is
+`RetrievalFailed`; the ports report those through their failure callback and telemetry, not their injected callback.
+The ports have no final eligibility re-read, so the host's decision sees the ranked record as `current`, and a gate is
+checked once, on the ranked record. Python cannot use `UseRunTools` for tools passed to one `run` call:
+agent-framework does not hand them to a context provider, so only the agent's own tools and those an earlier provider
+added count. In Go a zero window multiplier means 4, and `Deny("")` reports the default detail. Still .NET-only: session
+tracking, withdrawal and the final re-read (`SessionLimits`, `SessionStateKey`, `Limits.EligibilityCheckTimeout`,
+`Limits.MaxAbandonedReads`: story 27.6), unconfirmed content (27.7), the decision context's grant fields (27.8) and
+required environment attributes.
+
 ## What the agent sees
 
 | Situation | What the agent sees |
