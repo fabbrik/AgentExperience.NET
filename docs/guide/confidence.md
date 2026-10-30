@@ -220,8 +220,8 @@ so. A .NET reader sees it for what it is: `ReadConfidenceAsync` with `ExcludeHos
 out. **Because a port cannot verify, its default is `HostTrustedEvidence = RecordedOnly`**, not .NET's `Counted`: by
 default the evidence a port applies is recorded on an event that moves only the revision, never the counters, score or
 status, so a caller cannot inflate or contest a lesson with invented run IDs. A host that accepts that risk opts into
-`Counted` explicitly (Python `host_trusted_evidence="Counted"`, Go `HostTrustedEvidence: ae.HostTrustedCounted` or the
-port's equivalent), which is .NET's behaviour under `TrustHostSuppliedIdentifiers`. Reuse feedback and finalization's own reuse evidence (`ReuseEvidenceMode`) stay
+`Counted` explicitly (Python `host_trusted_evidence="Counted"`, Go `HostTrustedEvidence: ae.HostTrustedCounted`), which is .NET's behaviour under `TrustHostSuppliedIdentifiers`.
+Reuse feedback and finalization's own reuse evidence (`ReuseEvidenceMode`) stay
 .NET-only, so a mixed deployment that wants verified evidence still applies it from .NET.
 
 | .NET | Python (`agentexperience`) | Go (core module) |
