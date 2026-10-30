@@ -10,4 +10,14 @@
     <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);AGENTEXPERIENCE_ABSTRACTIONS</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Story 28.2: the error classifier the default reflector and the injected block share, so a failure signature's
+         error class is the very token a call's "[failed: …]" marker shows. -->
+    <Compile Include="..\Shared\ErrorClass.Shared.cs" Link="Shared\ErrorClass.Shared.cs" />
+  </ItemGroup>
+
 </Project>

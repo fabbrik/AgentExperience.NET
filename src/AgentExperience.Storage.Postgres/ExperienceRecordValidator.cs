@@ -120,6 +120,23 @@ internal static partial class ExperienceRecordValidator
         return errors;
     }
 
+    /// <summary>Validates a failure-signature backfill (story 28.2): the scope, the scope match, and the batch bound.</summary>
+    public static IReadOnlyList<StoreValidationError> ValidateSignatureBackfill(Scope scope, int batchSize, ScopeMatch match)
+    {
+        var errors = new List<StoreValidationError>();
+        ValidateScopeMatch(match, errors);
+
+        if (batchSize is < PostgresExperienceRecordStore.MinSweepBatchSize or > PostgresExperienceRecordStore.MaxSweepBatchSize)
+        {
+            errors.Add(new(
+                "BatchSize",
+                $"must be between {PostgresExperienceRecordStore.MinSweepBatchSize} and {PostgresExperienceRecordStore.MaxSweepBatchSize}."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
     /// <summary>
     /// Validates an access-log purge: the owner scope, the scope match, the cutoff, and the batch bound.
     /// Whether the cutoff is old enough is the database's decision, on its own clock; here it only has

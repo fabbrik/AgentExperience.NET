@@ -3,17 +3,20 @@ using System.Text.RegularExpressions;
 
 // Shared source (story 18.1): the one deterministic rule that reduces a captured error to a short class. Core's
 // DefaultExperienceReflector (the lesson's "Failed:" sentences) and the MAF adapter's HistoricalReferenceWriter (the
-// "Tried:" lines) both link this file, so the stored lesson and the injected block name a failure the same way. It
-// depends on nothing but the BCL. Each project defines exactly one of the constants below, which puts the type in
-// that project's own namespace.
-#if AGENTEXPERIENCE_CORE && AGENTEXPERIENCE_MAF
-#error Define exactly one of AGENTEXPERIENCE_CORE and AGENTEXPERIENCE_MAF.
+// "Tried:" lines) both link this file, so the stored lesson and the injected block name a failure the same way; and
+// since story 28.2 Abstractions links it too, so a failure signature's error class is the token a "[failed: …]" marker
+// shows. It depends on nothing but the BCL. Each project defines exactly one of the constants below, which puts the
+// type in that project's own namespace.
+#if (AGENTEXPERIENCE_CORE && AGENTEXPERIENCE_MAF) || (AGENTEXPERIENCE_CORE && AGENTEXPERIENCE_ABSTRACTIONS) || (AGENTEXPERIENCE_MAF && AGENTEXPERIENCE_ABSTRACTIONS)
+#error Define exactly one of AGENTEXPERIENCE_CORE, AGENTEXPERIENCE_MAF and AGENTEXPERIENCE_ABSTRACTIONS.
 #elif AGENTEXPERIENCE_CORE
 namespace AgentExperience.Core.Reflections;
 #elif AGENTEXPERIENCE_MAF
 namespace AgentExperience.MicrosoftAgentFramework.Reflections;
+#elif AGENTEXPERIENCE_ABSTRACTIONS
+namespace AgentExperience.Abstractions.ErrorClassification;
 #else
-#error Define AGENTEXPERIENCE_CORE or AGENTEXPERIENCE_MAF to select the namespace of the shared error classifier.
+#error Define AGENTEXPERIENCE_CORE, AGENTEXPERIENCE_MAF or AGENTEXPERIENCE_ABSTRACTIONS to select the namespace of the shared error classifier.
 #endif
 
 /// <summary>

@@ -47,7 +47,8 @@ namespace AgentExperience.Storage.Postgres;
 /// Source map: this file holds the constructor, create and the reads (get, get many, query, history, supersession
 /// check). <c>PostgresExperienceRecordStore.Lifecycle.cs</c> holds the lifecycle commit;
 /// <c>PostgresExperienceRecordStore.Erasure.cs</c> delete, the retention sweep and the purge; and
-/// <c>PostgresExperienceRecordStore.Sealing.cs</c> sealing and the authorship backfill. The shared SQL fragments,
+/// <c>PostgresExperienceRecordStore.Sealing.cs</c> sealing and the authorship backfill; and
+/// <c>PostgresExperienceRecordStore.Signatures.cs</c> the failure signatures written with each record and their backfill. The shared SQL fragments,
 /// row decoding, parameter binding and failure translation live in <c>ExperienceRecordSql</c>,
 /// <c>ExperienceRecordRows</c>, <c>ExperienceRecordParameters</c> and <c>ExperienceStoreFailures</c>.
 /// </para>
@@ -300,6 +301,9 @@ public sealed partial class PostgresExperienceRecordStore : IExperienceRecordSto
             }
 
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            // Story 28.2: the record's failure signatures, in the same transaction, in the clear in both modes.
+            await WriteFailureSignaturesAsync(session, record, cancellationToken).ConfigureAwait(false);
             await session.CommitAsync(cancellationToken).ConfigureAwait(false);
             return new(ExperienceStoreOutcome.Created, NoErrors);
         }

@@ -67,6 +67,9 @@ internal static class ErasureDiagnostics
     /// <summary>One bounded sealed-authorship backfill batch (<c>PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync</c>).</summary>
     internal const string AuthorshipBackfill = "record.authorship.backfill";
 
+    /// <summary>One bounded failure-signature backfill batch (<c>PostgresExperienceRecordStore.BackfillFailureSignaturesAsync</c>).</summary>
+    internal const string SignatureBackfill = "record.signature.backfill";
+
     /// <summary>How many sealed records an authorship backfill batch wrote a flag for. A count: which ones, and what flag, stays on the database.</summary>
     internal const string BackfilledCountAttribute = "agentexperience.backfilled_count";
 

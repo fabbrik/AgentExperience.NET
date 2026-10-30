@@ -37,6 +37,12 @@ internal static class ApplicationRolePrivileges
     internal const string ProviderHoldoutAssignmentsTable = "experience_provider_holdout_assignments";
 
     /// <summary>
+    /// <c>0030</c>'s table: each record's failure signatures (story 28.2). Optional, so the privileges call still succeeds
+    /// on a schema not yet migrated to <c>0030</c>. .NET-only: no contract privileges file grants it.
+    /// </summary>
+    internal const string FailureSignaturesTable = "experience_failure_signatures";
+
+    /// <summary>
     /// Every table the application role gets anything on, and exactly what. A table in the schema that is
     /// not listed here -- the migration journal, or anything a later migration adds before this list names
     /// it -- gets nothing, and the verification fails if the role can reach it anyway.
@@ -72,6 +78,10 @@ internal static class ApplicationRolePrivileges
 
         // Story 25.8: the provider holdout insert. Append and read, as 0027's: erasure removes a row through 0029's trigger.
         new(ProviderHoldoutAssignmentsTable, Delete: false, [], Optional: true),
+
+        // Story 28.2: the signature insert, beside the record's own, and the signature search. Append and read: a record's
+        // signatures never change, and erasure removes them through 0030's trigger, as the owner.
+        new(FailureSignaturesTable, Delete: false, [], Optional: true),
 
         // Derived, rebuildable data owned by the vectors package: the index upserts and removes vectors.
         // UPDATE is column-level, the columns the upsert's ON CONFLICT DO UPDATE sets: never experience_id,
