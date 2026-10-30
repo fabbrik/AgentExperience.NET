@@ -44,6 +44,58 @@ public sealed class PostgresDurableCaptureTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task A_run_the_host_refuses_to_store_is_deleted_from_the_run_store()
+    {
+        if (EncryptionMode.IsOn)
+        {
+            return;
+        }
+
+        var (result, storedAfter) = await DurableCaptureScenario.DenyAsync(AddStorage, Authorization, NewScope());
+
+        Assert.Equal(FinalizationOutcome.StorageDenied, result.Outcome);
+        Assert.Null(result.RunStoreFailure);
+        Assert.Equal(ExperienceRunStoreOutcome.NotFound, storedAfter);
+    }
+
+    [Fact]
+    public async Task Two_processes_finalizing_one_stored_run_at_once_make_one_record()
+    {
+        if (EncryptionMode.IsOn)
+        {
+            return;
+        }
+
+        var (outcomes, record, stored) = await DurableCaptureScenario.FinalizeConcurrentlyAsync(AddStorage, Authorization, NewScope());
+
+        Assert.Contains(FinalizationOutcome.Validated, outcomes);
+        Assert.All(outcomes, outcome => Assert.True(outcome is FinalizationOutcome.Validated or FinalizationOutcome.AlreadyFinalized, outcome.ToString()));
+        Assert.Equal(1, record.Record!.Revision);
+        Assert.NotNull(stored.Run!.FinalizedAt);
+    }
+
+    [Fact]
+    public async Task A_capture_retry_after_erasure_does_not_bring_the_run_back()
+    {
+        if (EncryptionMode.IsOn)
+        {
+            return;
+        }
+
+        var scope = NewScope();
+        var (retried, storedAfter) = await DurableCaptureScenario.EraseThenRecompleteAsync(
+            AddStorage,
+            Authorization,
+            scope,
+            (_, experienceId) => new PostgresExperienceRecordStore(fixture.DataSource).DeleteAsync(Authorization, scope, experienceId, CancellationToken.None));
+
+        Assert.Contains("Conflict", retried.RunStoreFailure, StringComparison.Ordinal);
+        Assert.Equal(ExperienceRunStoreOutcome.NotFound, storedAfter);
+    }
+
+    private static Scope NewScope() => new("durable-tenant", "app-1", $"project-{Guid.NewGuid():N}");
+
+    [Fact]
     public void The_run_store_refuses_to_resolve_beside_encryption()
     {
         var services = new ServiceCollection();

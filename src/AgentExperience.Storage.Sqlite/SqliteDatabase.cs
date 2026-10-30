@@ -17,8 +17,17 @@ internal sealed class SqliteDatabase
     internal const int BusyTimeoutMilliseconds = 30_000;
 
     private readonly string _connectionString;
+    private readonly bool _migrateOnFirstUse;
+    private readonly SemaphoreSlim _schemaGate = new(1, 1);
 
-    public SqliteDatabase(string connectionString)
+    // Set once the schema was found current (or migrated to current), and never again checked: a success only.
+    private volatile bool _schemaReady;
+
+    /// <param name="connectionString">The database's connection string.</param>
+    /// <param name="migrateOnFirstUse">
+    /// Whether the first operation migrates a missing or older schema instead of refusing it (the registration's opt-in).
+    /// </param>
+    public SqliteDatabase(string connectionString, bool migrateOnFirstUse = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -43,21 +52,38 @@ internal sealed class SqliteDatabase
             builder.DefaultTimeout = BusyTimeoutMilliseconds / 1000;
         }
 
+        // A store never creates the file: the migrator does, with owner-only permissions. A store over a missing file
+        // fails on its schema check with a clear error instead of leaving an empty, world-readable file behind.
+        if (builder.Mode == SqliteOpenMode.ReadWriteCreate)
+        {
+            builder.Mode = SqliteOpenMode.ReadWrite;
+        }
+
         _connectionString = builder.ToString();
+        _migrateOnFirstUse = migrateOnFirstUse;
     }
 
     /// <summary>The normalized connection string every connection is opened with.</summary>
     public string ConnectionString => _connectionString;
 
-    /// <summary>Opens a connection with the store's pragmas applied.</summary>
-    public async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
+    /// <summary>The database file this connection string names.</summary>
+    public string DataSource => new SqliteConnectionStringBuilder(_connectionString).DataSource;
+
+    /// <summary>
+    /// Opens a connection with the store's pragmas applied: foreign keys on, <c>secure_delete</c> on (freed content is
+    /// overwritten with zeros, so erased text does not linger in free pages), and a busy timeout -- for the statements'
+    /// own retry and for SQLite's -- of <paramref name="busyTimeoutMilliseconds"/>.
+    /// </summary>
+    public async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken, int busyTimeoutMilliseconds = BusyTimeoutMilliseconds)
     {
         var connection = new SqliteConnection(_connectionString);
         try
         {
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            connection.DefaultTimeout = Math.Max(1, (busyTimeoutMilliseconds + 999) / 1000);
             using var pragma = connection.CreateCommand();
-            pragma.CommandText = $"PRAGMA busy_timeout = {BusyTimeoutMilliseconds}; PRAGMA foreign_keys = ON;";
+            pragma.CommandText =
+                $"PRAGMA busy_timeout = {busyTimeoutMilliseconds}; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;";
             await pragma.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             return connection;
         }
@@ -70,16 +96,22 @@ internal sealed class SqliteDatabase
 
     /// <summary>
     /// Runs <paramref name="work"/> on a fresh connection, wrapping every failure but cancellation in
-    /// <see cref="ExperienceStoreException"/> with the content-free <paramref name="failure"/> message.
+    /// <see cref="ExperienceStoreException"/> with the content-free <paramref name="failure"/> message. The first call on
+    /// this instance checks the schema version first (and migrates it, with the opt-in).
     /// </summary>
-    public async Task<T> RunAsync<T>(string failure, Func<SqliteConnection, Task<T>> work, CancellationToken cancellationToken)
+    public async Task<T> RunAsync<T>(
+        string failure,
+        Func<SqliteConnection, Task<T>> work,
+        CancellationToken cancellationToken,
+        int busyTimeoutMilliseconds = BusyTimeoutMilliseconds)
     {
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+            var connection = await OpenAsync(cancellationToken, busyTimeoutMilliseconds).ConfigureAwait(false);
             await using (connection.ConfigureAwait(false))
             {
+                await EnsureSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
                 return await work(connection).ConfigureAwait(false);
             }
         }
@@ -98,6 +130,53 @@ internal sealed class SqliteDatabase
     }
 
     /// <summary>
+    /// Once per instance, and only on success: the journal must name exactly <see cref="ExperienceSqliteSchema.CurrentVersion"/>.
+    /// A missing or older schema is migrated with the opt-in and refused without it; a newer one is always refused.
+    /// </summary>
+    private async Task EnsureSchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        if (_schemaReady)
+        {
+            return;
+        }
+
+        await _schemaGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_schemaReady)
+            {
+                return;
+            }
+
+            var applied = await ExperienceSqliteSchema.ReadJournalAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false);
+            var version = applied.Count == 0 ? 0 : applied[^1];
+            if (version > ExperienceSqliteSchema.CurrentVersion)
+            {
+                throw new ExperienceStoreException(
+                    $"The SQLite experience database is at schema version {version}, newer than this package's {ExperienceSqliteSchema.CurrentVersion}. Upgrade the package.");
+            }
+
+            if (version < ExperienceSqliteSchema.CurrentVersion)
+            {
+                if (!_migrateOnFirstUse)
+                {
+                    throw new ExperienceStoreException(version == 0
+                        ? "The SQLite experience schema is missing: run ExperienceSqliteSchema.MigrateAsync on the file first (or opt in with SqliteStorageOptions.MigrateSchemaOnFirstUse)."
+                        : $"The SQLite experience database is at schema version {version}, older than this package's {ExperienceSqliteSchema.CurrentVersion}: run ExperienceSqliteSchema.MigrateAsync.");
+                }
+
+                await ExperienceSqliteSchema.MigrateOpenAsync(connection, cancellationToken).ConfigureAwait(false);
+            }
+
+            _schemaReady = true;
+        }
+        finally
+        {
+            _schemaGate.Release();
+        }
+    }
+
+    /// <summary>
     /// Runs <paramref name="work"/> in one write transaction (<c>BEGIN IMMEDIATE</c>: the write lock is taken up front, so
     /// what the transaction reads cannot change before it writes), committing when it returns and rolling back when it
     /// throws or its result says not to.
@@ -105,7 +184,8 @@ internal sealed class SqliteDatabase
     public Task<T> WriteAsync<T>(
         string failure,
         Func<SqliteConnection, SqliteTransaction, Task<(T Result, bool Commit)>> work,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        int busyTimeoutMilliseconds = BusyTimeoutMilliseconds) =>
         RunAsync(
             failure,
             async connection =>
@@ -123,7 +203,8 @@ internal sealed class SqliteDatabase
 
                 return result;
             },
-            cancellationToken);
+            cancellationToken,
+            busyTimeoutMilliseconds);
 
     /// <summary>A command on <paramref name="connection"/>, in <paramref name="transaction"/> when one is given.</summary>
     public static SqliteCommand Command(SqliteConnection connection, SqliteTransaction? transaction, string sql, params (string Name, object? Value)[] parameters)

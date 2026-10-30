@@ -100,6 +100,7 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     private readonly CaptureLimits _limits;
     private readonly TimeProvider _timeProvider;
     private readonly IExperienceRunStore? _runStore;
+    private readonly ExperienceRunStoreOptions _runStoreOptions;
     private readonly ConcurrentDictionary<Guid, RunState> _runs = new();
 
     // Completed runs still held, earliest completion first. Guarded by _retentionGate, which is only ever
@@ -162,6 +163,25 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     /// <param name="timeProvider">The clock a completed run's age is measured on, against <see cref="CaptureLimits.CompletedRunRetention"/>.</param>
     /// <param name="runStore">Where completed runs are kept; <see langword="null"/> keeps them in memory only, as the other constructors do.</param>
     public InMemoryExperienceCaptureService(ISanitizer sanitizer, CaptureLimits limits, TimeProvider timeProvider, IExperienceRunStore? runStore)
+        : this(sanitizer, limits, timeProvider, runStore, runStoreOptions: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates an <see cref="InMemoryExperienceCaptureService"/> that keeps the runs it completes in a run store, under
+    /// <paramref name="runStoreOptions"/>: which runs are kept, and how long a completion waits for a save.
+    /// </summary>
+    /// <param name="sanitizer">The port every raw tool-call/attempt field is sanitized through before storage.</param>
+    /// <param name="limits">The positive capture limits this instance enforces.</param>
+    /// <param name="timeProvider">The clock a completed run's age is measured on, against <see cref="CaptureLimits.CompletedRunRetention"/>.</param>
+    /// <param name="runStore">Where completed runs are kept; <see langword="null"/> keeps them in memory only.</param>
+    /// <param name="runStoreOptions">Which runs are kept and the save timeout; <see langword="null"/> keeps every run, with <see cref="ExperienceRunStoreOptions.DefaultSaveTimeout"/>.</param>
+    public InMemoryExperienceCaptureService(
+        ISanitizer sanitizer,
+        CaptureLimits limits,
+        TimeProvider timeProvider,
+        IExperienceRunStore? runStore,
+        ExperienceRunStoreOptions? runStoreOptions)
     {
         ArgumentNullException.ThrowIfNull(sanitizer);
         ArgumentNullException.ThrowIfNull(limits);
@@ -171,6 +191,7 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
         _limits = limits;
         _timeProvider = timeProvider;
         _runStore = runStore;
+        _runStoreOptions = runStoreOptions ?? new ExperienceRunStoreOptions();
     }
 
     /// <inheritdoc />
@@ -742,6 +763,22 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     /// </summary>
     private async Task<CompleteRunResult> SaveCompletedRunAsync(ExperienceRun run, Guid completionEventId, CompleteRunResult result, CancellationToken cancellationToken)
     {
+        try
+        {
+            if (_runStoreOptions.ShouldPersistRun is { } shouldPersist && !shouldPersist(run))
+            {
+                return result;
+            }
+        }
+        catch (Exception ex)
+        {
+            return result with
+            {
+                RunStoreFailure = $"ShouldPersistRun threw {ex.GetType().FullName}; the run was not saved.",
+                RunStoreException = ex,
+            };
+        }
+
         var scope = run.Scope;
         var authorization = new AuthorizationContext(
             scope.TenantId,
@@ -753,9 +790,13 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
             scope.TeamId,
             scope.AgentId,
             scope.UserId);
+
+        // Off the caller's thread, and bounded: a store that blocks (a busy file, a slow database) never holds the
+        // completion past SaveTimeout. A save abandoned at the timeout may still land, and is reported as not kept.
+        var save = Task.Run(() => _runStore!.SaveAsync(authorization, run, completionEventId, cancellationToken), CancellationToken.None);
         try
         {
-            var saved = await _runStore!.SaveAsync(authorization, run, completionEventId, cancellationToken).ConfigureAwait(false);
+            var saved = await save.WaitAsync(_runStoreOptions.SaveTimeout, _timeProvider, cancellationToken).ConfigureAwait(false);
             return saved?.Outcome is ExperienceRunStoreOutcome.Saved or ExperienceRunStoreOutcome.AlreadySaved
                 ? result
                 : result with
@@ -763,6 +804,16 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
                     RunStoreFailure = $"The run store did not keep the run: {saved?.Outcome.ToString() ?? "no result"}"
                         + (saved is { Errors.Count: > 0 } ? $" ({string.Join(", ", saved.Errors.Select(error => error.Path))})." : "."),
                 };
+        }
+        catch (TimeoutException)
+        {
+            _ = save.ContinueWith(static task => _ = task.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+            return result with { RunStoreFailure = $"The run store did not save the run within {_runStoreOptions.SaveTimeout}." };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller's own cancellation, as everywhere on this API. The completion itself already stands.
+            throw;
         }
         catch (Exception ex)
         {

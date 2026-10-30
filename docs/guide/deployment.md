@@ -701,7 +701,10 @@ builder.Services
 ```
 
 Or opt in to migrating on first use: `.UseSqlite("experience.db", o => o.MigrateSchemaOnFirstUse = true)`. Nothing
-migrates on its own otherwise. The file is put in write-ahead-log mode, connections run with foreign keys on and a busy
+migrates on its own otherwise: a store checks the schema version once, on its first operation, and refuses a missing or
+older schema (saying to migrate) and one newer than the package. The migrator creates a missing file **owner-only**: on
+Unix its directory `0700` and the file `0600`, and SQLite gives the `-wal` and `-shm` files the file's permissions. An
+existing file or directory keeps its permissions. The file is put in write-ahead-log mode, connections run with foreign keys on and a busy
 timeout, and every write is one `BEGIN IMMEDIATE` transaction, so several processes may share the file: two commits
 from the same revision still have exactly one winner, and a writer waits for another rather than failing.
 
@@ -709,7 +712,13 @@ It registers the record store, the full-text candidate source (FTS5, Porter-stem
 than to the in-memory store's), the failure-signature source, the reuse-feedback ledger and the run store, each passing
 the same conformance suite as PostgreSQL. With the run store, the capture service keeps each completed run in the file,
 so a later process can finalize it when its verdict arrives ([Finalizing later](capture.md#finalizing-later)). `SqliteExperienceRecordStore.DeleteAsync` erases a record to a tombstone, removing its
-search text and every row that named it; SQLite may keep erased bytes in free pages until `VACUUM`.
+search text and every row that named it. Every connection runs with `secure_delete` on, so freed content is zeroed in
+the file; the full-text index is rewritten (FTS5 `optimize`) in the erasure's transaction, so the record's terms leave
+its segments at once; and the write-ahead log is checkpointed and truncated after the commit, best effort -- a reader
+still holding an older snapshot keeps the pre-erasure pages in the `-wal` file until a later checkpoint. Copies of the
+file (backups, snapshots) are outside its reach, and the tombstone keeps the ID, scope, status, counters, revision and
+instants, never content. A run save waits at most `SqliteStorageOptions.RunSaveBusyTimeout` (2 seconds) for a busy
+file, so a completion is never held up behind another process's write.
 
 **What it does not do.** No sharing grants or access log, no encryption or crypto-shredding, no row-level security or
 database roles (anything that can open the file can read and write all of it, so protect the file as you would the

@@ -57,8 +57,14 @@ public sealed partial class SqliteExperienceRecordStore : IExperienceRecordStore
     /// </param>
     /// <exception cref="ArgumentException"><paramref name="connectionString"/> is blank, malformed, or names no file.</exception>
     public SqliteExperienceRecordStore(string connectionString, TimeProvider? timeProvider = null)
+        : this(new SqliteDatabase(connectionString), timeProvider)
     {
-        Database = new SqliteDatabase(connectionString);
+    }
+
+    /// <summary>A store over a database the registration shares between its stores.</summary>
+    internal SqliteExperienceRecordStore(SqliteDatabase database, TimeProvider? timeProvider)
+    {
+        Database = database;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 

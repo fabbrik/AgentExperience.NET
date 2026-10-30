@@ -15,8 +15,16 @@ public sealed partial class SqliteExperienceRecordStore
     /// <remarks>
     /// Erasure is a capability of this adapter, as of the PostgreSQL one, not of the <see cref="IExperienceRecordStore"/>
     /// port. A read in the record's own scope answers <see cref="ExperienceStoreOutcome.Deleted"/> afterwards; any other
-    /// scope still answers <see cref="ExperienceStoreOutcome.NotFound"/>. SQLite may keep erased bytes in free pages of the
-    /// file until it is vacuumed (<c>VACUUM</c>), and in the write-ahead log until the next checkpoint.
+    /// scope still answers <see cref="ExperienceStoreOutcome.NotFound"/>.
+    /// <para>
+    /// <b>What remains on disk.</b> Every connection runs with <c>secure_delete</c> on, so the content the erasure frees is
+    /// overwritten with zeros in the database file; the full-text index is rewritten (FTS5 <c>optimize</c>) in the same
+    /// transaction, so the record's terms and positions leave its segments rather than waiting for a merge. After the commit
+    /// the write-ahead log is checkpointed and truncated, best effort: while another connection still reads an older
+    /// snapshot, the log keeps the pre-erasure pages until a later checkpoint. Outside SQLite's reach: copies of the file
+    /// (backups, snapshots, the file system's own), and the tombstone itself (the ID, scope, status, counters, revision and
+    /// instants, never content). Rewriting the index costs time proportional to its size.
+    /// </para>
     /// </remarks>
     /// <param name="authorization">What the host has established the caller may do.</param>
     /// <param name="scope">The exact scope the record lies in.</param>
@@ -52,7 +60,13 @@ public sealed partial class SqliteExperienceRecordStore
             return Task.FromCanceled<SqliteExperienceDeleteResult>(cancellationToken);
         }
 
-        return Database.WriteAsync(
+        return EraseAsync(scope, experienceId, cancellationToken);
+    }
+
+    private async Task<SqliteExperienceDeleteResult> EraseAsync(Scope scope, Guid experienceId, CancellationToken cancellationToken)
+    {
+        var erased = false;
+        var result = await Database.WriteAsync(
             "The SQLite experience record could not be erased.",
             async (connection, transaction) =>
             {
@@ -87,19 +101,28 @@ public sealed partial class SqliteExperienceRecordStore
                     $"DELETE FROM experience_holdout_assignments WHERE run_id = $run AND {ScopePredicate}",
                     $"DELETE FROM experience_provider_holdout_assignments WHERE run_id = $run AND {ScopePredicate}",
 
-                    // The stored run it was finalized from holds the same captured content: gone too, when no other live
-                    // record in the tenant came from that run.
-                    "DELETE FROM experience_runs WHERE run_id = $run AND tenant_id = $tenant_id AND NOT EXISTS ("
+                    // The stored run it was finalized from holds the same captured content: it becomes a payload-free
+                    // tombstone (written when there was no row), when no other live record in the tenant came from that run,
+                    // so a capture retry can never save it again.
+                    "INSERT INTO experience_runs (run_id, " + ScopeColumns + ", erased_at) "
+                    + "SELECT $run, " + ScopeValues + ", $now WHERE NOT EXISTS ("
                     + "SELECT 1 FROM experience_records r WHERE r.tenant_id = $tenant_id AND r.source_run_id = $run "
-                    + "AND r.deleted_at IS NULL AND r.experience_id <> $id)",
+                    + "AND r.deleted_at IS NULL AND r.experience_id <> $id) "
+                    + "ON CONFLICT (run_id) DO UPDATE SET completion_event_id = NULL, execution_status = NULL, ended_at = NULL, "
+                    + "saved_at = NULL, finalized_at = NULL, payload_version = NULL, payload = NULL, erased_at = excluded.erased_at "
+                    + "WHERE experience_runs.tenant_id = excluded.tenant_id",
                 ];
+                var now = Ticks(Now);
                 foreach (var statement in statements)
                 {
-                    await ExecuteAsync(connection, transaction, statement, cancellationToken, [("$id", id), ("$run", runId), .. ScopeParameters(scope)]).ConfigureAwait(false);
+                    await ExecuteAsync(connection, transaction, statement, cancellationToken, [("$id", id), ("$run", runId), ("$now", now), .. ScopeParameters(scope)]).ConfigureAwait(false);
                 }
 
+                // Rewrites the full-text index's segments, so the erased document's terms and positions are dropped from
+                // its shadow tables now rather than at some later merge; secure_delete zeroes the pages they leave.
+                await ExecuteAsync(connection, transaction, "INSERT INTO experience_search (experience_search) VALUES ('optimize')", cancellationToken).ConfigureAwait(false);
+
                 var revision = state.Revision + 1;
-                var now = Ticks(Now);
                 await ExecuteAsync(
                     connection,
                     transaction,
@@ -110,9 +133,42 @@ public sealed partial class SqliteExperienceRecordStore
                     ("$revision", revision),
                     ("$now", now)).ConfigureAwait(false);
 
+                erased = true;
                 return (new SqliteExperienceDeleteResult(ExperienceStoreOutcome.Deleted, revision, NoErrors), true);
             },
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+
+        if (erased)
+        {
+            await CheckpointAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// After an erasure commits, checkpoints the write-ahead log into the database and truncates it, so the pages that
+    /// held the erased content (and the old versions the log kept) leave the <c>-wal</c> file now. Best effort: a reader
+    /// holding an older snapshot keeps the log from being truncated, and then those pages stay in it until the next
+    /// checkpoint SQLite runs on its own (every 1,000 pages by default). The erasure stands either way.
+    /// </summary>
+    private async Task CheckpointAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Database.RunAsync(
+                "The SQLite write-ahead log could not be checkpointed.",
+                async connection =>
+                {
+                    await ExecuteAsync(connection, null, "PRAGMA wal_checkpoint(TRUNCATE);", cancellationToken).ConfigureAwait(false);
+                    return true;
+                },
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (ExperienceStoreException)
+        {
+            // Best effort, by design.
+        }
     }
 }
 

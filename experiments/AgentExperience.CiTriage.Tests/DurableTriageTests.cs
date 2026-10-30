@@ -58,6 +58,13 @@ public sealed class DurableTriageTests : IDisposable
         Assert.Equal(1, await CiTriageProgram.MainAsync(["--scripted-later"], TextWriter.Null, TextWriter.Null));
     }
 
+    [Theory]
+    [InlineData("awaiting fix: run ")]
+    [InlineData("awaiting fix: run 1234")]
+    [InlineData("note; awaiting fix: run not-a-guid-at-all-but-long-enough-x")]
+    public void A_truncated_or_malformed_awaiting_note_names_no_run(string note) =>
+        Assert.Null(Replay.AwaitingRunId(new LedgerRow(1, DateTimeOffset.UnixEpoch, "b", "pending", "-", "flaky", "-", 0m, note)));
+
     private async Task<IReadOnlyList<StoredExperienceRun>> UnfinalizedAsync()
     {
         var store = new SqliteExperienceRunStore(ExperienceSqliteSchema.ConnectionStringFor(Database));

@@ -7,7 +7,7 @@
 //     dotnet run eng/verify-packages.cs -- artifacts/packages
 //
 // Exit code 0 when every check passes; 1 with every failure listed otherwise. It checks, per package:
-//   * exactly the six expected package ids, each with one .nupkg and one .snupkg, all at one version
+//   * exactly the seven expected package ids, each with one .nupkg and one .snupkg, all at one version
 //   * the version is 0.1.0-preview.N -- never 1.0.0, never a bare 0.x (story 4.3, frozen rule 2)
 //   * license expression, readme (declared and present in the package), tags, project and repository URL,
 //     and the repository commit SourceLink stamped
@@ -18,7 +18,7 @@
 //     and nothing else; the same forbidden-dependency guard covers the development-only in-memory store
 //     (story 11.2), which must also never depend on Core
 //   * lib/ holds exactly the supported target frameworks (story 6.3), and each one below is checked on its own
-//   * all six packages carry one repository commit, equal to `git rev-parse HEAD` when git is available
+//   * all seven packages carry one repository commit, equal to `git rev-parse HEAD` when git is available
 //   * per framework, the .snupkg holds a portable PDB whose id matches the assembly's CodeView debug entry, every
 //     SourceLink target points at the repository, every document path is deterministic-mapped (/_/), and the assembly is marked
 //     reproducible (deterministic build)
@@ -151,7 +151,7 @@ foreach (var nupkgPath in nupkgs)
 
     if (!expected.TryGetValue(id, out var expectedDependencies))
     {
-        Fail(id, "is not one of the six packages this repository ships");
+        Fail(id, "is not one of the seven packages this repository ships");
         continue;
     }
 
@@ -457,7 +457,7 @@ foreach (var id in expected.Keys)
     }
 }
 
-// One commit for all six packages, and -- when git is available -- the commit checked out here.
+// One commit for all seven packages, and -- when git is available -- the commit checked out here.
 if (commits.Count > 1)
 {
     failures.Add($"packages were built from different commits: {string.Join(", ", commits.Order(StringComparer.Ordinal))}");

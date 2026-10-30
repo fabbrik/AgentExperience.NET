@@ -20,8 +20,10 @@ namespace AgentExperience.Storage.Postgres;
 /// </para>
 /// <para>
 /// <b>Plaintext.</b> A stored run is not sealed, so this store is not available in crypto-shredding mode: its registration
-/// refuses beside <c>AddAgentExperiencePostgresEncryption</c>. Erasing a record deletes the stored run it was finalized
-/// from (when no other live record came from that run), through <c>0032</c>'s trigger.
+/// refuses beside <c>AddAgentExperiencePostgresEncryption</c>. Erasing a record turns the stored run it was finalized
+/// from into a payload-free tombstone (or writes one), when no other live record came from that run, through
+/// <c>0032</c>'s trigger: saving that run again is <see cref="ExperienceRunStoreOutcome.Conflict"/>, so a capture retry
+/// never brings it back.
 /// </para>
 /// </remarks>
 public sealed class PostgresExperienceRunStore : IExperienceRunStore
@@ -43,12 +45,12 @@ public sealed class PostgresExperienceRunStore : IExperienceRunStore
 
     /// <summary>After a save that wrote nothing: whether the stored run is this one, in this scope, under this event.</summary>
     internal const string SameRunSql =
-        $"SELECT 1 FROM {RunsTable} WHERE run_id = @run_id AND completion_event_id = @completion_event_id AND {ScopePredicate}";
+        $"SELECT 1 FROM {RunsTable} WHERE run_id = @run_id AND completion_event_id = @completion_event_id AND erased_at IS NULL AND {ScopePredicate}";
 
     /// <summary>A run by ID, in the authorization's tenant and within each of its bounds.</summary>
     internal const string GetSql =
         $"SELECT {Columns} FROM {RunsTable}\n" +
-        "WHERE run_id = @run_id AND tenant_id = @auth_tenant\n" +
+        "WHERE run_id = @run_id AND tenant_id = @auth_tenant AND erased_at IS NULL\n" +
         "AND (@auth_application IS NULL OR application_id = @auth_application)\n" +
         "AND (@auth_project IS NULL OR project_id = @auth_project)\n" +
         "AND (@auth_team IS NULL OR team_id = @auth_team)\n" +
@@ -58,17 +60,17 @@ public sealed class PostgresExperienceRunStore : IExperienceRunStore
     /// <summary>A page of a scope's unfinalized runs, in run order.</summary>
     internal const string ListSql =
         $"SELECT {Columns} FROM {RunsTable}\n" +
-        $"WHERE {ScopePredicate} AND finalized_at IS NULL\n" +
+        $"WHERE {ScopePredicate} AND finalized_at IS NULL AND erased_at IS NULL\n" +
         "AND (@ended_before IS NULL OR ended_at < @ended_before)\n" +
         "AND (@after_run_id IS NULL OR run_id > @after_run_id)\n" +
         "ORDER BY run_id LIMIT @limit";
 
     /// <summary>Marks a run finalized, keeping the first instant.</summary>
     internal const string MarkFinalizedSql =
-        $"UPDATE {RunsTable} SET finalized_at = COALESCE(finalized_at, @finalized_at) WHERE run_id = @run_id AND {ScopePredicate}";
+        $"UPDATE {RunsTable} SET finalized_at = COALESCE(finalized_at, @finalized_at) WHERE run_id = @run_id AND erased_at IS NULL AND {ScopePredicate}";
 
     /// <summary>Deletes a run in exactly the scope.</summary>
-    internal const string DeleteSql = $"DELETE FROM {RunsTable} WHERE run_id = @run_id AND {ScopePredicate}";
+    internal const string DeleteSql = $"DELETE FROM {RunsTable} WHERE run_id = @run_id AND erased_at IS NULL AND {ScopePredicate}";
 
     private static readonly IReadOnlyList<StoreValidationError> NoErrors = [];
 

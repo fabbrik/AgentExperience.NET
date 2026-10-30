@@ -461,7 +461,9 @@ the six Go modules at one version.
   rule and coverage ranking, through an FTS5 index stemmed with Porter, so "invoices" matches "invoice" as it does in
   PostgreSQL. The retrieval benchmark gains a SQLite column (`GoldenSqliteReport.txt`).
 - **Erasure**: `SqliteExperienceRecordStore.DeleteAsync` leaves a payload-free tombstone and removes the record's search
-  text, signatures, events, evidence, injection summary and holdout rows in one transaction.
+  text, signatures, events, evidence, injection summary and holdout rows in one transaction, with `secure_delete` on, the
+  FTS5 index rewritten and the write-ahead log checkpointed afterwards. A new database file is created owner-only, and a
+  store refuses a missing, older or newer schema on its first operation.
 - **Durable capture**: a new optional port, `IExperienceRunStore` (save a completed run by run ID and completion event,
   read it within an authorization, list a scope's unfinalized runs, mark one finalized, delete one), implemented by
   `SqliteExperienceRunStore` (registered by `UseSqlite`) and `PostgresExperienceRunStore` (opt-in,
@@ -471,7 +473,11 @@ the six Go modules at one version.
   never fails the run, and the MAF adapter reports it at the new `ExperienceCaptureFailureStage.RunStore`), and
   finalization reads a run the capture service no longer holds from the store (new `ExperienceFinalizationService`
   constructor), with the same verification, closed-round and idempotency rules, then marks it finalized. Erasing a
-  record deletes the stored run it came from. The run store conformance suite runs on both stores; a run completed in
+  record turns the stored run it came from into a tombstone, so a capture retry can never save it again. A save runs
+  off the caller's thread, bounded by `ExperienceRunStoreOptions.SaveTimeout` (5 s; SQLite waits at most
+  `RunSaveBusyTimeout`, 2 s, for a busy file); `ExperienceRunStoreOptions.ShouldPersistRun` keeps runs out of the store;
+  a run the host's storage decision refuses (`StorageDenied`) is deleted from it, a failed delete reported on
+  `FinalizeExperienceResult.RunStoreFailure`. The run store conformance suite runs on both stores; a run completed in
   one service provider is finalized by another on SQLite and on PostgreSQL. Without a run store nothing changes.
 - **Try it**: the quick-start sample takes `--sqlite <path>` (one run per process: run it twice, and the second process
   is handed the lesson the first stored), and the CI triage experiment takes `--storage sqlite:<path>`, with which a

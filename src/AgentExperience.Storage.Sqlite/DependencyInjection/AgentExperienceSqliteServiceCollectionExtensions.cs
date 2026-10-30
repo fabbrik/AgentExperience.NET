@@ -75,47 +75,39 @@ public static class AgentExperienceSqliteServiceCollectionExtensions
         var registration = new SqliteStorageRegistration(connectionString, options);
         services.AddSingleton(registration);
 
+        // One database for every store of this registration: its schema is checked (or, with the opt-in, migrated) once.
         services.AddSingleton(provider =>
-        {
-            registration.EnsureMigrated();
-            return new SqliteExperienceRecordStore(connectionString, provider.GetService<TimeProvider>());
-        });
+            new SqliteExperienceRecordStore(registration.Database, provider.GetService<TimeProvider>()));
         services.AddSingleton<IExperienceRecordStore>(provider => provider.GetRequiredService<SqliteExperienceRecordStore>());
         services.TryAddSingleton<IExperienceCandidateSource>(provider =>
             new SqliteExperienceCandidateSource(provider.GetRequiredService<SqliteExperienceRecordStore>()));
         services.TryAddSingleton<IExperienceSignatureSource>(provider =>
             new SqliteExperienceSignatureSource(provider.GetRequiredService<SqliteExperienceRecordStore>()));
-        services.TryAddSingleton<IExperienceReuseFeedbackStore>(_ =>
-        {
-            registration.EnsureMigrated();
-            return new SqliteExperienceReuseFeedbackStore(connectionString);
-        });
+        services.TryAddSingleton<IExperienceReuseFeedbackStore>(_ => new SqliteExperienceReuseFeedbackStore(registration.Database));
         services.TryAddSingleton<IExperienceRunStore>(provider =>
-        {
-            registration.EnsureMigrated();
-            return new SqliteExperienceRunStore(connectionString, provider.GetService<TimeProvider>());
-        });
+            new SqliteExperienceRunStore(registration.Database, provider.GetService<TimeProvider>(), options.RunSaveBusyTimeout));
 
         return services;
     }
 }
 
-/// <summary>One registration's connection string and options, and its once-only first-use migration.</summary>
+/// <summary>One registration's connection string and options, and the one database its stores share.</summary>
 internal sealed class SqliteStorageRegistration(string connectionString, SqliteStorageOptions options)
 {
-    private readonly Lazy<int> _migration = new(
-        () => ExperienceSqliteSchema.MigrateConnectionStringAsync(connectionString, CancellationToken.None).GetAwaiter().GetResult(),
-        LazyThreadSafetyMode.ExecutionAndPublication);
+    private readonly Lazy<SqliteDatabase> _database = new(() =>
+    {
+        if (options.MigrateSchemaOnFirstUse)
+        {
+            // The first operation migrates; the file is created owner-only now, before SQLite would create it.
+            ExperienceSqliteSchema.CreateOwnerOnly(new SqliteDatabase(connectionString).DataSource);
+        }
+
+        return new SqliteDatabase(connectionString, options.MigrateSchemaOnFirstUse);
+    });
 
     /// <summary>The database's connection string.</summary>
     public string ConnectionString => connectionString;
 
-    /// <summary>Migrates the schema once, when the options ask for it; otherwise does nothing.</summary>
-    public void EnsureMigrated()
-    {
-        if (options.MigrateSchemaOnFirstUse)
-        {
-            _ = _migration.Value;
-        }
-    }
+    /// <summary>The database every store of this registration runs on.</summary>
+    public SqliteDatabase Database => _database.Value;
 }

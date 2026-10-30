@@ -47,7 +47,8 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     /// <b>Finalizing later.</b> When an <see cref="IExperienceRunStore"/> is registered (the SQLite storage registers one),
     /// the capture service saves each run it completes there, and finalization reads a run from there when the capture
     /// service no longer holds it, so a run captured in one process can be finalized in another. Without one, runs live in
-    /// memory only.
+    /// memory only. A registered <see cref="ExperienceRunStoreOptions"/> decides which runs are saved and how long a
+    /// completion waits for a save.
     /// </para>
     /// <para>
     /// No sanitization policy or capture limit is invented here: both are host decisions with real
@@ -127,7 +128,8 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             provider.GetRequiredService<ISanitizer>(),
             captureLimits,
             provider.GetService<TimeProvider>() ?? TimeProvider.System,
-            provider.GetService<IExperienceRunStore>()));
+            provider.GetService<IExperienceRunStore>(),
+            provider.GetService<ExperienceRunStoreOptions>()));
         services.TryAddSingleton<IExperienceReflector, DefaultExperienceReflector>();
         // Both hooks are resolved through an explicit factory rather than by constructor selection,
         // because the optional ExperienceIndexingService has to come back as null when nothing

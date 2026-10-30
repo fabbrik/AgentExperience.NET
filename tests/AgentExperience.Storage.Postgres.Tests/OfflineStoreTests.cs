@@ -1646,9 +1646,15 @@ public sealed class OfflineStoreTests : IAsyncLifetime
         Assert.Equal(4, CountOccurrences(statements, "CREATE POLICY "));
         Assert.Contains("CREATE TABLE IF NOT EXISTS agent_experience.experience_runs (", statements, StringComparison.Ordinal);
         Assert.Contains("CONSTRAINT experience_runs_pkey PRIMARY KEY (run_id)", statements, StringComparison.Ordinal);
-        Assert.Contains("WHERE finalized_at IS NULL;", statements, StringComparison.Ordinal);
+        Assert.Contains("WHERE finalized_at IS NULL AND erased_at IS NULL;", statements, StringComparison.Ordinal);
         Assert.Contains("AFTER UPDATE OF deleted_at ON agent_experience.experience_records", statements, StringComparison.Ordinal);
-        Assert.Contains("DELETE FROM agent_experience.experience_runs", statements, StringComparison.Ordinal);
+        // Erasure leaves a run tombstone (or writes one), so a capture retry can never save the erased run again.
+        Assert.Contains("INSERT INTO agent_experience.experience_runs (run_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, erased_at)", statements, StringComparison.Ordinal);
+        Assert.Contains("CONSTRAINT experience_runs_tombstone_shape CHECK ((erased_at IS NULL) = (payload IS NOT NULL))", statements, StringComparison.Ordinal);
+        foreach (var sql in new[] { PostgresExperienceRunStore.GetSql, PostgresExperienceRunStore.ListSql, PostgresExperienceRunStore.SameRunSql, PostgresExperienceRunStore.MarkFinalizedSql, PostgresExperienceRunStore.DeleteSql })
+        {
+            Assert.Contains("erased_at IS NULL", sql, StringComparison.Ordinal);
+        }
         Assert.Contains("ENABLE ALWAYS TRIGGER experience_records_runs_cleared", statements, StringComparison.Ordinal);
         Assert.DoesNotContain("ROW LEVEL SECURITY", statements, StringComparison.Ordinal);
         Assert.DoesNotContain("SECURITY DEFINER", statements, StringComparison.Ordinal);

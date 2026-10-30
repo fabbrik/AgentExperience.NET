@@ -1,4 +1,5 @@
 using AgentExperience.Core.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 
 namespace AgentExperience.Core.Tests;
 
@@ -78,6 +79,65 @@ public sealed class CaptureRunStoreTests
         Assert.Null(completed.RunStoreFailure);
     }
 
+    [Fact]
+    public async Task A_save_that_does_not_finish_within_the_timeout_is_reported_and_the_completion_returns()
+    {
+        var clock = new FakeTimeProvider(Now);
+        var store = new RecordingRunStore { Hang = true };
+        var capture = new InMemoryExperienceCaptureService(
+            new DefaultSanitizer(AgentExperienceDefaults.Sanitization), AgentExperienceDefaults.CaptureLimits, clock, store,
+            new ExperienceRunStoreOptions { SaveTimeout = TimeSpan.FromSeconds(2) });
+        var runId = Start(capture);
+
+        var completing = capture.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Completed, Now.AddSeconds(1));
+        await store.Started.Task;
+        clock.Advance(TimeSpan.FromSeconds(2));
+        var completed = await completing;
+
+        Assert.Equal(CompleteRunOutcome.Recorded, completed.Outcome);
+        Assert.Contains("within", completed.RunStoreFailure, StringComparison.Ordinal);
+        Assert.True(capture.TryGetRun(runId, out var run));
+        Assert.Equal(RunExecutionStatus.Completed, run.ExecutionStatus);
+    }
+
+    [Fact]
+    public async Task The_caller_s_cancellation_during_a_save_surfaces_unwrapped_and_the_completion_stands()
+    {
+        var store = new RecordingRunStore { Hang = true };
+        var capture = Capture(store);
+        var runId = Start(capture);
+        using var cancellation = new CancellationTokenSource();
+
+        var completing = capture.CompleteRunAsync(runId, Guid.NewGuid(), RunExecutionStatus.Completed, Now.AddSeconds(1), cancellation.Token);
+        await store.Started.Task;
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => completing);
+        Assert.True(capture.TryGetRun(runId, out var run));
+        Assert.Equal(RunExecutionStatus.Completed, run.ExecutionStatus);
+    }
+
+    [Fact]
+    public async Task A_run_the_host_keeps_out_is_not_saved_and_a_predicate_that_throws_is_reported()
+    {
+        var store = new RecordingRunStore();
+        var keptOut = new InMemoryExperienceCaptureService(
+            new DefaultSanitizer(AgentExperienceDefaults.Sanitization), AgentExperienceDefaults.CaptureLimits, TimeProvider.System, store,
+            new ExperienceRunStoreOptions { ShouldPersistRun = run => run.ExecutionStatus == RunExecutionStatus.Failed });
+        var throwing = new InMemoryExperienceCaptureService(
+            new DefaultSanitizer(AgentExperienceDefaults.Sanitization), AgentExperienceDefaults.CaptureLimits, TimeProvider.System, store,
+            new ExperienceRunStoreOptions { ShouldPersistRun = _ => throw new InvalidOperationException("no") });
+
+        var completed = await keptOut.CompleteRunAsync(Start(keptOut), Guid.NewGuid(), RunExecutionStatus.Completed, Now.AddSeconds(1));
+        var failed = await keptOut.CompleteRunAsync(Start(keptOut), Guid.NewGuid(), RunExecutionStatus.Failed, Now.AddSeconds(1));
+        var refused = await throwing.CompleteRunAsync(Start(throwing), Guid.NewGuid(), RunExecutionStatus.Failed, Now.AddSeconds(1));
+
+        Assert.Null(completed.RunStoreFailure);
+        Assert.Null(failed.RunStoreFailure);
+        Assert.Equal(RunExecutionStatus.Failed, Assert.Single(store.Saves).Run.ExecutionStatus);
+        Assert.Contains("ShouldPersistRun threw", refused.RunStoreFailure, StringComparison.Ordinal);
+    }
+
     private static InMemoryExperienceCaptureService Capture(IExperienceRunStore store) =>
         new(new DefaultSanitizer(AgentExperienceDefaults.Sanitization), AgentExperienceDefaults.CaptureLimits, TimeProvider.System, store);
 
@@ -103,7 +163,23 @@ public sealed class CaptureRunStoreTests
 
         public ExperienceRunStoreOutcome Answer { get; init; } = ExperienceRunStoreOutcome.Saved;
 
-        public Task<ExperienceRunStoreResult> SaveAsync(AuthorizationContext authorization, ExperienceRun run, Guid completionEventId, CancellationToken cancellationToken)
+        /// <summary>When set, a save never finishes on its own: it waits for the caller's cancellation.</summary>
+        public bool Hang { get; init; }
+
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<ExperienceRunStoreResult> SaveAsync(AuthorizationContext authorization, ExperienceRun run, Guid completionEventId, CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            if (Hang)
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
+            return await SaveNowAsync(authorization, run, completionEventId);
+        }
+
+        private Task<ExperienceRunStoreResult> SaveNowAsync(AuthorizationContext authorization, ExperienceRun run, Guid completionEventId)
         {
             if (Throw is not null)
             {

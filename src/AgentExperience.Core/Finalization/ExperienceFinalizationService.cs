@@ -621,6 +621,31 @@ public sealed class ExperienceFinalizationService
     }
 
     /// <summary>
+    /// Deletes the run's stored copy after the host's storage decision refused it, under the request's own authorization
+    /// (which permits the run's scope: authorization is decided first). Best effort: a failure is reported on the result
+    /// and never changes the outcome. Cancellation still propagates.
+    /// </summary>
+    private async Task<string?> DeleteStoredRunAsync(FinalizeExperienceRequest request, ExperienceRun run, CancellationToken cancellationToken)
+    {
+        if (_runStore is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var deleted = await _runStore.DeleteAsync(request.Authorization, run.Scope, run.RunId, cancellationToken).ConfigureAwait(false);
+            return deleted?.Outcome is ExperienceRunStoreOutcome.Deleted or ExperienceRunStoreOutcome.NotFound
+                ? null
+                : $"The run store did not delete the refused run: {deleted?.Outcome.ToString() ?? "no result"}.";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return $"The run store threw {ex.GetType().FullName} deleting the refused run.";
+        }
+    }
+
+    /// <summary>
     /// Which stage of a finalization is in flight, so a span that records a throw can still say where
     /// the run got to. It exists only for that: nothing reads it back, and no decision depends on it.
     /// </summary>
@@ -757,11 +782,15 @@ public sealed class ExperienceFinalizationService
 
         if (!request.StorageDecision.Permitted)
         {
-            return Ended(
+            var denied = Ended(
                 FinalizationOutcome.StorageDenied,
                 FinalizationStage.Authorize,
                 request.StorageDecision.Reason ?? "The host's storage decision did not permit persisting this run; nothing was stored and the run was not reflected on.",
                 evaluation: evaluation);
+
+            // The host decided this run is not to be kept: neither is the copy capture wrote through to the run store.
+            var dropped = await DeleteStoredRunAsync(request, run, cancellationToken).ConfigureAwait(false);
+            return dropped is null ? denied : denied with { RunStoreFailure = dropped };
         }
 
         cursor.Stage = FinalizationStage.Reflect;

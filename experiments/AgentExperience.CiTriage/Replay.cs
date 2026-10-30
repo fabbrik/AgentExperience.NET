@@ -97,7 +97,8 @@ internal sealed class Replay(IGitHub gitHub, TriageHost host, TriageWorkspace wo
     public static Guid? AwaitingRunId(LedgerRow row)
     {
         var at = row.Note.IndexOf(AwaitingFix, StringComparison.Ordinal);
-        return at >= 0 && Guid.TryParse(row.Note.AsSpan(at + AwaitingFix.Length, 36), out var id) ? id : null;
+        var start = at + AwaitingFix.Length;
+        return at >= 0 && row.Note.Length >= start + 36 && Guid.TryParseExact(row.Note.AsSpan(start, 36), "D", out var id) ? id : null;
     }
 
     /// <summary>A prediction back from the ledger's spelling (<see cref="TriagePrediction.Describe"/>), or <see langword="null"/>.</summary>

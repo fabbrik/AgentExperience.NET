@@ -181,6 +181,13 @@ public sealed record FinalizeExperienceResult(
     } = [];
 
     /// <summary>
+    /// When a run store is configured and the host's storage decision refused the run
+    /// (<see cref="FinalizationOutcome.StorageDenied"/>): a content-free description of why its stored copy could not be
+    /// deleted; otherwise <see langword="null"/>. Reported, never acted on: the outcome is unchanged.
+    /// </summary>
+    public string? RunStoreFailure { get; init; }
+
+    /// <summary>
     /// The confidence evidence this call submitted about the records the run was given, one entry per distinct record
     /// the run's provenance names (in that order, at most <see cref="RunExposure.MaxPerRun"/>, never the run's own
     /// record): submitted, or <see cref="ReuseEvidenceResult.Skipped"/> with the reason. Empty when

@@ -92,19 +92,11 @@ public static class ExperienceSqliteSchema
         }
     }
 
-    /// <summary>Migrates the database a store's connection string names. For the opt-in first-use migration.</summary>
+    /// <summary>Migrates the database a store's connection string names, creating its file (and directory) owner-only first.</summary>
     internal static async Task<int> MigrateConnectionStringAsync(string connectionString, CancellationToken cancellationToken)
     {
         var database = new SqliteDatabase(connectionString);
-
-        // A new file's directory is created too: SQLite creates the file, never its directory.
-        var file = new SqliteConnectionStringBuilder(database.ConnectionString).DataSource;
-        if (!file.StartsWith(':') && !file.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
-            && Path.GetDirectoryName(Path.GetFullPath(file)) is { Length: > 0 } directory)
-        {
-            Directory.CreateDirectory(directory);
-        }
-
+        CreateOwnerOnly(database.DataSource);
         try
         {
             var connection = await database.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -119,20 +111,80 @@ public static class ExperienceSqliteSchema
         }
     }
 
+    /// <summary>
+    /// Creates a missing database file before SQLite opens it, so it is never created with the process's default
+    /// permissions: on Unix, a missing directory is created <c>0700</c> and the file <c>0600</c> (owner read and write
+    /// only). SQLite gives the <c>-wal</c> and <c>-shm</c> files the database file's own permissions. An existing file or
+    /// directory is left as it is. URIs and in-memory names are not files and are left to SQLite.
+    /// </summary>
+    internal static void CreateOwnerOnly(string file)
+    {
+        if (file.StartsWith(':') || file.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var path = Path.GetFullPath(file);
+        if (Path.GetDirectoryName(path) is { Length: > 0 } directory && !Directory.Exists(directory))
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                Directory.CreateDirectory(directory);
+            }
+            else
+            {
+                Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        }
+
+        if (File.Exists(path))
+        {
+            return;
+        }
+
+        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
+        if (!OperatingSystem.IsWindows())
+        {
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        }
+
+        try
+        {
+            using var _ = new FileStream(path, options);
+        }
+        catch (IOException) when (File.Exists(path))
+        {
+            // Another migrator created it first.
+        }
+    }
+
     /// <summary>The versions the database's journal holds, ascending; empty for a database never migrated.</summary>
     /// <param name="databasePath">The database file.</param>
     /// <param name="cancellationToken">Cancels the read.</param>
-    /// <returns>The applied versions.</returns>
+    /// <returns>The applied versions; empty for a missing file or one never migrated.</returns>
     public static async Task<IReadOnlyList<int>> AppliedVersionsAsync(string databasePath, CancellationToken cancellationToken = default)
     {
         var database = new SqliteDatabase(ConnectionStringFor(databasePath));
-        return await database.RunAsync(
-            "The SQLite experience schema's journal could not be read.",
-            connection => ReadJournalAsync(connection, transaction: null, cancellationToken),
-            cancellationToken).ConfigureAwait(false);
+        if (!File.Exists(database.DataSource))
+        {
+            return [];
+        }
+
+        try
+        {
+            var connection = await database.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using (connection.ConfigureAwait(false))
+            {
+                return await ReadJournalAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (SqliteException ex)
+        {
+            throw new ExperienceStoreException("The SQLite experience schema's journal could not be read.", ex);
+        }
     }
 
-    private static async Task<int> MigrateOpenAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    internal static async Task<int> MigrateOpenAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
         // Outside any transaction: journal_mode cannot change inside one. The file keeps it.
         await SqliteDatabase.ExecuteAsync(connection, null, "PRAGMA journal_mode = WAL;", cancellationToken).ConfigureAwait(false);
@@ -186,7 +238,7 @@ public static class ExperienceSqliteSchema
         return applied;
     }
 
-    private static async Task<IReadOnlyList<int>> ReadJournalAsync(SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken)
+    internal static async Task<IReadOnlyList<int>> ReadJournalAsync(SqliteConnection connection, SqliteTransaction? transaction, CancellationToken cancellationToken)
     {
         var exists = await SqliteDatabase.ScalarAsync(
             connection,

@@ -12,8 +12,10 @@ namespace AgentExperience.Storage.Sqlite;
 /// </summary>
 /// <remarks>
 /// Run IDs are unique across every scope: saving a run whose ID another scope holds is
-/// <see cref="ExperienceRunStoreOutcome.Conflict"/>, revealing nothing. Erasing a record deletes its run's row too, when
-/// that was the run's last live record. A stored run is not encrypted; delete it once it is finalized, or after a retention.
+/// <see cref="ExperienceRunStoreOutcome.Conflict"/>, revealing nothing. Erasing a record turns its run's row into a
+/// payload-free tombstone (or writes one), when that was the run's last live record, so saving that run again -- a capture
+/// retry, say -- is <see cref="ExperienceRunStoreOutcome.Conflict"/> and the run never comes back. A stored run is not
+/// encrypted; delete it once it is finalized, or after a retention.
 /// </remarks>
 public sealed class SqliteExperienceRunStore : IExperienceRunStore
 {
@@ -24,15 +26,30 @@ public sealed class SqliteExperienceRunStore : IExperienceRunStore
 
     private readonly SqliteDatabase _database;
     private readonly TimeProvider _timeProvider;
+    private readonly int _saveBusyTimeoutMilliseconds;
 
     /// <summary>Creates a run store over the database <paramref name="connectionString"/> names.</summary>
     /// <param name="connectionString">A <c>Microsoft.Data.Sqlite</c> connection string naming the database file; see <see cref="ExperienceSqliteSchema.ConnectionStringFor"/>.</param>
     /// <param name="timeProvider">The clock a save is stamped with. <see langword="null"/> uses <see cref="TimeProvider.System"/>.</param>
+    /// <param name="saveBusyTimeout">
+    /// How long a save waits for another connection's write lock before it fails (the capture service reports it and the
+    /// run still completes). <see langword="null"/> means 2 seconds; every other operation waits up to 30.
+    /// </param>
     /// <exception cref="ArgumentException"><paramref name="connectionString"/> is blank, malformed, or names no file.</exception>
-    public SqliteExperienceRunStore(string connectionString, TimeProvider? timeProvider = null)
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="saveBusyTimeout"/> is under a millisecond.</exception>
+    public SqliteExperienceRunStore(string connectionString, TimeProvider? timeProvider = null, TimeSpan? saveBusyTimeout = null)
+        : this(new SqliteDatabase(connectionString), timeProvider, saveBusyTimeout)
     {
-        _database = new SqliteDatabase(connectionString);
+    }
+
+    /// <summary>A run store over a database the registration shares between its stores.</summary>
+    internal SqliteExperienceRunStore(SqliteDatabase database, TimeProvider? timeProvider, TimeSpan? saveBusyTimeout)
+    {
+        var timeout = saveBusyTimeout ?? TimeSpan.FromSeconds(2);
+        ArgumentOutOfRangeException.ThrowIfLessThan(timeout, TimeSpan.FromMilliseconds(1), nameof(saveBusyTimeout));
+        _database = database;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _saveBusyTimeoutMilliseconds = (int)Math.Min(int.MaxValue, Math.Ceiling(timeout.TotalMilliseconds));
     }
 
     /// <inheritdoc />
@@ -66,6 +83,21 @@ public sealed class SqliteExperienceRunStore : IExperienceRunStore
             "The SQLite run could not be saved.",
             async (connection, transaction) =>
             {
+                // A run whose record was erased is never saved again: the erasure left a tombstone row under its ID (which the
+                // conflict below refuses), and its record keeps the run ID as a tombstone too, checked here in the same
+                // transaction for a run erased before it was ever saved.
+                var erased = await ScalarAsync(
+                    connection,
+                    transaction,
+                    "SELECT 1 FROM experience_records WHERE source_run_id = $run AND tenant_id = $tenant_id AND deleted_at IS NOT NULL "
+                    + "AND NOT EXISTS (SELECT 1 FROM experience_records l WHERE l.source_run_id = $run AND l.tenant_id = $tenant_id AND l.deleted_at IS NULL)",
+                    cancellationToken,
+                    [("$run", Id(run.RunId)), .. ScopeParameters(run.Scope)]).ConfigureAwait(false);
+                if (erased is not null)
+                {
+                    return (new ExperienceRunStoreResult(ExperienceRunStoreOutcome.Conflict, NoErrors), false);
+                }
+
                 var inserted = await ExecuteAsync(
                     connection,
                     transaction,
@@ -92,14 +124,15 @@ public sealed class SqliteExperienceRunStore : IExperienceRunStore
                 var same = await ScalarAsync(
                     connection,
                     transaction,
-                    $"SELECT 1 FROM experience_runs WHERE run_id = $run AND completion_event_id = $event AND {ScopePredicate}",
+                    $"SELECT 1 FROM experience_runs WHERE run_id = $run AND completion_event_id = $event AND erased_at IS NULL AND {ScopePredicate}",
                     cancellationToken,
                     [("$run", Id(run.RunId)), ("$event", Id(completionEventId)), .. ScopeParameters(run.Scope)]).ConfigureAwait(false);
                 return (new ExperienceRunStoreResult(
                     same is null ? ExperienceRunStoreOutcome.Conflict : ExperienceRunStoreOutcome.AlreadySaved,
                     NoErrors), false);
             },
-            cancellationToken);
+            cancellationToken,
+            _saveBusyTimeoutMilliseconds);
     }
 
     /// <inheritdoc />
@@ -127,7 +160,7 @@ public sealed class SqliteExperienceRunStore : IExperienceRunStore
                 using var command = Command(
                     connection,
                     null,
-                    $"SELECT {Columns} FROM experience_runs WHERE run_id = $run AND tenant_id = $tenant",
+                    $"SELECT {Columns} FROM experience_runs WHERE run_id = $run AND tenant_id = $tenant AND erased_at IS NULL",
                     ("$run", Id(runId)),
                     ("$tenant", authorization.TenantId));
                 using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -172,7 +205,7 @@ public sealed class SqliteExperienceRunStore : IExperienceRunStore
                 using var command = Command(
                     connection,
                     null,
-                    $"SELECT {Columns} FROM experience_runs WHERE {ScopePredicate} AND finalized_at IS NULL "
+                    $"SELECT {Columns} FROM experience_runs WHERE {ScopePredicate} AND finalized_at IS NULL AND erased_at IS NULL "
                     + "AND ($before IS NULL OR ended_at < $before) AND ($after IS NULL OR run_id > $after) ORDER BY run_id LIMIT $limit",
                     [
                         .. ScopeParameters(query.Scope),
@@ -204,7 +237,7 @@ public sealed class SqliteExperienceRunStore : IExperienceRunStore
             scope,
             runId,
             ExperienceRecordValidator.ValidateRunInScope(scope, runId, finalizedAt, requireInstant: true),
-            $"UPDATE experience_runs SET finalized_at = coalesce(finalized_at, $at) WHERE run_id = $run AND {ScopePredicate}",
+            $"UPDATE experience_runs SET finalized_at = coalesce(finalized_at, $at) WHERE run_id = $run AND erased_at IS NULL AND {ScopePredicate}",
             ("$at", Ticks(finalizedAt)),
             ExperienceRunStoreOutcome.Updated,
             cancellationToken);
@@ -220,7 +253,7 @@ public sealed class SqliteExperienceRunStore : IExperienceRunStore
             scope,
             runId,
             ExperienceRecordValidator.ValidateRunInScope(scope, runId),
-            $"DELETE FROM experience_runs WHERE run_id = $run AND {ScopePredicate}",
+            $"DELETE FROM experience_runs WHERE run_id = $run AND erased_at IS NULL AND {ScopePredicate}",
             ("$unused", null),
             ExperienceRunStoreOutcome.Deleted,
             cancellationToken);

@@ -23,10 +23,7 @@ public sealed class SqliteStoreBehaviourTests : IDisposable
         var writer = new SqliteExperienceRecordStore(_database.ConnectionString);
         Assert.Equal(ExperienceStoreOutcome.Created, (await writer.CreateAsync(Authorize(tenant), record, CancellationToken.None)).Outcome);
 
-        using (var pooled = new SqliteConnection(writer.Database.ConnectionString))
-        {
-            SqliteConnection.ClearPool(pooled);
-        }
+        SqliteTestDatabase.ReleasePool(_database.Path);
 
         var reader = new SqliteExperienceRecordStore(_database.ConnectionString);
         var read = await reader.GetAsync(Authorize(tenant), record.Scope, record.ExperienceId, CancellationToken.None);
@@ -94,14 +91,114 @@ public sealed class SqliteStoreBehaviourTests : IDisposable
                 Event(record.ExperienceId, ExperienceStatus.Validated, ExperienceStatus.Revoked, expectedRevision: 1),
                 CancellationToken.None)).Outcome);
 
-        // Nothing of the text is left in the index or the record row.
-        await using var connection = new SqliteConnection(_database.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT (SELECT count(*) FROM experience_search WHERE experience_search MATCH 'zanzibar') "
-            + "+ (SELECT count(*) FROM experience_records WHERE payload LIKE '%zanzibar%' OR task_id IS NOT NULL)";
-        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+        // Nothing of the text is left in the index, its shadow tables or the record row...
+        await using (var connection = new SqliteConnection(_database.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT (SELECT count(*) FROM experience_search WHERE experience_search MATCH 'zanzibar') "
+                + "+ (SELECT count(*) FROM experience_records WHERE payload LIKE '%zanzibar%' OR task_id IS NOT NULL) "
+                + "+ (SELECT count(*) FROM experience_search_content) "
+                + "+ (SELECT count(*) FROM experience_search_docsize) "
+                + "+ (SELECT count(*) FROM experience_search_idx WHERE CAST(term AS BLOB) LIKE '%zanzibar%') "
+                + "+ (SELECT count(*) FROM experience_search_data WHERE instr(block, CAST('zanzibar' AS BLOB)) > 0)";
+            Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+        }
+
+        // ...nor anywhere in the file's bytes or the write-ahead log's, once released and checkpointed.
+        SqliteTestDatabase.ReleasePool(_database.Path);
+        await using (var connection = new SqliteConnection(_database.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var checkpoint = connection.CreateCommand();
+            checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
+            await checkpoint.ExecuteNonQueryAsync();
+        }
+
+        SqliteTestDatabase.ReleasePool(_database.Path);
+        var word = System.Text.Encoding.UTF8.GetBytes("zanzibar");
+        foreach (var file in new[] { _database.Path, _database.Path + "-wal" }.Where(File.Exists))
+        {
+            Assert.True(File.ReadAllBytes(file).AsSpan().IndexOf(word) < 0, $"{Path.GetFileName(file)} still holds an erased word.");
+        }
+    }
+
+    [Fact]
+    public async Task A_run_whose_record_was_erased_is_never_saved_again()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var store = new SqliteExperienceRecordStore(_database.ConnectionString);
+        var runs = new SqliteExperienceRunStore(_database.ConnectionString);
+        var record = Record(scope);
+        await store.CreateAsync(Authorize(tenant), record, CancellationToken.None);
+        await store.DeleteAsync(Authorize(tenant), scope, record.ExperienceId, CancellationToken.None);
+
+        var run = AgentExperience.Storage.Conformance.RunStoreConformanceTests.CompletedRun(scope, record.SourceRunId);
+        var saved = await runs.SaveAsync(Authorize(tenant), run, Guid.NewGuid(), CancellationToken.None);
+
+        Assert.Equal(ExperienceRunStoreOutcome.Conflict, saved.Outcome);
+        Assert.Equal(ExperienceRunStoreOutcome.NotFound, (await runs.GetAsync(Authorize(tenant), run.RunId, CancellationToken.None)).Outcome);
+        Assert.Equal(ExperienceRunStoreOutcome.NotFound, (await runs.DeleteAsync(Authorize(tenant), scope, run.RunId, CancellationToken.None)).Outcome);
+    }
+
+    [Fact]
+    public async Task A_store_over_a_file_with_no_schema_refuses_clearly_and_one_newer_than_this_package_refuses_too()
+    {
+        var empty = Path.Combine(Path.GetTempPath(), $"agentexperience-sqlite-{Guid.NewGuid():N}.db");
+        File.WriteAllBytes(empty, []);
+        try
+        {
+            var tenant = NewTenant();
+            var missing = await Assert.ThrowsAsync<ExperienceStoreException>(() =>
+                new SqliteExperienceRecordStore(ExperienceSqliteSchema.ConnectionStringFor(empty)).GetAsync(Authorize(tenant), Scope(tenant), Guid.NewGuid(), CancellationToken.None));
+            Assert.Contains("schema is missing", missing.Message, StringComparison.Ordinal);
+
+            await using (var connection = new SqliteConnection(_database.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = "INSERT INTO agent_experience_schema_versions (version, script, applied_at) VALUES (99, 'future.sql', 0)";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var newer = await Assert.ThrowsAsync<ExperienceStoreException>(() =>
+                new SqliteExperienceRunStore(_database.ConnectionString).GetAsync(Authorize(tenant), Guid.NewGuid(), CancellationToken.None));
+            Assert.Contains("newer than this package", newer.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            SqliteTestDatabase.Delete(empty);
+        }
+    }
+
+    [Fact]
+    public async Task A_new_file_and_its_directory_are_created_for_the_owner_only()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var directory = Path.Combine(Path.GetTempPath(), $"agentexperience-sqlite-{Guid.NewGuid():N}");
+        var path = Path.Combine(directory, "experience.db");
+        try
+        {
+            await ExperienceSqliteSchema.MigrateAsync(path);
+            var tenant = NewTenant();
+            await new SqliteExperienceRecordStore(ExperienceSqliteSchema.ConnectionStringFor(path)).CreateAsync(Authorize(tenant), Record(Scope(tenant)), CancellationToken.None);
+
+            const UnixFileMode OwnerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            Assert.Equal(OwnerOnly | UnixFileMode.UserExecute, File.GetUnixFileMode(directory));
+            Assert.Equal(OwnerOnly, File.GetUnixFileMode(path));
+            Assert.Equal(OwnerOnly, File.GetUnixFileMode(path + "-wal"));
+        }
+        finally
+        {
+            SqliteTestDatabase.Delete(path);
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]

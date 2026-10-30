@@ -33,7 +33,9 @@ Nothing migrates the schema on its own: call `ExperienceSqliteSchema.MigrateAsyn
 `.UseSqlite("experience.db", options => options.MigrateSchemaOnFirstUse = true)`, which migrates the first time a store
 is resolved. Migrating is journaled (`agent_experience_schema_versions`), each script in one transaction with its
 journal row, so it is safe to repeat and safe to run from two processes at once. It puts the file in write-ahead-log
-mode, so readers never wait for the writer.
+mode, so readers never wait for the writer, and creates a missing file owner-only (on Unix, directory `0700`, file
+`0600`; the `-wal` and `-shm` files take the file's permissions). A store checks the schema version on its first
+operation and refuses a missing, older or newer one with an error saying what to do.
 
 Without the one-call setup, `services.AddAgentExperienceSqliteStorage("experience.db")` makes the same registration.
 It refuses to sit beside another `IExperienceRecordStore`, because its candidate and signature sources search its own
@@ -49,8 +51,10 @@ file.
 - **The PostgreSQL payload.** A record's payload is the PostgreSQL store's version-1 JSON.
 - **Erasure.** `SqliteExperienceRecordStore.DeleteAsync` leaves a payload-free tombstone and removes the record's
   search text, signatures, events, evidence, injection summary and holdout rows in one transaction; reads in its own
-  scope then answer `Deleted`. SQLite may keep erased bytes in free pages until `VACUUM`, and in the write-ahead log
-  until the next checkpoint.
+  scope then answer `Deleted`. Connections run with `secure_delete` on, the FTS5 index is rewritten (`optimize`) in the
+  erasure's transaction, and the write-ahead log is checkpointed and truncated afterwards (best effort: a reader still on
+  an older snapshot keeps those pages in the `-wal` file until a later checkpoint). The stored run the record came from
+  becomes a tombstone, so it can never be saved again.
 
 ## How it searches
 

@@ -980,6 +980,12 @@ internal sealed class CaptureScope
                 result.Failure?.Exception);
         }
 
+        // The host refused the run, and its stored copy could not be deleted: the one run store problem finalization reports.
+        if (result.RunStoreFailure is { } runStoreFailure)
+        {
+            Fail(ExperienceCaptureFailureStage.RunStore, runStoreFailure, null);
+        }
+
         // Finalization may have overrun the timeout and already been reported as such; telling the
         // host it finished after that would contradict the failure it already saw.
         if (cancellationToken.IsCancellationRequested)

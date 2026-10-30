@@ -361,16 +361,29 @@ it. When the verdict arrives later -- a CI result, a merged pull request -- afte
 With a run store registered, `AddAgentExperienceCore` wires it into both services:
 
 - **The capture service writes each run through as it completes it.** `CompleteRunAsync` saves the completed run --
-  already sanitized: capture sanitized every attempt before it kept it -- under its completion event before it returns.
-  Nothing is written on the path of a tool call or an attempt. A save that throws or is refused never fails the run: the
-  completion stands, and `CompleteRunResult.RunStoreFailure` says why (the MAF adapter reports it through
-  `OnCaptureFailure` at stage `RunStore`). Completing the run again with the same completion event saves it again. A run
-  the service completes itself because it stayed open past `MaxOpenRunAge` is not saved.
+  its attempts already sanitized: capture sanitized every attempt before it kept it -- under its completion event before
+  it returns. The run's `TaskId`, `TaskDescription`, `Environment` and `Provenance` are stored exactly as the host passed
+  them to `StartRun`, which sanitizes none of them: keep secrets out of them. Nothing is written on the path of a tool
+  call or an attempt.
+- **A save never fails the run, and never holds it up for long.** The save runs off the caller's thread and is awaited
+  for at most `ExperienceRunStoreOptions.SaveTimeout` (5 seconds by default; SQLite's own wait for a busy file is
+  `SqliteStorageOptions.RunSaveBusyTimeout`, 2 seconds). A save that throws, is refused or times out leaves the
+  completion standing, and `CompleteRunResult.RunStoreFailure` says why (the MAF adapter reports it through
+  `OnCaptureFailure` at stage `RunStore`). The caller's own cancellation surfaces as `OperationCanceledException`, as
+  everywhere on the API, with the completion already recorded. Completing the run again with the same completion event
+  saves it again. A run the service completes itself because it stayed open past `MaxOpenRunAge` is not saved.
+- **Which runs are kept is the host's call.** Register an `ExperienceRunStoreOptions` with `ShouldPersistRun` (say,
+  `run => run.ExecutionStatus == RunExecutionStatus.Failed`) to keep only some runs; the default keeps every one.
 - **Finalization reads a run the capture service no longer holds from the run store**, within the request's
   authorization, and then does exactly what it does for a run held in memory: the same evaluation against the request's
   own closed round and evidence, the same storage decision, the same derived record and event IDs. Finalizing the run
-  twice, or from two processes, is the usual `AlreadyFinalized` replay. After a durable outcome it marks the stored run
-  finalized (best effort).
+  twice, or from two processes at once, makes one record (the second is the usual replay). After a durable outcome it
+  marks the stored run finalized (best effort). **When the host's storage decision refuses the run**
+  (`StorageDenied`), its stored copy is deleted too; a failed delete is reported on `FinalizeExperienceResult.RunStoreFailure`
+  (and by the MAF adapter at stage `RunStore`). A run refused as `NotAuthorized` is left stored: the caller had no
+  authority over its scope, so it may not delete it either.
+- **Erasure is final.** Erasing a record turns the stored run it came from into a payload-free tombstone (or writes one),
+  so a later save of that run -- a capture retry -- is refused as a conflict and the run never comes back.
 
 ```csharp
 // Process 1, the agent's run: captured and completed as usual; the run is now in the file.

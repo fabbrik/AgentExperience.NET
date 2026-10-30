@@ -895,8 +895,11 @@ migrate before issuing a grant that names recipe excerpts. An older build agains
 - `experience_runs_unfinalized_idx` on `(tenant_id, application_id, project_id, run_id) WHERE finalized_at IS NULL`, for
   the listing of runs still waiting.
 - **Plaintext.** A stored run is never sealed, so the run store refuses to resolve beside `AddAgentExperiencePostgresEncryption`.
-- A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes the stored run a tombstoned
-  record was finalized from, in the record's tenant, when no other live record came from that run -- `0029`'s pattern.
+- A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) turns the stored run a tombstoned
+  record was finalized from into a run tombstone (`erased_at` set, every column but the ID and scope cleared; check
+  constraints hold both shapes), or writes one when the run was never stored, in the record's tenant, when no other live
+  record came from that run -- `0029`'s pattern. A save under a tombstoned run ID conflicts, and the store's reads,
+  listing, marking and deletes all skip tombstones, so a capture retry can never bring an erased run back.
 - Its row-level security policies (`rls_runs_select`, `_insert`, `_update`, `_delete`): a row only inside the declared
   bounds, for every command. A grant never admits one.
 - The application role gets `SELECT`, `INSERT`, `DELETE` and `UPDATE` of `finalized_at` only, once the table exists.

@@ -51,7 +51,7 @@ namespace AgentExperience.Storage.Sqlite
     }
     public sealed class SqliteExperienceRunStore : AgentExperience.Abstractions.IExperienceRunStore
     {
-        public SqliteExperienceRunStore(string connectionString, System.TimeProvider? timeProvider = null) { }
+        public SqliteExperienceRunStore(string connectionString, System.TimeProvider? timeProvider = null, System.TimeSpan? saveBusyTimeout = default) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunStoreResult> DeleteAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid runId, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunGetResult> GetAsync(AgentExperience.Abstractions.AuthorizationContext authorization, System.Guid runId, System.Threading.CancellationToken cancellationToken) { }
         public System.Threading.Tasks.Task<AgentExperience.Abstractions.ExperienceRunListResult> ListUnfinalizedAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.ExperienceRunQuery query, System.Threading.CancellationToken cancellationToken) { }
@@ -67,6 +67,7 @@ namespace AgentExperience.Storage.Sqlite
     {
         public SqliteStorageOptions() { }
         public bool MigrateSchemaOnFirstUse { get; set; }
+        public System.TimeSpan RunSaveBusyTimeout { get; set; }
     }
 }
 namespace Microsoft.Extensions.DependencyInjection

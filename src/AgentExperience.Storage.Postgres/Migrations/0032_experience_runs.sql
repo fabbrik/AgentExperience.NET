@@ -22,9 +22,11 @@
 --     sealed record's run would otherwise be kept unsealed beside it.
 --
 -- ERASURE. Every erasure path tombstones the record through 0010's purge_experience_record, and the tombstone
--- transition deletes, through the trigger below, the stored run the record was finalized from (the record's
--- source_run_id before the purge zeroes it, in the record's own tenant only), and only when that was the run's last live
--- record in the tenant -- the 0029 pattern. The trigger runs as whoever tombstones the record: the owner, inside the
+-- transition, through the trigger below, turns the stored run the record was finalized from into a run tombstone
+-- (erased_at set, everything but its ID and scope cleared) -- or writes one when the run was never stored -- keyed on the
+-- record's source_run_id before the purge zeroes it, in the record's own tenant only, and only when that was the run's
+-- last live record in the tenant (the 0029 pattern). A save under a tombstoned run ID then conflicts, so a capture retry
+-- can never bring an erased run back; the store reads a tombstone as no run. The trigger runs as whoever tombstones the record: the owner, inside the
 -- SECURITY DEFINER purge, which row-level security never binds.
 --
 -- PRIVILEGES. ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync grants the application role SELECT, INSERT,
@@ -47,24 +49,28 @@ CREATE TABLE IF NOT EXISTS agent_experience.experience_runs (
     team_id             text        NULL,
     agent_id            text        NULL,
     user_id             text        NULL,
-    completion_event_id uuid        NOT NULL,
-    execution_status    text        NOT NULL,
-    ended_at            timestamptz NOT NULL,
-    saved_at            timestamptz NOT NULL,
+    completion_event_id uuid        NULL,
+    execution_status    text        NULL,
+    ended_at            timestamptz NULL,
+    saved_at            timestamptz NULL,
     finalized_at        timestamptz NULL,
-    payload_version     integer     NOT NULL,
-    payload             jsonb       NOT NULL,
+    payload_version     integer     NULL,
+    payload             jsonb       NULL,
+    erased_at           timestamptz NULL,
     CONSTRAINT experience_runs_pkey PRIMARY KEY (run_id),
-    CONSTRAINT experience_runs_status_known CHECK (execution_status IN ('Completed', 'Failed', 'Cancelled')),
-    CONSTRAINT experience_runs_payload_version_known CHECK (payload_version = 1)
+    CONSTRAINT experience_runs_status_known CHECK (execution_status IS NULL OR execution_status IN ('Completed', 'Failed', 'Cancelled')),
+    CONSTRAINT experience_runs_payload_version_known CHECK (payload_version IS NULL OR payload_version = 1),
+    CONSTRAINT experience_runs_tombstone_shape CHECK ((erased_at IS NULL) = (payload IS NOT NULL)),
+    CONSTRAINT experience_runs_live_shape CHECK (erased_at IS NOT NULL OR (completion_event_id IS NOT NULL
+        AND execution_status IS NOT NULL AND ended_at IS NOT NULL AND saved_at IS NOT NULL AND payload_version IS NOT NULL))
 );
 
 -- A scope's runs still waiting for a verdict, in run order, for the listing.
 CREATE INDEX IF NOT EXISTS experience_runs_unfinalized_idx
     ON agent_experience.experience_runs (tenant_id, application_id, project_id, run_id)
-    WHERE finalized_at IS NULL;
+    WHERE finalized_at IS NULL AND erased_at IS NULL;
 
--- The tombstone transition removes the stored run its record was finalized from.
+-- The tombstone transition turns the stored run its record was finalized from into a run tombstone, or writes one.
 CREATE OR REPLACE FUNCTION agent_experience.clear_erased_record_runs() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, agent_experience, pg_temp
@@ -77,8 +83,12 @@ BEGIN
            WHERE r.tenant_id = OLD.tenant_id AND r.source_run_id = OLD.source_run_id
              AND r.deleted_at IS NULL AND r.experience_id <> NEW.experience_id)
     THEN
-        DELETE FROM agent_experience.experience_runs
-        WHERE run_id = OLD.source_run_id AND tenant_id = OLD.tenant_id;
+        INSERT INTO agent_experience.experience_runs (run_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, erased_at)
+        VALUES (OLD.source_run_id, OLD.tenant_id, OLD.application_id, OLD.project_id, OLD.team_id, OLD.agent_id, OLD.user_id,
+                pg_catalog.clock_timestamp())
+        ON CONFLICT (run_id) DO UPDATE SET completion_event_id = NULL, execution_status = NULL, ended_at = NULL,
+            saved_at = NULL, finalized_at = NULL, payload_version = NULL, payload = NULL, erased_at = EXCLUDED.erased_at
+        WHERE experience_runs.tenant_id = EXCLUDED.tenant_id;
     END IF;
 
     RETURN NULL;

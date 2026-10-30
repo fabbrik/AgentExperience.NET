@@ -20,16 +20,27 @@ public sealed class SqliteTestDatabase : IDisposable
 
     public void Dispose() => Delete(Path);
 
+    /// <summary>Closes this file's idle pooled connections, the stores' and the migrator's (only this file's).</summary>
+    public static void ReleasePool(string path)
+    {
+        foreach (var connectionString in new[]
+        {
+            new SqliteDatabase(ExperienceSqliteSchema.ConnectionStringFor(path)).ConnectionString,
+            ExperienceSqliteSchema.ConnectionStringFor(path),
+        })
+        {
+            using var connection = new SqliteConnection(connectionString);
+            SqliteConnection.ClearPool(connection);
+        }
+    }
+
     /// <summary>
     /// Releases this file's pooled connections -- only this file's: clearing every pool would close connections other
     /// tests running in parallel are using -- and deletes it with its write-ahead log.
     /// </summary>
     public static void Delete(string path)
     {
-        using (var connection = new SqliteConnection(new SqliteDatabase(ExperienceSqliteSchema.ConnectionStringFor(path)).ConnectionString))
-        {
-            SqliteConnection.ClearPool(connection);
-        }
+        ReleasePool(path);
 
         foreach (var suffix in new[] { string.Empty, "-wal", "-shm" })
         {
