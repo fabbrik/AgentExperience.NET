@@ -111,6 +111,7 @@
         public AgentExperience.Abstractions.ExperienceRecord Record { get; init; }
         public double Relevance { get; init; }
         public bool SharedByGrant { get; init; }
+        public double? TermCoverage { get; init; }
     }
     public sealed class ExperienceCandidateQuery : System.IEquatable<AgentExperience.Abstractions.ExperienceCandidateQuery>
     {

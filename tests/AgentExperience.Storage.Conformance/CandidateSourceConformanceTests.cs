@@ -244,6 +244,27 @@ public abstract class CandidateSourceConformanceTests
         Assert.True(result.Candidates[2].Relevance > 0d);
     }
 
+    /// <summary>Story 28.5: every candidate reports the plain share of the query's distinct terms it contains, whatever fields hold them.</summary>
+    [Fact]
+    public async Task Each_candidate_reports_the_share_of_the_query_s_terms_it_contains_whatever_field_holds_them()
+    {
+        var tenant = NewTenant();
+        var scope = Scope(tenant);
+        var all = await SeedAsync(tenant, scope, taskId: "t1", summary: "Refund policy for a disputed invoice", lesson: "Escalate");
+        var inSummary = await SeedAsync(tenant, scope, taskId: "t2", summary: "Refund policy questions", lesson: "Escalate");
+        var inLesson = await SeedAsync(tenant, scope, taskId: "t3", summary: "Questions from a customer", lesson: "Check the refund policy first");
+        var one = await SeedAsync(tenant, scope, taskId: "t4", summary: "Refund requested by the customer", lesson: "Escalate");
+
+        var result = await SearchAsync(tenant, scope, "refund policy invoice", minimumMatchedTerms: 1);
+
+        double Coverage(Guid id) => result.Candidates.Single(c => c.Record.ExperienceId == id).TermCoverage
+            ?? throw new Xunit.Sdk.XunitException("A shipped text source must report the term coverage.");
+        Assert.Equal(1d, Coverage(all), 6);
+        Assert.Equal(2d / 3d, Coverage(inSummary), 6);
+        Assert.Equal(2d / 3d, Coverage(inLesson), 6);
+        Assert.Equal(1d / 3d, Coverage(one), 6);
+    }
+
     [Fact]
     public async Task A_record_below_the_minimum_of_matched_terms_is_not_returned_and_the_minimum_is_capped_at_the_query_s_terms()
     {

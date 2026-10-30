@@ -309,7 +309,7 @@ public sealed partial class ExperienceContextProvider
 
         // The block's own selection rules, before the limit: what the run or the session already holds, a lesson the
         // holdout measured as hurting (when acting on measured benefit), a model-authored record the host excluded, a
-        // borrowed record whose grant withholds the approach, and one the capability gate keeps out.
+        // coarse match under the match floor, a borrowed record whose grant withholds the approach, and one the capability gate keeps out.
         var benefit = _benefit?.Current(request.Authorization, request.Scope, _options.Benefit.PerModel ? capture.Model : null);
         var selected = new List<RankedExperience>(recall.MaxRecordsPerHint);
         foreach (var candidate in candidates)
@@ -334,6 +334,14 @@ public sealed partial class ExperienceContextProvider
             if (_excludeModelAuthored && _retrieval.IsModelAuthored(record))
             {
                 omitted.Add(new OmittedExperience(record.ExperienceId, AuthorshipOmission(record.Reflection)));
+                continue;
+            }
+
+            // The match floor (story 28.5): a hint is a signature match, with no text or semantic match, so only an exact one
+            // passes.
+            if (_minimumMatch is not null && candidate.Match != ExperienceSignatureMatch.Exact)
+            {
+                omitted.Add(new OmittedExperience(record.ExperienceId, InjectionOmissionReason.WeakMatch, ExperienceMatchFloor.CoarseSignatureDetail));
                 continue;
             }
 

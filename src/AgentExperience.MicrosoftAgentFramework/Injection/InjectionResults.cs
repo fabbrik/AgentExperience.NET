@@ -133,6 +133,14 @@ public enum InjectionOmissionReason
     /// record itself is unchanged; the verdict can reverse as new evidence arrives and old evidence leaves the window.
     /// </summary>
     MeasuredHarmful,
+
+    /// <summary>
+    /// The match-strength floor (<see cref="ExperienceInjectionOptions.MinimumMatch"/>): the record's match was too weak to
+    /// be worth the context -- no exact failure-signature match on the current run, too small a share of the request's
+    /// terms, and too little semantic similarity. Decided on the ranked candidate before the capability gate and the record
+    /// limit, so it takes no slot. The detail names the strengths and the floor, never record content.
+    /// </summary>
+    WeakMatch,
 }
 
 /// <summary>

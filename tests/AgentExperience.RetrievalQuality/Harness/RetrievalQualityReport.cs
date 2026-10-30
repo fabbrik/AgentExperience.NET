@@ -102,6 +102,7 @@ internal static class RetrievalQualityReport
         }
 
         RenderSignatures(result, Line);
+        RenderInjectionFloor(result, Line);
         return builder.ToString();
     }
 
@@ -144,6 +145,59 @@ internal static class RetrievalQualityReport
         static string Returned(QueryOutcome outcome) => outcome.Returned.Count == 0
             ? "none"
             : string.Join(", ", outcome.Returned.Take(Shown)) + (outcome.Returned.Count > Shown ? Invariant($", ... {outcome.Returned.Count - Shown} more") : string.Empty);
+    }
+
+    /// <summary>
+    /// Story 28.5: the injection floor's sweep: per text-coverage floor, recall and noise of what would reach the block, the
+    /// distractor-overlap queries' noise, and which expected records and which unexpected ones each floor changes.
+    /// </summary>
+    private static void RenderInjectionFloor(RetrievalQualityResult result, Action<string> line)
+    {
+        line(string.Empty);
+        line("INJECTION FLOOR");
+        line(string.Empty);
+        line("What it measures: what would reach the injected block at MaxRecords = 8 under ExperienceInjectionOptions.MinimumMatch");
+        line("with MinimumTextCoverage f and no vector channel: the text candidates above, in order, whose share of the query's");
+        line("distinct terms is at least f, cut to 8. f = 0 is the block with no floor, so its row repeats the overall metrics.");
+        line("dFP@8: FP@8 over the distractor-overlap queries only. R@8, FP@8 and zero as above.");
+        line(string.Empty);
+        line(Row("floor", "n", "lab", "R@8", "FP@8", "dFP@8", "zero"));
+        var unfloored = InjectionFloorSweep.Apply(result, 0d);
+        foreach (var floor in InjectionFloorSweep.Floors)
+        {
+            var floored = InjectionFloorSweep.Apply(result, floor);
+            var metrics = RetrievalMetrics.Of(floored);
+            var distractor = RetrievalMetrics.Of([.. floored.Where(o => o.Query.Category == "distractor-overlap")]);
+            line(Row(
+                floor.ToString("0.0", CultureInfo.InvariantCulture),
+                Invariant($"{metrics.Queries}"),
+                Invariant($"{metrics.Labelled}"),
+                Number(metrics.RecallAt8),
+                Number(metrics.FalsePositivesAt8),
+                Number(distractor.FalsePositivesAt8),
+                Number(metrics.ZeroCandidateShare)));
+        }
+
+        foreach (var floor in InjectionFloorSweep.Floors.Where(f => f > 0d))
+        {
+            var floored = InjectionFloorSweep.Apply(result, floor);
+            line(string.Empty);
+            line(Invariant($"at {floor:0.0}:"));
+            var lost = unfloored.Zip(floored)
+                .Select(pair => (pair.First.Query.Id, Ids: pair.First.Returned.Except(pair.Second.Returned).Where(pair.First.Query.Expected.Contains).ToList()))
+                .Where(entry => entry.Ids.Count > 0)
+                .Select(entry => $"{entry.Id} ({string.Join(", ", entry.Ids)})")
+                .ToList();
+            line("  expected records it keeps out:" + (lost.Count == 0 ? " none" : string.Empty));
+            lost.ForEach(entry => line("    " + entry));
+            var noise = floored
+                .Select(o => (o.Query.Id, Ids: o.Returned.Where(id => !o.Query.Expected.Contains(id)).ToList()))
+                .Where(entry => entry.Ids.Count > 0)
+                .Select(entry => $"{entry.Id} ({string.Join(", ", entry.Ids)})")
+                .ToList();
+            line("  unexpected records still injected:" + (noise.Count == 0 ? " none" : string.Empty));
+            noise.ForEach(entry => line("    " + entry));
+        }
     }
 
     private static string Ineligibility(RetrievalCorpus corpus)

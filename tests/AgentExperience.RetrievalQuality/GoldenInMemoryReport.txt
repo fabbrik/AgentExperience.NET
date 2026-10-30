@@ -419,3 +419,100 @@ sig-18 [call_api, HTTP 403]
   expected: none
   exact: none
   coarse: none
+
+INJECTION FLOOR
+
+What it measures: what would reach the injected block at MaxRecords = 8 under ExperienceInjectionOptions.MinimumMatch
+with MinimumTextCoverage f and no vector channel: the text candidates above, in order, whose share of the query's
+distinct terms is at least f, cut to 8. f = 0 is the block with no floor, so its row repeats the overall metrics.
+dFP@8: FP@8 over the distractor-overlap queries only. R@8, FP@8 and zero as above.
+
+floor                  n  lab    R@8   FP@8  dFP@8   zero
+0.0                   48   45  0.700  0.417  0.667  0.292
+0.3                   48   45  0.611  0.250  0.667  0.396
+0.4                   48   45  0.533  0.250  0.667  0.479
+0.5                   48   45  0.533  0.250  0.667  0.479
+0.6                   48   45  0.467  0.250  0.667  0.542
+
+at 0.3:
+  expected records it keeps out:
+    realistic-01 (mig-01)
+    realistic-03 (dock-01)
+    realistic-04 (auth-02)
+    realistic-06 (auth-03)
+  unexpected records still injected:
+    exact-01 (mig-02, mig-06, mig-03)
+    exact-03 (dis-07)
+    distractor-01 (dis-02)
+    distractor-02 (dis-03)
+    distractor-03 (dis-07)
+    distractor-06 (dis-12, dis-11)
+    distractor-08 (dis-05)
+    stopword-02 (mig-04)
+    stopword-05 (dis-10)
+
+at 0.4:
+  expected records it keeps out:
+    paraphrase-08 (pkg-06)
+    realistic-01 (mig-01)
+    realistic-03 (dock-01)
+    realistic-04 (auth-02)
+    realistic-05 (pkg-01)
+    realistic-06 (auth-03)
+    realistic-07 (mig-05)
+    realistic-08 (mig-03)
+  unexpected records still injected:
+    exact-01 (mig-02, mig-06, mig-03)
+    exact-03 (dis-07)
+    distractor-01 (dis-02)
+    distractor-02 (dis-03)
+    distractor-03 (dis-07)
+    distractor-06 (dis-12, dis-11)
+    distractor-08 (dis-05)
+    stopword-02 (mig-04)
+    stopword-05 (dis-10)
+
+at 0.5:
+  expected records it keeps out:
+    paraphrase-08 (pkg-06)
+    realistic-01 (mig-01)
+    realistic-03 (dock-01)
+    realistic-04 (auth-02)
+    realistic-05 (pkg-01)
+    realistic-06 (auth-03)
+    realistic-07 (mig-05)
+    realistic-08 (mig-03)
+  unexpected records still injected:
+    exact-01 (mig-02, mig-06, mig-03)
+    exact-03 (dis-07)
+    distractor-01 (dis-02)
+    distractor-02 (dis-03)
+    distractor-03 (dis-07)
+    distractor-06 (dis-12, dis-11)
+    distractor-08 (dis-05)
+    stopword-02 (mig-04)
+    stopword-05 (dis-10)
+
+at 0.6:
+  expected records it keeps out:
+    paraphrase-01 (mig-04)
+    paraphrase-05 (dock-06)
+    paraphrase-06 (ci-03)
+    paraphrase-08 (pkg-06)
+    realistic-01 (mig-01)
+    realistic-03 (dock-01)
+    realistic-04 (auth-02)
+    realistic-05 (pkg-01)
+    realistic-06 (auth-03)
+    realistic-07 (mig-05)
+    realistic-08 (mig-03)
+  unexpected records still injected:
+    exact-01 (mig-02, mig-06, mig-03)
+    exact-03 (dis-07)
+    distractor-01 (dis-02)
+    distractor-02 (dis-03)
+    distractor-03 (dis-07)
+    distractor-06 (dis-12, dis-11)
+    distractor-08 (dis-05)
+    stopword-02 (mig-04)
+    stopword-05 (dis-10)

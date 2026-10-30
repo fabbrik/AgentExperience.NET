@@ -79,9 +79,19 @@ internal static class HybridRetrievalRun
                 cancellationToken);
             Ensure(vector.Outcome == ExperienceVectorSearchOutcome.Found, query.Id, vector.Outcome.ToString());
 
-            text.Add(new QueryOutcome(query, [.. lexical.Candidates.Select(c => Id(c, query.Id))]));
+            text.Add(new QueryOutcome(query, [.. lexical.Candidates.Select(c => Id(c, query.Id))], [.. lexical.Candidates.Select(c => c.TermCoverage ?? 0d)]));
             var aboveFloor = vector.Candidates.Where(c => c.Relevance >= MinimumVectorRelevance).ToList();
-            hybrid.Add(new QueryOutcome(query, [.. Merge(lexical.Candidates, aboveFloor).Select(c => Id(c, query.Id))]));
+            var merged = Merge(lexical.Candidates, aboveFloor);
+
+            // Story 28.5: a record the vector channel found above the policy's floor passes the injection floor's semantic
+            // leg (MinimumSemanticSimilarity defaults to that floor), so it counts as full strength; the rest by their text
+            // coverage.
+            var semantic = aboveFloor.Select(c => c.Record.ExperienceId).ToHashSet();
+            var coverage = lexical.Candidates.ToDictionary(c => c.Record.ExperienceId, c => c.TermCoverage ?? 0d);
+            hybrid.Add(new QueryOutcome(
+                query,
+                [.. merged.Select(c => Id(c, query.Id))],
+                [.. merged.Select(c => semantic.Contains(c.Record.ExperienceId) ? 1d : coverage.GetValueOrDefault(c.Record.ExperienceId))]));
         }
 
         // Story 28.2: the signature channel does not depend on vectors, so both columns carry the same lookups.

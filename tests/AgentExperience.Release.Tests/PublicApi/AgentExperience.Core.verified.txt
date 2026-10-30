@@ -918,6 +918,8 @@ namespace AgentExperience.Core.Retrieval
         public AgentExperience.Abstractions.ExperienceRecord Record { get; init; }
         public double Score { get; init; }
         public bool SharedByGrant { get; init; }
+        public double? TextCoverage { get; init; }
+        public double? VectorRelevance { get; init; }
     }
     public sealed class RankingComponent : System.IEquatable<AgentExperience.Core.Retrieval.RankingComponent>
     {

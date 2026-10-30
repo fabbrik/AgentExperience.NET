@@ -778,6 +778,31 @@ public sealed class ExperienceInjectionOptions
     /// <remarks>A bound out of range is refused when the provider is constructed.</remarks>
     public ExperienceRecallOptions? Recall { get; set; }
 
+    /// <summary>
+    /// The injection-time match-strength floor: with one set, a record is injected only when its match is strong enough
+    /// (an exact failure-signature match on the current run, enough of the request's terms, or enough semantic
+    /// similarity; see <see cref="ExperienceMatchFloor"/>), and a block whose every record falls below it injects nothing.
+    /// <see langword="null"/> (the default) is off: the block, telemetry and storage are exactly what they are without it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It is an injection gate, not a retrieval one: which candidates retrieval returns is unchanged. Each ranked
+    /// candidate is checked after <see cref="InjectionOmissionReason.AlreadyDelivered"/> and before the capability gate
+    /// and the <see cref="ExperienceInjectionLimits.MaxRecords"/> cut, so a weak match takes no slot and a lower-ranked,
+    /// stronger one fills it; it is reported as <see cref="InjectionOmissionReason.WeakMatch"/>, with a content-free detail
+    /// naming the strengths and the floor. As with the capability gate, a request that names its own
+    /// <see cref="RetrieveExperienceRequest.Limit"/> asks retrieval for a wider window to backfill from. A block emptied by
+    /// it ends as <see cref="InjectionOutcome.NothingToInject"/>, and its <c>inject</c> span carries
+    /// <c>agentexperience.nothing_reason = weak_match</c>.
+    /// </para>
+    /// <para>
+    /// The injection holdout splits its arms after the floor, so both arms are judged on the same eligible set. Recall
+    /// hints are checked too: an exact signature match passes, a coarse one is omitted as
+    /// <see cref="InjectionOmissionReason.WeakMatch"/>. The Python and Go ports do not apply a floor yet.
+    /// </para>
+    /// </remarks>
+    public ExperienceMatchFloor? MinimumMatch { get; set; }
+
     /// <summary>A shallow copy, taken before validation, so a later change to these options changes nothing.</summary>
     internal ExperienceInjectionOptions Snapshot()
     {

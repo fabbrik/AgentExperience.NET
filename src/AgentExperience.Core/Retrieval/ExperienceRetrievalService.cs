@@ -829,12 +829,16 @@ public sealed class ExperienceRetrievalService
         var positions = new Dictionary<Guid, int>();
         var truncated = false;
 
-        if (Absorb(request, channels.Text.Candidates, "candidate source", merged, positions, ref truncated) is { } textFailure)
+        // Story 28.5: what each channel said about each record, kept apart from the merged relevance, for the injection floor.
+        var textCoverage = new Dictionary<Guid, double>();
+        var vectorRelevance = new Dictionary<Guid, double>();
+
+        if (Absorb(request, channels.Text.Candidates, "candidate source", merged, positions, ref truncated, textCoverage, static candidate => candidate.TermCoverage ?? candidate.Relevance) is { } textFailure)
         {
             return Empty(RetrievalOutcome.Failed, request, unrestricted, startedAt, textFailure, channels.Vector.Fallback);
         }
 
-        if (Absorb(request, channels.Vector.Candidates, "embedding index", merged, positions, ref truncated) is { } vectorFailure)
+        if (Absorb(request, channels.Vector.Candidates, "embedding index", merged, positions, ref truncated, vectorRelevance, static candidate => candidate.Relevance) is { } vectorFailure)
         {
             // A vector channel that answered with something unverifiable is treated exactly like a
             // text one that did: fail-closed. Silently dropping it would mean returning a result
@@ -903,7 +907,12 @@ public sealed class ExperienceRetrievalService
                     channels.Vector.Fallback);
             }
 
-            ranked.Add((Score(record, candidate, environment, now), record.ExperienceId.ToString("D")));
+            var scored = Score(record, candidate, environment, now) with
+            {
+                TextCoverage = textCoverage.TryGetValue(record.ExperienceId, out var coverage) ? coverage : null,
+                VectorRelevance = vectorRelevance.TryGetValue(record.ExperienceId, out var vector) ? vector : null,
+            };
+            ranked.Add((scored, record.ExperienceId.ToString("D")));
         }
 
         // Ties sort by ExperienceId ascending and ordinal, so the order is total and stable rather than
@@ -952,7 +961,9 @@ public sealed class ExperienceRetrievalService
         string channel,
         List<ExperienceCandidate> merged,
         Dictionary<Guid, int> positions,
-        ref bool truncated)
+        ref bool truncated,
+        Dictionary<Guid, double> strengths,
+        Func<ExperienceCandidate, double> strength)
     {
         if (candidates.Count > _policy.CandidateLimit)
         {
@@ -995,6 +1006,7 @@ public sealed class ExperienceRetrievalService
                 return new RetrievalFailure($"The {channel} returned the same record more than once.", Exception: null);
             }
 
+            strengths[record.ExperienceId] = Normalize(strength(candidate));
             Fold(merged, positions, candidate);
         }
 
