@@ -245,6 +245,38 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   refuses a blank reviewer principal (`ValueError`) before the issuer can; Go's `Identity.Authorization()` with nil
   `Bounds` is the identity's own scope.
 
+### The lifecycle in Python and Go: contract 1.16 (story 27.6b)
+
+- **Contract 1.16** ([what it adds](contract/README-1.16.md)) lifts contract 1.0's "a port never moves a stored
+  record's status, counters or revision", add-only. `sql/lifecycle.sql` publishes the .NET PostgreSQL store's own
+  lifecycle statements (generated from its source and checked against it on every build) with the order a commit runs
+  them in; three new fixture families pin the rest: `lifecycle-commit` and `lifecycle-apply` (generated through .NET's
+  `ExperienceLifecycleService` over the in-memory store: every transition the table allows from every status and every
+  one it refuses, stale revisions, status mismatches, scope, denial, validation with every error message, event-ID and
+  evidence-ID replay and conflict, supersession inside and outside the commit, history paging, the reuse evidence and
+  event IDs (tags 4 and 5), duplicate keys, a host engine and its refusals, `RecordedOnly`, and confidence reads) and
+  `lifecycle-sql` (through the PostgreSQL store, with the tables each case leaves). Contract 1.15's `apply` cases are
+  now generated through `ApplyEvidenceAsync` wherever it can express them, with every 1.0-1.15 file unchanged; the one
+  thing 1.15 left unsaid is stated in 1.16: the service refuses evidence when either stored counter is saturated. No
+  schema object and no privilege is added.
+- **New in both ports (hosts can observe it): the ports now write lifecycle events and change a stored record's status,
+  counters, score, revision and `updated_at`.** Python `ExperienceLifecycleService(store)` with `commit`,
+  `apply_evidence` and `read_confidence`, and Go `NewLifecycleService(store, LifecycleOptions{})` with `Commit`,
+  `ApplyEvidence` and `ReadConfidence`, over their in-memory and PostgreSQL stores, which gain `commit_lifecycle_event`
+  / `CommitLifecycleEvent`, `get_history` / `GetHistory` and `check_supersession` / `CheckSupersession` (and a record
+  read with .NET's outcomes). A port's evidence is admitted `HostTrusted` (the service runs as .NET's does under
+  `IndependenceVerification.TrustHostSuppliedIdentifiers`; verification is story 27.7), so .NET's `ReadConfidenceAsync`
+  with `ExcludeHostTrusted` leaves it out, and `HostTrustedEvidence = RecordedOnly` keeps it out of the ranked score in
+  a port as in .NET. A port's commit removes no embedding (27.6d), applies no reuse feedback (27.6c), and answers
+  `NotFound` for a record .NET sealed in crypto-shredding mode, which it cannot read or write. Both ports report the
+  `lifecycle.commit` and `confidence.apply` telemetry operations.
+- **Behaviour change in both in-memory stores:** a finalized record's initial lifecycle event is now part of a history
+  that further events extend, read through `get_history` / `GetHistory`, as in the .NET in-memory store.
+- **A cross-language race on PostgreSQL** (`CrossLanguageLifecycleRacePostgresTests`, CI job `cross-language-lifecycle`):
+  a .NET, a Python and a Go writer commit transitions on the same record at the same revision, released together
+  behind an advisory lock; exactly one commits each round, the others are `StaleRevision` with the revision it
+  produced, and all three read the same history.
+
 ## 0.1.0-preview.17
 
 This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of

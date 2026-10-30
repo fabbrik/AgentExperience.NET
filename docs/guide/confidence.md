@@ -209,11 +209,19 @@ counted under, a host engine checked and recorded as above, and assessment token
 contract's `confidence-engine` fixtures are .NET's results, and each port must give the same numbers (within 1e-12),
 statuses, rule strings, keys, tokens and refusals.
 
-They only compute. Applying evidence to a stored record (`ApplyEvidenceAsync`'s transaction: the lifecycle event, the
-evidence ledger, the independence index and the revision check), verifying a key's inputs, reuse feedback and
-`ReadConfidenceAsync` are not in the ports yet, so a mixed deployment applies evidence from .NET.
+Since contract 1.16 ([what it adds](../../contract/README-1.16.md)) they also **apply** evidence to a stored record and
+read confidence back: `ApplyEvidenceAsync` and `ReadConfidenceAsync` are in both ports' lifecycle services, over their
+in-memory and PostgreSQL stores, with the evidence ledger, the independence key, the single-use assessment, idempotent
+replay and the revision check exactly as above (the `lifecycle-apply` and `lifecycle-sql` fixtures are .NET's results).
+What a port does not do yet is **verify** a key's inputs: its service runs as .NET's does under
+`IndependenceVerification.TrustHostSuppliedIdentifiers`, so only the own-run rule is checked, a human submission's
+assessment token is neither checked nor spent, and every update a port applies is admitted **`HostTrusted`** and stored
+so. A .NET reader sees it for what it is: `ReadConfidenceAsync` with `ExcludeHostTrusted` or `VerifiedOnly` leaves it
+out, and a port host that wants it kept out of the ranked score sets `HostTrustedEvidence = RecordedOnly`, which both
+ports support as .NET does. Reuse feedback and finalization's own reuse evidence (`ReuseEvidenceMode`) stay
+.NET-only, so a mixed deployment that wants verified evidence still applies it from .NET.
 
-| .NET | Python (`agentexperience.confidence`) | Go (core module) |
+| .NET | Python (`agentexperience`) | Go (core module) |
 | --- | --- | --- |
 | `ReuseConfidenceHeuristic.Score` | `score(s, f)` | `ConfidenceScore(s, f)` |
 | `ReuseConfidenceHeuristic.Apply` | `apply(record, evidence_id, kind, source, run_id, round_id, reviewer, detail)` | `ApplyConfidenceEvidence(record, ConfidenceEvidence{...})` |
@@ -221,6 +229,7 @@ evidence ledger, the independence index and the revision check), verifying a key
 | `IndependenceKeyFor`, `ConfidenceIndependenceKey` | `independence_key_for`, `ConfidenceIndependenceKey` | `IndependenceKeyFor`, `MachineIndependenceKey`, `HumanIndependenceKey` |
 | `IExperienceConfidenceEngine`, `ReuseConfidenceHeuristicEngine` | `ExperienceConfidenceEngine` (a protocol), `ReuseConfidenceHeuristicEngine.INSTANCE` | `ConfidenceEngine`, `ReuseConfidenceHeuristicEngine{}` |
 | The lifecycle service's engine check and score (`confidenceEngine`) | `ConfidenceEngineRule.for_engine(engine)`, `.apply(...)`, `.recorded` | `NewConfidenceEngineRule(engine, ae.ConfidenceEngineParameter)`, `.Apply`, `.Recorded()` |
+| `ExperienceLifecycleService.ApplyEvidenceAsync`, `ReadConfidenceAsync` (contract 1.16) | `ExperienceLifecycleService(store, confidence_engine=..., host_trusted_evidence=...)`, `.apply_evidence(...)`, `.read_confidence(...)` | `NewLifecycleService(store, LifecycleOptions{...})`, `.ApplyEvidence`, `.ReadConfidence` |
 | `AssessmentTokenIssuer`, `ExperienceIndependenceOptions` | `AssessmentTokenIssuer`, `ExperienceIndependenceOptions` | `NewAssessmentTokenIssuer`, `IndependenceOptions` |
 | `ArgumentException` (and its parameter), `InvalidOperationException` | `ConfidenceArgumentError` (`.exception`, `.parameter`), `ConfidenceEngineError` | `*ConfidenceArgumentError`, `*ConfidenceEngineError` |
 
