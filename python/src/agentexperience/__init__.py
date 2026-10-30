@@ -1,5 +1,5 @@
 """
-AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.15.
+AgentExperience for Python: a pure-Python core that implements the AgentExperience.NET language-neutral contract 1.16.
 
 Pre-release. It finalizes a captured run into a stored Experience Record, renders the injected Historical Reference
 block, derives the task text, classifies errors, and (with the ``postgres`` extra) writes records to and searches them
@@ -41,6 +41,7 @@ from .capabilities import (
 from .capture import CapturedRun, RawAttempt, RawToolCall, RunCapture
 from .confidence import (
     ACCEPTS_EVIDENCE,
+    CONFIDENCE_EVIDENCE_ADMISSIONS,
     CONFIDENCE_EVIDENCE_KINDS,
     CONFIDENCE_EVIDENCE_SOURCES,
     DEFAULT_ASSESSMENT_TOKEN_LIFETIME,
@@ -52,6 +53,7 @@ from .confidence import (
     ConfidenceArgumentError,
     ConfidenceEngineError,
     ConfidenceEngineRule,
+    ConfidenceEvidenceAdmission,
     ConfidenceEvidenceKind,
     ConfidenceEvidenceSource,
     ConfidenceIndependenceKey,
@@ -114,6 +116,39 @@ from .lessons import (
     LessonsQuery,
 )
 from .lessons_html import LessonsHtmlResponse, lessons_html_response, lessons_html_response_async, render_lessons_html
+from .lifecycle import (
+    CONFIDENCE_EVIDENCE_FILTERS,
+    FIRST_EVENT_STATUS,
+    HISTORY_DEFAULT_LIMIT,
+    HISTORY_MAX_LIMIT,
+    HISTORY_MIN_LIMIT,
+    ApplyConfidenceEvidenceRequest,
+    ApplyConfidenceEvidenceResult,
+    AuthorizationContext,
+    CommitLifecycleTransitionRequest,
+    CommitLifecycleTransitionResult,
+    ConfidenceAdmissionCounts,
+    ConfidenceEvidenceFilter,
+    ConfidenceReadResult,
+    ConfidenceReport,
+    ConfidenceUpdateOutcome,
+    ExperienceLifecycleService,
+    ExperienceStoreError,
+    ExperienceStoreOutcome,
+    ExperienceSupersessionOutcome,
+    HistoryQuery,
+    HistoryResult,
+    LifecycleCommitResult,
+    LifecycleEvent,
+    LifecycleStore,
+    LifecycleTransitionOutcome,
+    RecordReadResult,
+    StoredLifecycleEvent,
+    StoreValidationError,
+    SupersessionCheckResult,
+    reuse_event_id_for,
+    reuse_evidence_id_for,
+)
 from .limits import CaptureLimits, SanitizationLimits
 from .model import MODEL_METADATA_KEY, normalize_model_id
 from .records import (
@@ -164,9 +199,9 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.15"
-"""The contract version this package passes: every fixture of contract 1.15, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
-1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13 and 1.14 fixture."""
+CONTRACT_VERSION = "1.16"
+"""The contract version this package passes: every fixture of contract 1.16, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14 and 1.15 fixture."""
 
 SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.0",
@@ -185,26 +220,36 @@ SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.13",
     "1.14",
     "1.15",
+    "1.16",
 )
 """Every contract version whose fixtures this package passes."""
 
 __all__ = [
     "ACCEPTS_EVIDENCE",
+    "CONFIDENCE_EVIDENCE_ADMISSIONS",
+    "CONFIDENCE_EVIDENCE_FILTERS",
     "CONFIDENCE_EVIDENCE_KINDS",
     "CONFIDENCE_EVIDENCE_SOURCES",
     "CONTRACT_VERSION",
     "DEFAULT_ASSESSMENT_TOKEN_LIFETIME",
     "DEFAULT_HOLDOUT_SALT",
+    "FIRST_EVENT_STATUS",
     "HEURISTIC_RULE_ID",
+    "HISTORY_DEFAULT_LIMIT",
+    "HISTORY_MAX_LIMIT",
+    "HISTORY_MIN_LIMIT",
     "MAXIMUM_ASSESSMENT_TOKEN_LIFETIME",
     "MINIMUM_ASSESSMENT_TOKEN_KEY_BYTES",
     "MODEL_METADATA_KEY",
     "RULE_VERSION",
     "SUPPORTED_CONTRACT_VERSIONS",
     "TOOL_RISK_CLASSES",
+    "ApplyConfidenceEvidenceRequest",
+    "ApplyConfidenceEvidenceResult",
     "AssessmentTokenIssuer",
     "Attempt",
     "AuthorizationBounds",
+    "AuthorizationContext",
     "BenefitAccumulator",
     "BenefitArm",
     "BenefitComparison",
@@ -220,14 +265,22 @@ __all__ = [
     "CapturedRun",
     "ChatReflectorOptions",
     "ClosedVerificationRound",
+    "CommitLifecycleTransitionRequest",
+    "CommitLifecycleTransitionResult",
+    "ConfidenceAdmissionCounts",
     "ConfidenceArgumentError",
     "ConfidenceDecayPolicy",
     "ConfidenceEngineError",
     "ConfidenceEngineRule",
+    "ConfidenceEvidenceAdmission",
+    "ConfidenceEvidenceFilter",
     "ConfidenceEvidenceKind",
     "ConfidenceEvidenceSource",
     "ConfidenceIndependenceKey",
+    "ConfidenceReadResult",
+    "ConfidenceReport",
     "ConfidenceUpdate",
+    "ConfidenceUpdateOutcome",
     "DeterministicReflector",
     "Duration",
     "Embedder",
@@ -241,11 +294,17 @@ __all__ = [
     "ExperienceConfidenceInput",
     "ExperienceIndependenceOptions",
     "ExperienceLessons",
+    "ExperienceLifecycleService",
     "ExperienceRecord",
     "ExperienceReflector",
+    "ExperienceStoreError",
+    "ExperienceStoreOutcome",
+    "ExperienceSupersessionOutcome",
     "ExportedLesson",
     "FallbackReason",
     "FinalizedExperience",
+    "HistoryQuery",
+    "HistoryResult",
     "HoldoutArm",
     "HoldoutAssignment",
     "HoldoutOptions",
@@ -266,6 +325,10 @@ __all__ = [
     "LessonsHtmlResponse",
     "LessonsPage",
     "LessonsQuery",
+    "LifecycleCommitResult",
+    "LifecycleEvent",
+    "LifecycleStore",
+    "LifecycleTransitionOutcome",
     "MarkdownLessonFileSink",
     "Message",
     "MessagePart",
@@ -285,6 +348,7 @@ __all__ = [
     "RawAttempt",
     "RawToolCall",
     "ReceivingAgent",
+    "RecordReadResult",
     "Reflection",
     "ReflectionBindingError",
     "ReflectionFailed",
@@ -308,6 +372,9 @@ __all__ = [
     "SearchRow",
     "SearchSafetyError",
     "Selection",
+    "StoreValidationError",
+    "StoredLifecycleEvent",
+    "SupersessionCheckResult",
     "ToolCall",
     "ToolRiskClass",
     "VectorFallback",
@@ -344,6 +411,8 @@ __all__ = [
     "render_block",
     "render_lessons_html",
     "retrieval_summary",
+    "reuse_event_id_for",
+    "reuse_evidence_id_for",
     "select_block",
     "status_after",
     "to_stored",

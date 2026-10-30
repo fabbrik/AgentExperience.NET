@@ -113,12 +113,12 @@ def test_the_contract_version_is_one_this_package_supports() -> None:
     assert version == CONTRACT_VERSION
 
 
-@pytest.mark.parametrize("version", ["2.0", "1.16", None])
+@pytest.mark.parametrize("version", ["2.0", "1.17", None])
 def test_an_unsupported_contract_version_fails_with_a_clear_message(version: str | None) -> None:
     with pytest.raises(
         UnsupportedContractVersion,
         match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4, 1\.5, 1\.6, 1\.7, 1\.8, 1\.9, 1\.10, 1\.11, 1\.12, 1\.13, "
-        r"1\.14, 1\.15",
+        r"1\.14, 1\.15, 1\.16",
     ):
         check_contract_version({"contractVersion": version})
 
@@ -151,6 +151,7 @@ def test_every_contract_file_matches_the_lock() -> None:
         "query-holdout-outcomes.sql",
         "record-provider-holdout-assignment.sql",
         "query-provider-holdout-outcomes.sql",
+        "lifecycle.sql",
     ],
 )
 def test_the_packaged_sql_is_the_contract_sql(name: str) -> None:
@@ -179,6 +180,9 @@ def test_every_fixture_family_has_cases() -> None:
         "lesson-export",
         "lessons-html",
         "lessons-view",
+        "lifecycle-apply",
+        "lifecycle-commit",
+        "lifecycle-sql",
         "provider-benefit-estimate",
         "provider-holdout-assign",
         "provider-holdout-record",
@@ -198,6 +202,9 @@ def test_every_fixture_family_has_cases() -> None:
         "holdout-outcomes",
         "holdout-record",
         "inject",
+        "lifecycle-apply",
+        "lifecycle-commit",
+        "lifecycle-sql",
         "provider-benefit-estimate",
         "provider-holdout-record",
         "record-injection",

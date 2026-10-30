@@ -58,6 +58,38 @@ OPERATIONS: Mapping[str, OperationSpec] = {
     "finalize": OperationSpec(CORE_SOURCE, True, ("Validated", "Quarantined")),
     "retrieve": OperationSpec(CORE_SOURCE, True, ("Completed", "TimedOut", "Denied", "Failed")),
     "index": OperationSpec(CORE_SOURCE, True, ("Indexed", "Stale", "Missing", "ProviderFailed", "IndexFailed")),
+    "lifecycle.commit": OperationSpec(
+        CORE_SOURCE,
+        True,
+        (
+            "Committed",
+            "TransitionNotAllowed",
+            "ReplacementNotAllowed",
+            "StaleRevision",
+            "StatusMismatch",
+            "Conflict",
+            "NotFound",
+            "Denied",
+            "Invalid",
+            "Deleted",
+        ),
+    ),
+    "confidence.apply": OperationSpec(
+        CORE_SOURCE,
+        True,
+        (
+            "Applied",
+            "Ineligible",
+            "StaleRevision",
+            "StatusMismatch",
+            "Conflict",
+            "NotFound",
+            "Denied",
+            "Invalid",
+            "Deleted",
+            "Unverified",
+        ),
+    ),
     "inject": OperationSpec(
         MAF_SOURCE,
         True,
@@ -80,7 +112,8 @@ OPERATIONS: Mapping[str, OperationSpec] = {
     "benefit_refresh": OperationSpec(MAF_SOURCE, False, ("Refreshed", "NotRefreshed", "OutcomeUnknown")),
 }
 """Every operation this port reports, by its ``operation`` value. The port reports no other: not ``retention.sweep``,
-``delete``, grants, seal, backfill, lifecycle, confidence, reuse-feedback, ``deindex`` or ``reindex``."""
+``delete``, grants, seal, backfill, reuse-feedback, ``deindex`` or ``reindex``. ``lifecycle.commit`` and
+``confidence.apply`` are contract 1.16's."""
 
 NEVER_NESTED: frozenset[str] = frozenset(
     {"inject", "record_injection", "record_holdout", "record_provider_holdout", "benefit_refresh"}
@@ -89,8 +122,11 @@ NEVER_NESTED: frozenset[str] = frozenset(
 
 ATTRIBUTES: tuple[str, ...] = (
     "agentexperience.attempt_id",
+    "agentexperience.confidence.admission",
     "agentexperience.correlation_id",
+    "agentexperience.event_id",
     "agentexperience.experience_id",
+    "agentexperience.independence.refusal",
     "agentexperience.omitted_count",
     "agentexperience.reflection.screening_refusal",
     "agentexperience.reflection_id",

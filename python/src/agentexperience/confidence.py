@@ -69,6 +69,13 @@ IndependenceVerification = Literal["Verified", "TrustHostSuppliedIdentifiers"]
 """.NET's ``IndependenceVerification``."""
 INDEPENDENCE_VERIFICATIONS: tuple[IndependenceVerification, ...] = ("Verified", "TrustHostSuppliedIdentifiers")
 
+ConfidenceEvidenceAdmission = Literal["Verified", "HostTrusted"]
+"""How evidence was admitted (.NET's ``ConfidenceEvidenceAdmission``): verified, or trusted as the host supplied it."""
+CONFIDENCE_EVIDENCE_ADMISSIONS: tuple[ConfidenceEvidenceAdmission, ...] = ("Verified", "HostTrusted")
+
+ASSESSMENT_ID_PATH = "Confidence.AssessmentId"
+"""The error path a spent assessment is reported on (.NET's ``ConfidenceUpdate.AssessmentIdPath``)."""
+
 HostTrustedEvidenceEffect = Literal["Counted", "RecordedOnly"]
 """.NET's ``HostTrustedEvidenceEffect``."""
 HOST_TRUSTED_EVIDENCE_EFFECTS: tuple[HostTrustedEvidenceEffect, ...] = ("Counted", "RecordedOnly")
@@ -213,6 +220,10 @@ class ConfidenceUpdate:
     prior_contradictions: int
     new_contradictions: int
     detail: str | None = None
+    assessment_id: uuid.UUID | None = None
+    """The assessment a human update spends, once per record (contract 1.16); ``None`` for none."""
+    admission: ConfidenceEvidenceAdmission | None = None
+    """Which mode admitted the update (contract 1.16); ``None`` for evidence stored before admission was recorded."""
 
     @property
     def counted(self) -> bool:
