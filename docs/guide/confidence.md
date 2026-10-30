@@ -217,8 +217,11 @@ What a port does not do yet is **verify** a key's inputs: its service runs as .N
 `IndependenceVerification.TrustHostSuppliedIdentifiers`, so only the own-run rule is checked, a human submission's
 assessment token is neither checked nor spent, and every update a port applies is admitted **`HostTrusted`** and stored
 so. A .NET reader sees it for what it is: `ReadConfidenceAsync` with `ExcludeHostTrusted` or `VerifiedOnly` leaves it
-out, and a port host that wants it kept out of the ranked score sets `HostTrustedEvidence = RecordedOnly`, which both
-ports support as .NET does. Reuse feedback and finalization's own reuse evidence (`ReuseEvidenceMode`) stay
+out. **Because a port cannot verify, its default is `HostTrustedEvidence = RecordedOnly`**, not .NET's `Counted`: by
+default the evidence a port applies is recorded on an event that moves only the revision, never the counters, score or
+status, so a caller cannot inflate or contest a lesson with invented run IDs. A host that accepts that risk opts into
+`Counted` explicitly (Python `host_trusted_evidence="Counted"`, Go `HostTrustedEvidence: ae.HostTrustedCounted` or the
+port's equivalent), which is .NET's behaviour under `TrustHostSuppliedIdentifiers`. Reuse feedback and finalization's own reuse evidence (`ReuseEvidenceMode`) stay
 .NET-only, so a mixed deployment that wants verified evidence still applies it from .NET.
 
 | .NET | Python (`agentexperience`) | Go (core module) |

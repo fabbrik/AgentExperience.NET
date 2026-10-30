@@ -66,7 +66,10 @@ internal static class LifecycleSqlContract
     /// <summary>
     /// The one statement that is not the .NET store's: a port holds no key store, so it cannot write a sealed record's
     /// events the way the .NET store in crypto-shredding mode does, and refuses to commit against one (contract 1.0: a
-    /// sealed row is skipped).
+    /// sealed row is skipped). A port runs it only once its own transaction holds the record's row lock -- after the
+    /// projection update matched the row, and on the duplicate path after <c>lock-revision-and-status</c> -- so the .NET
+    /// sealing job (which locks the row <c>FOR UPDATE</c>) either sealed it before, and the port sees it, or waits for the
+    /// port's transaction to end: a seal can never land between the check and the write.
     /// </summary>
     private const string SealedRecordSql =
         $"SELECT EXISTS (SELECT 1 FROM {ExperienceRecordSql.Table} WHERE experience_id = @experience_id AND " +
@@ -88,7 +91,6 @@ internal static class LifecycleSqlContract
         -- is validated, then authorized, before any statement runs (README-1.16.md): Invalid and Denied touch nothing.
         --
         -- COMMIT. One transaction at READ COMMITTED (pinned, never inherited):
-        --  0. (A port only.) "sealed-record" true: roll back; NotFound.
         --  1. With a confidence update: "savepoint", then "insert-evidence" with @counted the update's own Counted (a new
         --     counter differs from its prior), @event_id the event's, @applied_status the event's current status. On a unique
         --     violation (SQLSTATE 23505) of
@@ -113,11 +115,13 @@ internal static class LifecycleSqlContract
         --     this transaction, then roll back: no row is NotFound; a tombstone (deleted_at set) is Deleted, with its
         --     revision; a revision other than @expected_revision is StaleRevision, with it; otherwise StatusMismatch, with
         --     the stored revision and the stored status as the current status.
-        --  5. Commit: Committed, at @applied_revision, no current status, the update as submitted.
+        --  5. (A port only.) "sealed-record", now that this transaction holds the row lock: true, roll back; NotFound.
+        --  6. Commit: Committed, at @applied_revision, no current status, the update as submitted.
         --
         -- DUPLICATE, in the same transaction: "lock-revision-and-status": no row is NotFound; a tombstone Deleted (with its
         --  revision); a revision other than @expected_revision StaleRevision (with it); an event prior status that is set
-        --  and is not the stored status StatusMismatch (with the stored revision and status); each rolled back. Otherwise
+        --  and is not the stored status StatusMismatch (with the stored revision and status); (a port only) "sealed-record"
+        --  true NotFound; each rolled back. Otherwise
         --  "insert-evidence" with the update recorded only (its new score and counters set to its prior ones, @counted
         --  false), @event_id NULL, @applied_revision the stored revision and @applied_status the stored status; a violation
         --  of confidence_evidence_pkey or ux_confidence_evidence_assessment is handled as in step 1. Then

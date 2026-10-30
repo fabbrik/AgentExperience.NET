@@ -709,4 +709,17 @@ jobs:
         run: dotnet build tests/AgentExperience.Contract.Tests --no-restore --configuration Release
 
       - name: Race .NET, Python and Go writers on one revision
-        run: dotnet test tests/AgentExperience.Contract.Tests --no-build --configuration Release --filter "FullyQualifiedName~CrossLanguageLifecycleRace"
+        run: >-
+          dotnet test tests/AgentExperience.Contract.Tests --no-build --configuration Release
+          --filter "FullyQualifiedName~CrossLanguageLifecycleRace"
+          --logger "trx;LogFileName=race.trx" --results-directory race-results
+
+      # A filter that matches nothing exits 0, so the race must be seen to have run and passed.
+      - name: Assert the race ran and passed
+        run: |
+          set -euo pipefail
+          trx="race-results/race.trx"
+          test -f "$trx" || { echo "::error::no test results at $trx"; exit 1; }
+          passed="$(grep -o '<Counters [^>]*' "$trx" | grep -o ' passed="[0-9]*"' | grep -o '[0-9]\+')"
+          test "${passed:-0}" -ge 1 || { echo "::error::the cross-language race did not run"; exit 1; }
+          echo "cross-language race: $passed passed"

@@ -266,16 +266,22 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   / `CommitLifecycleEvent`, `get_history` / `GetHistory` and `check_supersession` / `CheckSupersession` (and a record
   read with .NET's outcomes). A port's evidence is admitted `HostTrusted` (the service runs as .NET's does under
   `IndependenceVerification.TrustHostSuppliedIdentifiers`; verification is story 27.7), so .NET's `ReadConfidenceAsync`
-  with `ExcludeHostTrusted` leaves it out, and `HostTrustedEvidence = RecordedOnly` keeps it out of the ranked score in
-  a port as in .NET. A port's commit removes no embedding (27.6d), applies no reuse feedback (27.6c), and answers
+  with `ExcludeHostTrusted` leaves it out.
+- **A port's default differs from .NET's: `HostTrustedEvidence = RecordedOnly`.** Until the ports can verify evidence,
+  evidence a port applies is by default recorded on an event that moves only the revision: not the counters, the score,
+  the status or `updated_at`, so any authorised caller of a port cannot inflate or contest a lesson with invented run IDs.
+  `Counted` (.NET's behaviour under `TrustHostSuppliedIdentifiers`) is an explicit opt-in. A port's PostgreSQL commit
+  refuses a record .NET seals while the commit runs (it checks once it holds the row lock), and Go refuses a host
+  transaction that is not `READ COMMITTED`. A port's commit removes no embedding (27.6d), applies no reuse feedback (27.6c), and answers
   `NotFound` for a record .NET sealed in crypto-shredding mode, which it cannot read or write. Both ports report the
   `lifecycle.commit` and `confidence.apply` telemetry operations.
 - **Behaviour change in both in-memory stores:** a finalized record's initial lifecycle event is now part of a history
   that further events extend, read through `get_history` / `GetHistory`, as in the .NET in-memory store.
 - **A cross-language race on PostgreSQL** (`CrossLanguageLifecycleRacePostgresTests`, CI job `cross-language-lifecycle`):
-  a .NET, a Python and a Go writer commit transitions on the same record at the same revision, released together
-  behind an advisory lock; exactly one commits each round, the others are `StaleRevision` with the revision it
-  produced, and all three read the same history.
+  in each of six rounds a .NET, a Python and a Go process commit a transition on one record at revision 1, released
+  together behind an advisory lock; the test asserts that exactly one reports `Committed`, the other two
+  `StaleRevision` at revision 2, that the record's history holds the winner's event alone, and that the three read that
+  history identically.
 
 ## 0.1.0-preview.17
 

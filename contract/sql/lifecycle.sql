@@ -13,7 +13,6 @@
 -- is validated, then authorized, before any statement runs (README-1.16.md): Invalid and Denied touch nothing.
 --
 -- COMMIT. One transaction at READ COMMITTED (pinned, never inherited):
---  0. (A port only.) "sealed-record" true: roll back; NotFound.
 --  1. With a confidence update: "savepoint", then "insert-evidence" with @counted the update's own Counted (a new
 --     counter differs from its prior), @event_id the event's, @applied_status the event's current status. On a unique
 --     violation (SQLSTATE 23505) of
@@ -38,11 +37,13 @@
 --     this transaction, then roll back: no row is NotFound; a tombstone (deleted_at set) is Deleted, with its
 --     revision; a revision other than @expected_revision is StaleRevision, with it; otherwise StatusMismatch, with
 --     the stored revision and the stored status as the current status.
---  5. Commit: Committed, at @applied_revision, no current status, the update as submitted.
+--  5. (A port only.) "sealed-record", now that this transaction holds the row lock: true, roll back; NotFound.
+--  6. Commit: Committed, at @applied_revision, no current status, the update as submitted.
 --
 -- DUPLICATE, in the same transaction: "lock-revision-and-status": no row is NotFound; a tombstone Deleted (with its
 --  revision); a revision other than @expected_revision StaleRevision (with it); an event prior status that is set
---  and is not the stored status StatusMismatch (with the stored revision and status); each rolled back. Otherwise
+--  and is not the stored status StatusMismatch (with the stored revision and status); (a port only) "sealed-record"
+--  true NotFound; each rolled back. Otherwise
 --  "insert-evidence" with the update recorded only (its new score and counters set to its prior ones, @counted
 --  false), @event_id NULL, @applied_revision the stored revision and @applied_status the stored status; a violation
 --  of confidence_evidence_pkey or ux_confidence_evidence_assessment is handled as in step 1. Then

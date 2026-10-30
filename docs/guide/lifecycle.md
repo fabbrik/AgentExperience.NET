@@ -246,6 +246,10 @@ What a port does not do yet:
   record by its status.
 - **Sealed records**: a port holds no key store, so it neither reads a record .NET sealed in crypto-shredding mode nor
   writes its events: a port's commit, history read and record read of one answer `NotFound`.
+- **Verified evidence**: a port's confidence evidence is admitted `HostTrusted`, and by default recorded without moving
+  the record (see [Confidence](confidence.md#in-python-and-go)).
+- **A host transaction at another isolation level** (Go's `pgx.Tx`): refused unless it is `READ COMMITTED`, the level
+  .NET pins a commit to.
 
 Both ports report `lifecycle.commit` (and `confidence.apply`) through their telemetry exactly as .NET does.
 

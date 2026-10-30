@@ -41,9 +41,13 @@ A contract 1.16 port's lifecycle service is .NET's with these settings, and pass
   `IndependenceVerification.TrustHostSuppliedIdentifiers`. Only the own-run rule is checked (`Unverified`, `OwnRun`);
   every other identifier is taken as given, an assessment token a human submission presents is neither checked nor
   spent, and every update is admitted **`HostTrusted`**, which is stored with it. A .NET reader therefore sees port
-  evidence for what it is: `ReadConfidenceAsync` with `ExcludeHostTrusted` or `VerifiedOnly` leaves it out. A host that
-  wants port-admitted evidence kept out of the ranked score sets **`HostTrustedEvidence = RecordedOnly`**, which a port
-  supports exactly as .NET does (the event moves the revision and nothing else). `Counted` is the default.
+  evidence for what it is: `ReadConfidenceAsync` with `ExcludeHostTrusted` or `VerifiedOnly` leaves it out.
+- **A port's default is `HostTrustedEvidence = RecordedOnly`**, not .NET's `Counted`. .NET's own default is verified
+  evidence; a port cannot verify yet, so by default every piece of evidence it applies is recorded on an event that
+  moves the revision and nothing else (not the counters, the score, the status or `UpdatedAt`), exactly as .NET under
+  `RecordedOnly`: a caller of a port cannot inflate or contest a lesson with invented run IDs. A host that accepts that
+  risk opts into **`Counted`** explicitly, which is .NET's behaviour under `TrustHostSuppliedIdentifiers`. Every
+  fixture names its mode, so the fixtures pin both.
 - **No provenance signing** (27.7): a record's initial counters are "verified" for `ReadConfidenceAsync` exactly when
   its origin is `Finalized`, as in .NET with no signing options.
 - **No indexing service** (27.6d): a commit that takes a record out of eligibility removes no embedding and reports no
@@ -51,6 +55,10 @@ A contract 1.16 port's lifecycle service is .NET's with these settings, and pass
 - **No reuse feedback** (27.6c) and **no finalization reuse evidence** (`ReuseEvidenceMode.SameTask`, off by default in
   .NET): a port finalizes as before, submitting nothing.
 - **No capture service lookup**: with verification off, .NET's lifecycle service never asks one.
+- **A host transaction must be READ COMMITTED.** A port whose PostgreSQL store can run inside a transaction the host
+  opened (Go's `pgx.Tx`) refuses one at another isolation level: under `REPEATABLE READ` or `SERIALIZABLE` a lost race
+  would re-read the record in the host's old snapshot and report a revision that never moves. .NET pins the commit to
+  `READ COMMITTED` itself.
 
 Where .NET would need one of these to decide, the port decides exactly as .NET does with it at its default or off
 setting. Everything else is .NET's: the transition table, every refusal and its reason, the validation and its every
@@ -81,7 +89,10 @@ The fixtures pin them; in short (the [Lifecycle](../docs/guide/lifecycle.md) and
   with an error on `Confidence.AssessmentId` (the service reports it as `Unverified`, `AssessmentTokenReplayed`). A
   port's own service never sets one (no verification), but its store honours one another writer set.
 - **Supersession** is decided by the store inside the commit: the replacement must be in the record's exact scope,
-  `Validated` or `Reinforced`, and not on a replacement chain leading back to the record.
+  `Validated` or `Reinforced`, and not on a replacement chain leading back to the record. The two .NET stores order
+  this gate differently, and each port's store follows its .NET counterpart: the in-memory store checks it before the
+  revision, the PostgreSQL store after the event insert (so a stale supersession whose revision another event already
+  took is `StaleRevision` in PostgreSQL and `ReplacementNotAllowed` in memory).
 - **The clock.** A commit stamps the store's own clock on the event (`RecordedAt`) and, unless the evidence is recorded
   only, on the record (`UpdatedAt`), truncated to whole microseconds. A port's in-memory store takes its clock as a
   parameter.
@@ -94,7 +105,9 @@ file already grants `INSERT` on both logs and `UPDATE` of the record's lifecycle
 
 **Sealed records.** A port holds no key store, so it neither reads a sealed record (1.0) nor writes one's events: the
 one statement `sql/lifecycle.sql` adds of its own, `sealed-record`, makes a port's commit against a sealed record
-`NotFound`, and its history and read of one `NotFound` too. (.NET in crypto-shredding mode seals an event's reason and
+`NotFound`, and its history and read of one `NotFound` too. A port runs it only once its own transaction holds the
+record's row lock (after the projection update, or on the duplicate path after `lock-revision-and-status`), so the .NET
+sealing job, which locks the row `FOR UPDATE`, can never seal a record between the port's check and its write. (.NET in crypto-shredding mode seals an event's reason and
 detail under the record's key; a port cannot.) This is the one place a port answers differently from .NET, and only
 for a record .NET sealed.
 
