@@ -300,7 +300,7 @@ internal static class LessonExportContract
         var store = new InMemoryExperienceRecordStore(clock);
         foreach (var record in definition.Records)
         {
-            var created = await store.CreateAsync(SearchContractPostgresTests.Authorization(record.Scope), record, CancellationToken.None);
+            var created = await store.CreateAsync(Authorization(record.Scope), record, CancellationToken.None);
             if (created.Outcome != ExperienceStoreOutcome.Created)
             {
                 throw new InvalidOperationException($"{record.ExperienceId} was not stored: {created.Outcome}.");
@@ -310,7 +310,7 @@ internal static class LessonExportContract
         foreach (var row in definition.Assignments)
         {
             var recorded = await store.RecordHoldoutAssignmentAsync(
-                SearchContractPostgresTests.Authorization(row.Scope),
+                Authorization(row.Scope),
                 row.Scope,
                 new HoldoutAssignment(row.RunId, row.Arm, [new RunExposure(row.ExperienceId, row.Revision)], row.AssignedAt),
                 CancellationToken.None);
@@ -336,7 +336,7 @@ internal static class LessonExportContract
             }
 
             var result = await lessons.ExportMeasuredAsync(
-                new ExperienceIdentity(SearchContractPostgresTests.Authorization(options.AuthorizedScope), options.Scope),
+                new ExperienceIdentity(Authorization(options.AuthorizedScope), options.Scope),
                 new MarkdownLessonFileSink(path, clock),
                 options.MinimumRunsPerArm is { } minimum ? new ExperienceBenefitOptions { MinimumRunsPerArm = minimum } : null);
             var written = result.Sync is null ? null : await File.ReadAllTextAsync(path, Encoding.UTF8);
@@ -372,4 +372,8 @@ internal static class LessonExportContract
             ? null
             : new JsonObject { ["added"] = sync.Added, ["updated"] = sync.Updated, ["removed"] = sync.Removed },
     };
+
+    /// <summary>The authorization a host established for exactly <paramref name="scope"/>.</summary>
+    private static AuthorizationContext Authorization(Scope scope) =>
+        new(scope.TenantId, "contract-principal", [], Fixed.T0, scope.ApplicationId, scope.ProjectId, scope.TeamId, scope.AgentId, scope.UserId);
 }
