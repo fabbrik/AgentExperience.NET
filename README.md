@@ -184,6 +184,17 @@ under another embedding model, need a re-index pass before they match by meaning
 benchmark has an opt-in hybrid column, and a number will be stated here only once a run against a real embedding model
 is committed.
 
+## Recall at the moment of failure
+
+A block is chosen before the run, by the request's words. With `options.Recall = new ExperienceRecallOptions()` (off by
+default), a run that hits a failure a stored lesson recovered from is shown what worked at that moment: when a tool call
+throws, or your `ClassifyToolResult` says it failed, and a verified lesson holds the same failure signature (the tool,
+its error class and a fingerprint of the error) followed by a call that worked, one short labelled hint naming those
+calls goes into the instructions of the model's next call in the same run. It follows the block's rules (eligibility
+re-read, grants, capability gate, session budget), never changes a tool's result or exception, is bounded by 300 ms per
+lookup, and is measured by the same holdout. `dotnet run --project samples/AgentExperience.Sample.QuickStart -- --recall`
+shows one; see [Recall at the moment of failure](docs/guide/injection.md#recall-at-the-moment-of-failure).
+
 ## Seeing what it learned
 
 After the quick start, `provider.GetAgentExperienceLessons().ListForDevelopmentIdentityAsync()` lists the lessons it

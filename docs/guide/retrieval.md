@@ -300,8 +300,8 @@ something to pass on.
 
 A request's text says what the user asked for; what predicts whether a lesson applies is often the situation the agent
 is in: which tool just failed, and how. Every failed tool call a record holds has a **failure
-signature**, and both stores can find records by it. Nothing about injection or ranking uses it yet: it is the key
-recall at the moment of failure and consolidating lessons per situation build on.
+signature**, and both stores can find records by it. Ranking and the before-run block do not use it: it is the key
+[recall at the moment of failure](injection.md#recall-at-the-moment-of-failure) looks a failing run's lesson up by.
 
 **What a signature is.** `ExperienceFailureSignature.From(ToolCallRecord)` (or `From(toolName, error)` for a failure no
 record holds yet) gives `(ToolName, ErrorClass, Fingerprint)`, and `Key`, the three joined by U+001F. The error class is

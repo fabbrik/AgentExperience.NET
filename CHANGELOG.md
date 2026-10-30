@@ -356,6 +356,29 @@ the six Go modules at one version.
   matching finds 13 of the 15 records that hold the same failure with no false positive; coarse matching finds all 15
   with 0.22 unexpected candidates per query.
 
+### Recall at the moment of failure (story 28.3)
+
+- **A failing run is shown what worked**, opt-in: `AgentExperienceOptions.Recall` (or `ExperienceInjectionOptions.Recall`
+  under the explicit wiring) set to an `ExperienceRecallOptions`. When a tool call in a captured run throws, or
+  `ClassifyToolResult` names an error class for it, and a reusable lesson holds the same failure signature as resolved,
+  one short labelled hint (`=== BEGIN HISTORICAL REFERENCE: EARLIER FIX FOR THIS FAILURE … ===`, at most 600 bytes by
+  default) naming the calls that worked, rendered as the block's `Tried:` line renders them, is appended to the
+  instructions of the model's next call in that run. It is never part of the tool's result: capture records the tool's
+  own result or error, and a thrown exception is rethrown unchanged. Off by default; with it off nothing changes.
+- **The block's rules apply**: the signature source's eligible records, exact match first (coarse only with
+  `AllowCoarseMatch`), then the same final eligibility re-read, grant disclosure (a `LessonOnly` grant gives no hint),
+  model-authored policy, capability gate and host decision. A lookup is bounded by `LookupTimeout` (300 ms); a signature
+  is looked up once per run, and a run at most `MaxHintsPerRun` (3) times; a record the run or session already holds is
+  not hinted again; a hint is charged to the session's budget.
+- **Measured by the holdout**: the same arm as the block. A held-out run gets no hint and its would-be hinted records are
+  recorded as its assignment; a treatment run's hinted records are recorded as assignment and exposure. Assignment rows
+  do not say whether a block or a hint delivered a record, so the estimate covers both.
+- **Reported** through `ExperienceRecallOptions.OnRecall` (`ExperienceRecallResult`: run, signature, outcome, record
+  IDs) and a new `recall` telemetry operation (`agentexperience.record_count`, `agentexperience.signature.match`);
+  `docs/telemetry-names.json` gains both. Without a signature source recall is reported once through
+  `OnCaptureFailure` at the new stage `Recall`. The quick-start demo shows a hint with `--recall`. .NET only: the
+  Python and Go ports and the contract are unchanged.
+
 ### The holdout in Python and Go: contract 1.8 (story 25.6)
 
 - **Contract 1.8** ([what it adds](contract/README-1.8.md)) brings the injection holdout into the language-neutral
