@@ -61,20 +61,11 @@ func ReceivingAgentOf(value any) (*ae.ReceivingAgent, error) {
 	return agent, nil
 }
 
-// LoadInjectOptionsCase reads an inject-options case.
-func LoadInjectOptionsCase(name string) (*InjectOptionsCase, error) {
-	dir := filepath.Join(Fixtures, InjectOptionsFamily, name)
-	ranked, err := ae.RankedFromJSON(MustReadJSON(filepath.Join(dir, "records.json")))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", name, err)
-	}
-	options := object(MustReadJSON(filepath.Join(dir, "options.json")))
-	block, err := os.ReadFile(filepath.Join(dir, "expected-block.txt"))
-	if err != nil {
-		return nil, err
-	}
-	c := &InjectOptionsCase{Name: name, Ranked: ranked, Expected: object(MustReadJSON(filepath.Join(dir, "expected.json"))),
-		ExpectedBlock: string(block), MessageRole: text(get(options, "messageRole")),
+// InjectOptionsOf reads an options.json of the inject-options family (also an agent's options in the cross-language
+// file) into a case with no records.
+func InjectOptionsOf(value any) (*InjectOptionsCase, error) {
+	options := object(value)
+	c := &InjectOptionsCase{MessageRole: text(get(options, "messageRole")),
 		ModelAuthored: ae.ModelAuthoredLessonPolicy(text(get(options, "modelAuthoredLessons")))}
 	c.Block = ae.BlockOptions{Rendering: ae.Rendering(text(get(options, "rendering"))),
 		FailureDetail: ae.FailureDetail(text(get(options, "failureDetail"))),
@@ -88,8 +79,9 @@ func LoadInjectOptionsCase(name string) (*InjectOptionsCase, error) {
 	if limit := get(options, "requestLimit"); limit != nil {
 		c.RequestLimit = int(integer(limit))
 	}
+	var err error
 	if c.Agent, err = ReceivingAgentOf(get(options, "receivingAgent")); err != nil {
-		return nil, fmt.Errorf("%s: %w", name, err)
+		return nil, err
 	}
 	if tools := get(options, "runTools"); tools != nil {
 		c.RunTools = []string{}
@@ -97,6 +89,27 @@ func LoadInjectOptionsCase(name string) (*InjectOptionsCase, error) {
 			c.RunTools = append(c.RunTools, text(tool))
 		}
 	}
+	return c, nil
+}
+
+// LoadInjectOptionsCase reads an inject-options case.
+func LoadInjectOptionsCase(name string) (*InjectOptionsCase, error) {
+	dir := filepath.Join(Fixtures, InjectOptionsFamily, name)
+	ranked, err := ae.RankedFromJSON(MustReadJSON(filepath.Join(dir, "records.json")))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	options := object(MustReadJSON(filepath.Join(dir, "options.json")))
+	block, err := os.ReadFile(filepath.Join(dir, "expected-block.txt"))
+	if err != nil {
+		return nil, err
+	}
+	c, err := InjectOptionsOf(options)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	c.Name, c.Ranked, c.ExpectedBlock = name, ranked, string(block)
+	c.Expected = object(MustReadJSON(filepath.Join(dir, "expected.json")))
 	return c, nil
 }
 
