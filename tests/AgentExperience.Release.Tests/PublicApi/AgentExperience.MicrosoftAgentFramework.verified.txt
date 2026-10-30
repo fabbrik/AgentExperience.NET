@@ -42,6 +42,7 @@
         public bool InjectWithUseAgentExperience { get; set; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionOptions>? Injection { get; set; }
         public double MinimumSemanticSimilarity { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOptions? Recall { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.AgentExperienceIdentityContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceIdentity?>>? ResolveIdentity { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.AgentExperienceIdentityContext, string>? ResolveTaskId { get; set; }
         public AgentExperience.Core.Finalization.ReuseEvidenceMode ReuseEvidence { get; set; }
@@ -81,6 +82,7 @@
         RecordExposure = 5,
         ToolResultClassification = 6,
         Embeddings = 7,
+        Recall = 8,
     }
     public sealed class ExperienceCaptureOptions
     {
@@ -395,6 +397,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceMessageRole MessageRole { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ModelAuthoredLessonPolicy ModelAuthoredLessons { get; set; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOptions? Recall { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ReceivingAgentCapabilities? ReceivingAgent { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceRendering Rendering { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?>? ResolveRequest { get; set; }
@@ -444,6 +447,47 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public bool RecordsExhausted { get; }
         public int RecordsUsed { get; init; }
         public int TrackedRecords { get; init; }
+    }
+    public sealed class ExperienceRecallOptions : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOptions>
+    {
+        public const int DefaultMaxHintBytes = 600;
+        public const int DefaultMaxHintsPerRun = 3;
+        public const int DefaultMaxRecordsPerHint = 1;
+        public const int MaxHintBytesLimit = 16384;
+        public const int MaxHintsPerRunLimit = 20;
+        public const int MaxRecordsPerHintLimit = 5;
+        public static readonly System.TimeSpan DefaultLookupTimeout;
+        public ExperienceRecallOptions() { }
+        public bool AllowCoarseMatch { get; init; }
+        public System.TimeSpan LookupTimeout { get; init; }
+        public int MaxHintBytes { get; init; }
+        public int MaxHintsPerRun { get; init; }
+        public int MaxRecordsPerHint { get; init; }
+        public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallResult>? OnRecall { get; init; }
+        public AgentExperience.Abstractions.IExperienceSignatureSource? SignatureSource { get; init; }
+    }
+    public enum ExperienceRecallOutcome
+    {
+        Hinted = 0,
+        Withheld = 1,
+        NoMatch = 2,
+        TimedOut = 3,
+        Failed = 4,
+        Bounded = 5,
+    }
+    public sealed class ExperienceRecallResult : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallResult>
+    {
+        public ExperienceRecallResult(System.Guid RunId, AgentExperience.Abstractions.ExperienceFailureSignature? Signature, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOutcome Outcome, System.Collections.Generic.IReadOnlyList<System.Guid> ExperienceIds) { }
+        public string? CorrelationId { get; init; }
+        public System.Collections.Generic.IReadOnlyList<System.Guid> ExperienceIds { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.InjectionFailure? Failure { get; init; }
+        public int HintBytes { get; init; }
+        public AgentExperience.Abstractions.ExperienceSignatureMatch? Match { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOutcome Outcome { get; init; }
+        public System.Guid RunId { get; init; }
+        public AgentExperience.Abstractions.ExperienceFailureSignature? Signature { get; init; }
+        public System.Collections.Generic.IReadOnlyList<System.Guid> WithheldExperienceIds { get; init; }
     }
     public enum HistoricalReferenceMessageRole
     {
@@ -502,6 +546,9 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const string NoValue = "(none recorded)";
         public const string NotANumber = "(unavailable)";
         public const string OutcomeSeparator = " → ";
+        public const string RecallBegin = "=== BEGIN HISTORICAL REFERENCE: EARLIER FIX FOR THIS FAILURE (UNTRUSTED REFERENCE" +
+            " MATERIAL) ===";
+        public const string RecallWorkedPrefix = "  - worked: ";
         public const string RetractionBegin = "--- WITHDRAWN ---";
         public const string RetractionEnd = "--- END WITHDRAWN ---";
         public const string ToolSeparator = ", ";

@@ -138,6 +138,26 @@ public class QuickStartTests
         Assert.Equal(ReadGolden(), rendered);
     }
 
+    [Fact]
+    public async Task Under_recall_run_two_starts_with_no_lesson_and_is_shown_run_ones_fix_after_its_first_failure()
+    {
+        using var output = new StringWriter(CultureInfo.InvariantCulture) { NewLine = "\n" };
+        using var model = new ScriptedModel();
+        var runs = await global::QuickStart.RunRecallAsync(model, global::QuickStart.StandInLabel, output);
+
+        Assert.Equal(["retry-immediately", "wait-for-lock", global::QuickStart.RecallWorkingStrategy], runs[0].Attempts.Select(a => a.Strategy));
+        Assert.Null(runs[0].Hint);
+
+        // No block: run 2's words match nothing stored. One failure, then the fix the hint named.
+        Assert.Null(runs[1].Block);
+        Assert.Equal(["retry-immediately", global::QuickStart.RecallWorkingStrategy], runs[1].Attempts.Select(a => a.Strategy));
+        var hint = Assert.IsType<string>(runs[1].Hint);
+        Assert.StartsWith(HistoricalReferenceWriter.RecallBegin, hint, StringComparison.Ordinal);
+        Assert.Contains("run_refund_check(strategy=\"skip-ledger-check\") [returned]", hint, StringComparison.Ordinal);
+        Assert.Equal(global::QuickStart.RecallWorkingStrategy, ScriptedModel.Hinted("instructions\n\n" + hint));
+        Assert.Contains("Run 2 (hint after a failure): tried retry-immediately ✗ → skip-ledger-check ✓  (1 failed attempt)", output.ToString(), StringComparison.Ordinal);
+    }
+
     private static async Task<(IReadOnlyList<QuickStartRun> Runs, string Output)> RunAsync()
     {
         using var output = new StringWriter(CultureInfo.InvariantCulture) { NewLine = "\n" };
