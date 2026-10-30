@@ -183,6 +183,7 @@
         public const string HexPlaceholder = "<hex>";
         public const int MaxErrorClassLength = 64;
         public const int MaxExcerptLength = 500;
+        public const int MaxScannedLength = 4096;
         public const int MaxToolNameLength = 256;
         public const string NumberPlaceholder = "<n>";
         public const string PathPlaceholder = "<path>";
