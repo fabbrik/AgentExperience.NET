@@ -1,0 +1,13 @@
+{
+  "description": "FailureDetail ErrorClass (the default): a failed attempt shows the error's class, and the failed call its first token.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": null,
+  "runTools": null
+}

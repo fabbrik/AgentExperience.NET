@@ -1,0 +1,24 @@
+{
+  "description": "MessageRole System with the verbose layout and a gate: the same block text, sent as a system message.",
+  "rendering": "Verbose",
+  "failureDetail": "ErrorClass",
+  "messageRole": "System",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": {
+    "availableTools": null,
+    "maxRiskClass": "Medium",
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": false,
+    "gatedRetrievalWindowMultiplier": 4
+  },
+  "runTools": null
+}

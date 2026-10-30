@@ -1,0 +1,30 @@
+{
+  "outcome": "Injected",
+  "messageRole": "User",
+  "retrievalRequest": {
+    "limit": null,
+    "excludeModelAuthored": false
+  },
+  "selected": [
+    "000000e1-0000-4000-8000-000000000001",
+    "000000e1-0000-4000-8000-000000000005",
+    "000000e1-0000-4000-8000-000000000006"
+  ],
+  "injected": [
+    "000000e1-0000-4000-8000-000000000001",
+    "000000e1-0000-4000-8000-000000000005"
+  ],
+  "byteCount": 1021,
+  "omitted": [
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000003",
+      "reason": "RiskClassExceeded",
+      "detail": null
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000006",
+      "reason": "OverByteBudget",
+      "detail": "The record did not fit in the remaining part of the 1022-byte budget, and a record is never cut to fit."
+    }
+  ]
+}

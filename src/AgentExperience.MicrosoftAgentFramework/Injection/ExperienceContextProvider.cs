@@ -1374,6 +1374,57 @@ public sealed class ExperienceContextProvider : AIContextProvider
         SelectCandidates(ranked, omitted, session: null, gate: null, requestLimit, benefit);
 
     /// <summary>
+    /// What an invocation with no session, no benefit view and no host decision injects from <paramref name="ranked"/>
+    /// under this provider's own options: its capability gate for an invocation offering <paramref name="runTools"/>, its
+    /// model-authored policy and record limit (the selection an invocation runs),
+    /// then its writer's layout, failure detail, argument allowlist and byte budget. The final eligibility re-read decides
+    /// an unchanged record exactly as the selection did, so this is what the invocation injects. Contract 1.13's
+    /// <c>inject-options</c> fixtures are generated through it.
+    /// </summary>
+    /// <param name="ranked">The ranked records, best first.</param>
+    /// <param name="omitted">Receives every omission, in the order the provider reports them.</param>
+    /// <param name="requestLimit">The resolved request's own limit, or <see langword="null"/>.</param>
+    /// <param name="runTools">The invocation's tools, for <see cref="ReceivingAgentCapabilities.UseRunTools"/>.</param>
+    /// <returns>The records selected before the byte budget, the payload, and the role it is sent in.</returns>
+    internal (List<RankedExperience> Selected, HistoricalReferencePayload Payload, HistoricalReferenceMessageRole Role) SelectAndWrite(
+        IReadOnlyList<RankedExperience> ranked,
+        List<OmittedExperience> omitted,
+        int? requestLimit,
+        IEnumerable<AITool>? runTools)
+    {
+        var gate = _capabilityGate?.ForInvocation(runTools) is { CanReject: true } active ? active : null;
+        var selected = SelectCandidates(ranked, omitted, session: null, gate, requestLimit, benefit: null);
+        var payload = HistoricalReferenceWriter.Write(
+            selected,
+            _options.Limits,
+            _approachArguments,
+            NoIds,
+            sessionBytesRemaining: null,
+            _retrieval.IsContentConfirmed,
+            _options.FailureDetail,
+            _options.Rendering);
+        omitted.AddRange(payload.Omitted);
+        return (selected, payload, _options.MessageRole);
+    }
+
+    /// <summary>
+    /// The request this provider asks retrieval for once a host resolver returned <paramref name="request"/>, for an
+    /// invocation offering <paramref name="runTools"/>: the model-authored exclusion switched on under
+    /// <see cref="ModelAuthoredLessonPolicy.Exclude"/>, and the capability gate's window (<see cref="GatedWindow"/>). For
+    /// contract 1.13's <c>inject-options</c> fixtures.
+    /// </summary>
+    internal RetrieveExperienceRequest RetrievalRequest(RetrieveExperienceRequest request, IEnumerable<AITool>? runTools)
+    {
+        var gate = _capabilityGate?.ForInvocation(runTools) is { CanReject: true } active ? active : null;
+        if (_excludeModelAuthored && !request.ExcludeModelAuthored)
+        {
+            request = request with { ExcludeModelAuthored = true };
+        }
+
+        return GatedWindow(request, gate, _options.Limits.MaxRecords, _retrieval.Policy.CandidateLimit);
+    }
+
+    /// <summary>
     /// Takes the top <see cref="ExperienceInjectionLimits.MaxRecords"/> in rank order and records the
     /// rest, so the final eligibility check only ever re-reads records that could actually be injected.
     /// With session tracking, a revision the session already holds takes no slot, and the session's

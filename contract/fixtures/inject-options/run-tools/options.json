@@ -1,0 +1,33 @@
+{
+  "description": "UseRunTools: the tool check uses the names of the tools the invocation offers (a blank name ignored), intersected with AvailableTools, so issue_refund, offered but not declared, is unavailable, and so is wait_for_lock, declared but not offered.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": {
+    "availableTools": [
+      "read_ledger",
+      "wait_for_lock",
+      "retry_refund"
+    ],
+    "maxRiskClass": null,
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": true,
+    "gatedRetrievalWindowMultiplier": 4
+  },
+  "runTools": [
+    "read_ledger",
+    "retry_refund",
+    "issue_refund",
+    " "
+  ]
+}

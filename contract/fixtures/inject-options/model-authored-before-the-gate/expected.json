@@ -1,0 +1,27 @@
+{
+  "outcome": "Injected",
+  "messageRole": "User",
+  "retrievalRequest": {
+    "limit": null,
+    "excludeModelAuthored": true
+  },
+  "selected": [
+    "000000e1-0000-4000-8000-000000000001"
+  ],
+  "injected": [
+    "000000e1-0000-4000-8000-000000000001"
+  ],
+  "byteCount": 639,
+  "omitted": [
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000008",
+      "reason": "ModelAuthored",
+      "detail": null
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000004",
+      "reason": "RiskClassExceeded",
+      "detail": null
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "description": "ApproachArguments allowlists retry_refund's delay: the Tried: lines show its stored values, and nothing else.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {
+    "retry_refund": [
+      "delay"
+    ]
+  },
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": null,
+  "runTools": null
+}

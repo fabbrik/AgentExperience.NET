@@ -1,0 +1,24 @@
+{
+  "description": "A request limit of 2 with a gate that can reject: retrieval is asked for MaxRecords x GatedRetrievalWindowMultiplier (3 x 2 = 6) records, capped by the candidate limit. A gated record inside the host's window is reported; one past it was fetched only as backfill, so it is not, and neither is a backfill record no slot was left for.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 3,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": 2,
+  "receivingAgent": {
+    "availableTools": null,
+    "maxRiskClass": "Low",
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": false,
+    "gatedRetrievalWindowMultiplier": 2
+  },
+  "runTools": null
+}

@@ -1,0 +1,39 @@
+{
+  "outcome": "Injected",
+  "messageRole": "User",
+  "retrievalRequest": {
+    "limit": null,
+    "excludeModelAuthored": false
+  },
+  "selected": [
+    "000000e1-0000-4000-8000-000000000001",
+    "000000e1-0000-4000-8000-000000000005"
+  ],
+  "injected": [
+    "000000e1-0000-4000-8000-000000000001",
+    "000000e1-0000-4000-8000-000000000005"
+  ],
+  "byteCount": 1021,
+  "omitted": [
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000003",
+      "reason": "RiskClassExceeded",
+      "detail": null
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000004",
+      "reason": "RiskClassExceeded",
+      "detail": null
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000002",
+      "reason": "RiskClassExceeded",
+      "detail": null
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000006",
+      "reason": "OverRecordLimit",
+      "detail": "Ranked 6 of 6, beyond the limit of 2 records."
+    }
+  ]
+}

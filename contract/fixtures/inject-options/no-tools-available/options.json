@@ -1,0 +1,24 @@
+{
+  "description": "An empty AvailableTools admits only records whose approach calls no tool.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": {
+    "availableTools": [],
+    "maxRiskClass": null,
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": false,
+    "gatedRetrievalWindowMultiplier": 4
+  },
+  "runTools": null
+}
