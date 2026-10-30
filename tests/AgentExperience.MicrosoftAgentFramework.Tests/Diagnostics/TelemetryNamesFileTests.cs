@@ -60,6 +60,7 @@ public class TelemetryNamesFileTests
             ("LifecycleCommit", typeof(LifecycleTransitionOutcome)),
             ("ConfidenceApply", typeof(ConfidenceUpdateOutcome)),
             ("Retrieve", typeof(RetrievalOutcome)),
+            ("RetrieveSignature", typeof(SignatureRetrievalOutcome)),
             ("Index", typeof(ExperienceIndexingOutcome)),
             ("Deindex", typeof(ExperienceDeindexingOutcome)),
             ("Reindex", typeof(ExperienceReindexOutcome)),
