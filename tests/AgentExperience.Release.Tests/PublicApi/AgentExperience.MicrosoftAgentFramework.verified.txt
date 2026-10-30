@@ -522,6 +522,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public System.Func<AgentExperience.Abstractions.ExperienceRecord, bool>? IsContentConfirmed { get; init; }
         public System.Collections.Generic.IEnumerable<string>? RecipeExcerpts { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceRendering Rendering { get; init; }
+        public bool ShowRecipeExcerptsWithoutSigning { get; init; }
     }
     public static class HistoricalReferenceWriter
     {

@@ -19,7 +19,7 @@ Evidence: 1 evidence ID(s); no evidence detail is included.
 Lesson: Verified after 2 attempts. Failed: attempt 0 — exit 2. Worked: attempt 1. Checks: [tests-pass].
 Tried:
   - attempt 0: pin_dependency(package="lib") [returned], run_tests [failed: exit 2] → failed (exit 2)
-  - attempt 1: pin_dependency(package="lib") [returned: "pinned 'lib' to 2.4.1 - > ok lock file updated done"], write_config [returned: "set retries=3; timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=3"[...]], run_tests [failed: exit 1], run_tests [returned], write_config [returned] → completed
+  - attempt 1: pin_dependency(package="lib") [returned: "pinned 'lib' to 2.4.1 - > ok lock file updated done"], write_config [returned: "set retries=3; timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=30 timeout=3"[...]], run_tests [failed: exit 1], run_tests [returned], write_config [returned], write_config [returned] → completed
 Worked: attempt 1 (the final attempt)
 Reuse guidance: Reuse only where the listed preconditions match.
 Preconditions:

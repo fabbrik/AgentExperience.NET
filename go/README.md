@@ -802,7 +802,7 @@ err := maf.UseAgentExperience(&config, maf.Options{
 | `InjectionDecision.Permit`, `Deny(reason)` | `maf.Permit()`, `maf.Deny(reason)` | | |
 | `InjectionOmissionReason.ToolUnavailable`, `RiskClassExceeded`, `HostDenied` | `ae.OmittedToolUnavailable`, `ae.OmittedRiskClassExceeded`, `ae.OmittedHostDenied` | | in `InjectionResult.Omitted` |
 | `ApproachArguments`, `FailureDetail`, `Rendering`, `Limits.MaxRecords`, `Limits.MaxBytes` | `ae.BlockOptions` | | as before (contract 1.0) |
-| `RecipeExcerpts` | `ae.BlockOptions.RecipeExcerpts` | empty (none shown) | contract 1.19: on the `Worked:` attempt only, a returned call of a listed tool shows its stored `ToolCall.RecipeExcerpt` as `[returned: "..."]` (cut to 200 characters); the port reads and writes the excerpt back but never captures one, and a borrowed record's (a grant's) is .NET-only |
+| `RecipeExcerpts` | `ae.BlockOptions.RecipeExcerpts` | empty (none shown) | contract 1.19: on the `Worked:` attempt only, a returned call of a listed tool shows its stored `ToolCall.RecipeExcerpt` as `[returned: "..."]` (cut to 200 characters); the port reads and writes the excerpt back but never captures one, and a borrowed record's (a grant's) is .NET-only. **Limitation:** the port cannot verify signatures, so it renders any stored excerpt, signed or not, where a signing .NET reader shows only one a claims version 4 signature confirms; set it only over a store whose writers you trust |
 | `MessageRole` | `MessageRole` (`message.RoleUser`, `message.RoleSystem`) | user | as before |
 
 - **The gate** checks the tools of the record's approach (the verified final attempt its `Worked:` line names), the

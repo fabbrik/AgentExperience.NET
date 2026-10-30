@@ -171,7 +171,8 @@ internal static class InjectContract
             ("recipe-excerpt", new InjectCase(
                 "The recipe: the attempt the Worked: line names shows each allowlisted tool's stored excerpt in place of its " +
                 "[returned] marker, quoted, neutralized and cut like an argument string (to 200 characters, the cut marked " +
-                "outside the quotes). A failed call, an earlier attempt's call and a tool not in recipeExcerpts show none.",
+                "outside the quotes). A failed call, an earlier attempt's call, a tool not in recipeExcerpts, a blank excerpt and one " +
+                "of only invisible characters (empty once cleaned) show none: each keeps its [returned] marker.",
                 [(Recipe(), Ranking(0.8, 1.0))],
                 RecipeOptions with { RecipeExcerpts = ["pin_dependency", "write_config"] })),
             ("recipe-excerpt-verbose", new InjectCase(
@@ -209,6 +210,9 @@ internal static class InjectContract
                 Rendering = options.Rendering,
                 FailureDetail = options.FailureDetail,
                 RecipeExcerpts = options.RecipeExcerpts,
+
+                // A port neither signs nor verifies: it renders as a .NET host with no provenance signing does.
+                ShowRecipeExcerptsWithoutSigning = true,
             }).Text;
     }
 
@@ -364,6 +368,7 @@ internal static class InjectContract
                 With(Call(Fixed.Id(0x284, 0xc12), 2, "run_tests", t.AddMinutes(1).AddSeconds(2), new(), "exit 1"), "never on a failed call"),
                 With(Call(Fixed.Id(0x284, 0xc13), 3, "run_tests", t.AddMinutes(1).AddSeconds(3), new(), error: null), "not allowlisted: 6 passed"),
                 With(Call(Fixed.Id(0x284, 0xc14), 4, "write_config", t.AddMinutes(1).AddSeconds(4), new(), error: null), " \t "),
+                With(Call(Fixed.Id(0x284, 0xc15), 5, "write_config", t.AddMinutes(1).AddSeconds(5), new(), error: null), "\u200B\u2060\u00AD\uFE0F"),
             ],
             Result: "Tests pass.",
             Error: null),

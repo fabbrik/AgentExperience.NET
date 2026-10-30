@@ -163,9 +163,8 @@ public sealed class ExperienceProvenanceSigningOptions
 
     /// <summary>
     /// The claims version finalization signs new records with: 3 (the default) signs the finalization claims and a
-    /// digest of the record's content, attempt and tool-call error text included -- and, for a record that carries a
-    /// recipe excerpt (<see cref="ToolCallRecord.RecipeExcerpt"/>), which version 3 cannot cover, version 4, the same
-    /// with every excerpt added; 4 signs version 4 for every record; 2 signs the same digest without any
+    /// digest of the record's content, attempt and tool-call error text included, but not a recipe excerpt
+    /// (<see cref="ToolCallRecord.RecipeExcerpt"/>); 4 signs the same with every excerpt added; 2 signs the same digest without any
     /// error text, as <c>0.1.0-preview.7</c> through <c>0.1.0-preview.9</c> did; 1 signs the finalization claims only,
     /// as <c>0.1.0-preview.6</c> and earlier did. Verification accepts all four whatever this says.
     /// </summary>
@@ -178,11 +177,10 @@ public sealed class ExperienceProvenanceSigningOptions
     /// <c>0.1.0-preview.6</c> or earlier still verify: records signed version 1 have content nothing confirms, so with
     /// signing on they are fenced as model-authored at injection (unless <see cref="ConfirmV1Content"/> is set).
     /// <para>
-    /// A record carries a recipe excerpt only when its host turned the recipe on (<c>ExperienceCaptureOptions.RecipeResultExcerpt</c>),
-    /// so at 3 every other record is signed exactly as before. Turn the recipe on once every node that verifies runs a
-    /// build that knows version 4: a node on an earlier build refuses a version 4 signature as one it cannot check.
-    /// Under 2 or 1 a record's excerpts are left unsigned, and with signing configured injection never shows an
-    /// excerpt that no version 4 signature confirms.
+    /// <b>Recipe excerpts need 4.</b> Under 3, 2 or 1 a record's excerpts are left unsigned, and with signing configured
+    /// injection never shows an excerpt that no version 4 signature confirms (the rest of the record renders as
+    /// before). To show recipe excerpts with signing on, set 4 once every node that verifies runs a build that knows
+    /// version 4: a node on an earlier build refuses a version 4 signature as one it cannot check.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">Set to anything but 1, 2, 3 or 4.</exception>
@@ -485,15 +483,9 @@ internal sealed class ProvenanceSigner
     {
         1 => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256, HMACSHA256.HashData(_keys[_currentKeyId], Encode(record))),
         2 => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256ClaimsV2, HMACSHA256.HashData(_keys[_currentKeyId], EncodeV2(record))),
-        3 when !CarriesRecipeExcerpt(record) =>
-            new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256ClaimsV3, HMACSHA256.HashData(_keys[_currentKeyId], EncodeV3(record))),
+        3 => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256ClaimsV3, HMACSHA256.HashData(_keys[_currentKeyId], EncodeV3(record))),
         _ => new(_currentKeyId, ExperienceProvenanceSignature.HmacSha256ClaimsV4, HMACSHA256.HashData(_keys[_currentKeyId], EncodeV4(record))),
     };
-
-    /// <summary>Whether any tool call of <paramref name="record"/> carries a recipe excerpt, which only claims version 4 covers.</summary>
-    internal static bool CarriesRecipeExcerpt(ExperienceRecord record) =>
-        record.Attempts is { } attempts
-        && attempts.Any(attempt => attempt?.ToolCalls is { } calls && calls.Any(call => call?.RecipeExcerpt is not null));
 
     /// <summary>
     /// Whether <paramref name="record"/>'s recipe excerpts (<see cref="ToolCallRecord.RecipeExcerpt"/>) are confirmed:

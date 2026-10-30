@@ -8,7 +8,7 @@ Confidence: 0.67 · Verified · Validated
 Lesson: Verified after 2 attempts. Failed: attempt 0 — exit 2. Worked: attempt 1. Checks: [tests-pass].
 Tried:
   - attempt 0: pin_dependency(package="lib") [returned], run_tests [failed: exit 2] → failed (exit 2)
-  - attempt 1: pin_dependency(package="lib") [returned], write_config [returned], run_tests [failed: exit 1], run_tests [returned], write_config [returned] → completed
+  - attempt 1: pin_dependency(package="lib") [returned], write_config [returned], run_tests [failed: exit 1], run_tests [returned], write_config [returned], write_config [returned] → completed
 Worked: attempt 1 (the final attempt)
 Reuse guidance: Reuse only where the listed preconditions match.
 Preconditions:

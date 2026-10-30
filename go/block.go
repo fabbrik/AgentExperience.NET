@@ -634,7 +634,12 @@ func recipeMarker(call *ToolCall, recipe []string) (string, bool) {
 		!slices.Contains(recipe, call.ToolName) {
 		return "", false
 	}
-	return callReturnedExcerpt + quoted(*call.RecipeExcerpt, maxRecipeExcerptLength) + callMarkerEnd, true
+	q := quoted(*call.RecipeExcerpt, maxRecipeExcerptLength)
+	// An excerpt of only invisible characters is empty once cleaned: the call keeps its [returned] marker.
+	if q == `""` {
+		return "", false
+	}
+	return callReturnedExcerpt + q + callMarkerEnd, true
 }
 
 func callOutcome(err *string, detail FailureDetail) string {

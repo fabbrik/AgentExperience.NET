@@ -608,7 +608,9 @@ public static class HistoricalReferenceWriter
             settings.Rendering,
             settings.RecipeExcerpts is null
                 ? null
-                : new RecipeRendering(RecipeExcerptAllowlist.From(settings.RecipeExcerpts, nameof(settings)), settings.AreRecipeExcerptsConfirmed));
+                : new RecipeRendering(
+                    RecipeExcerptAllowlist.From(settings.RecipeExcerpts, nameof(settings)),
+                    settings.AreRecipeExcerptsConfirmed ?? (settings.ShowRecipeExcerptsWithoutSigning ? static _ => true : static _ => false)));
     }
 
     /// <summary>The records-only form, over an allowlist already validated and snapshotted.</summary>
@@ -1409,14 +1411,32 @@ public static class HistoricalReferenceWriter
 
     /// <summary>
     /// The <c>[returned: "…"]</c> marker of <paramref name="call"/>'s recipe excerpt, or <see langword="null"/> when it
-    /// shows none: the call recorded an error, has no (or a blank) excerpt, or its tool is not in
+    /// shows none: the call recorded an error, has no (or a blank, or an only-invisible) excerpt, or its tool is not in
     /// <paramref name="recipe"/>. The excerpt is quoted and bounded exactly as an argument string is (<see cref="Quoted"/>),
     /// cut to <see cref="MaxRecipeExcerptLength"/>.
     /// </summary>
-    private static string? RecipeMarker(ToolCallRecord call, RecipeExcerptAllowlist recipe) =>
-        recipe.IsEmpty || call.Error is not null || string.IsNullOrWhiteSpace(call.RecipeExcerpt) || !recipe.Allows(call.ToolName)
-            ? null
-            : CallReturnedExcerptPrefix + Quoted(call.RecipeExcerpt, MaxRecipeExcerptLength) + CallMarkerEnd;
+    private static string? RecipeMarker(ToolCallRecord call, RecipeExcerptAllowlist recipe)
+    {
+        if (recipe.IsEmpty || call.Error is not null || string.IsNullOrWhiteSpace(call.RecipeExcerpt) || !recipe.Allows(call.ToolName))
+        {
+            return null;
+        }
+
+        // An excerpt of only invisible characters is empty once cleaned: the call keeps its [returned] marker.
+        var quoted = Quoted(call.RecipeExcerpt, MaxRecipeExcerptLength);
+        return quoted == EmptyQuoted ? null : CallReturnedExcerptPrefix + quoted + CallMarkerEnd;
+    }
+
+    /// <summary>What <see cref="Quoted"/> writes for a value that is empty once cleaned.</summary>
+    private const string EmptyQuoted = "\"\"";
+
+    /// <summary>
+    /// Whether the attempt <paramref name="record"/>'s <c>Worked:</c> line names has a call that returned carrying a
+    /// non-blank recipe excerpt: the only case in which a recipe needs the record's signature checked.
+    /// </summary>
+    internal static bool WorkedAttemptCarriesExcerpt(ExperienceRecord record) =>
+        FinalVerifiedAttempt(record, OrderedAttempts(record)) is { ToolCalls: { } calls }
+        && calls.Any(call => call is { Error: null } && !string.IsNullOrWhiteSpace(call.RecipeExcerpt));
 
     /// <summary>The first token of an <see cref="ErrorClass"/> class, whose tokens are joined with <c>", "</c>.</summary>
     private static string FirstToken(string errorClass)

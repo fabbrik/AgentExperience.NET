@@ -990,6 +990,10 @@ here, so a mixed .NET and Python deployment should keep them on the .NET side:
 - **Capturing a recipe excerpt** (story 28.4, contract 1.19): the port reads a tool call's `recipe_excerpt`, writes
   it back unchanged and shows it on the `Worked:` attempt for the tools `BlockOptions.recipe_excerpts` names, but its
   capture never records one, and with no provenance signing it neither signs nor confirms one (claims version 4).
+- **Confirming a recipe excerpt** (contract 1.19): the port cannot verify provenance signatures, so with
+  `recipe_excerpts` set it renders any excerpt the stored record carries, signed or not, where a signing .NET reader
+  shows only one a claims version 4 signature confirms. Turn it on only over a store whose writers you trust as much as
+  the lessons; empty (the default) shows none.
 - **Verified independence** (story 27.7): the lifecycle admits every piece of evidence `HostTrusted`; it verifies no
   run, round or assessment token, and reuse feedback verifies no attribution.
 - **Session tracking and withdrawal notices** (`SessionLimits`, `SessionStateKey`; story 27.6): the port keeps no

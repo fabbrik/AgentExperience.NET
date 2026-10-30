@@ -24,7 +24,8 @@ def test_a_recipe_excerpt_is_read_kept_and_written_back_exactly() -> None:
     record = from_stored(stored)
     excerpts = [call.recipe_excerpt for attempt in record.attempts for call in attempt.tool_calls]
     assert excerpts[0] == "pinned lib to 3.0.0"
-    assert excerpts[-1] == " \t "
+    assert excerpts[-2] == " \t "
+    assert excerpts[-1] == "\u200b\u2060\u00ad\ufe0f"
     assert to_stored(record) == stored
 
 

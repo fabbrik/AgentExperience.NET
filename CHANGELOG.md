@@ -418,12 +418,15 @@ the six Go modules at one version.
 - **One place to consent.** `AgentExperienceOptions.Recipe(toolName, arguments, resultExcerpt)` sets the capture
   argument allowlist, `ApproachArguments`, the excerpt callback and `RecipeExcerpts` for a tool together. The
   quick-start sample's `--recipe` switch shows one.
-- **Signed: claims version 4.** A record that carries an excerpt is signed `HMAC-SHA256.aexp-prov.v4`
-  (`ExperienceProvenanceSignature.HmacSha256ClaimsV4`), version 3 plus each call's excerpt; every other record is still
-  signed version 3, so the default `SignClaimsVersion = 3` is unchanged, and `4` signs every record version 4. With
-  signing on, an excerpt is shown only when a version 4 signature confirms it
-  (`ExperienceRetrievalService.AreRecipeExcerptsConfirmed`). A node on an earlier build refuses a version 4 signature:
-  turn the recipe on once every verifying node runs this build.
+- **Signed: claims version 4, fail closed.** `SignClaimsVersion = 4` signs `HMAC-SHA256.aexp-prov.v4`
+  (`ExperienceProvenanceSignature.HmacSha256ClaimsV4`), version 3 plus each call's excerpt. The default stays 3, which
+  signs every record as before and leaves excerpts unsigned, so with signing on an excerpt is shown only under a version
+  4 signature that verifies (`ExperienceRetrievalService.AreRecipeExcerptsConfirmed`); records trusted unsigned or listed
+  as reviewed never show one. To show recipe excerpts with signing on, set `SignClaimsVersion = 4` once every verifying
+  node runs this release (an earlier build refuses a version 4 signature). `HistoricalReferenceWriteSettings` shows
+  excerpts only with `AreRecipeExcerptsConfirmed` or the explicit `ShowRecipeExcerptsWithoutSigning`. A lone surrogate
+  in an excerpt becomes U+FFFD at capture, so the record can always be signed and stored; an excerpt that is empty once
+  cleaned keeps the call's `[returned]` marker.
 - **Grants.** `ExperienceGrantRequest.RecipeExcerpts` / `ExperienceGrant.RecipeExcerpts` name the tools whose excerpts
   an owner consents to show a recipient (only under a level that shows the approach), surfaced on reads as
   `ExperienceRecordGetResult.GrantRecipeExcerpts`, `RankedExperience.GrantRecipeExcerpts` and
@@ -435,7 +438,9 @@ the six Go modules at one version.
   against), the inject option `recipeExcerpts` and three `inject` cases (`recipe-excerpt`, `-verbose`,
   `-not-allowlisted`). Every 1.0-1.18 file is unchanged. **The Python and Go ports** read, keep and write the excerpt
   back unchanged, and render it under `recipe_excerpts` / `RecipeExcerpts` exactly as .NET does; they do not capture or
-  sign one, and grants stay .NET-only.
+  sign one, and grants stay .NET-only. **Port limitation:** a port cannot verify signatures, so with its allowlist on it
+  renders any stored excerpt, signed or not, where a signing .NET reader would suppress an unconfirmed one (off by
+  default; see [contract 1.19](contract/README-1.19.md)).
 - **Experiment.** `experiments/AgentExperience.LiveReuse/recipe-amendment.md` proposes (not registered, not run) a
   recipe arm for the real-task experiment.
 

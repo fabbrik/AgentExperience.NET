@@ -432,6 +432,9 @@ public sealed partial class RecallAtFailureTests
 
         public bool WithoutSignatureSource { get; init; }
 
+        /// <summary>Registers more services (for example provenance signing) before the provider is built.</summary>
+        public Action<IServiceCollection>? Services { get; init; }
+
         public Desk Desk { get; private set; } = new();
 
         public Model Model { get; private set; } = new();
@@ -530,6 +533,8 @@ public sealed partial class RecallAtFailureTests
             {
                 collection.RemoveAll<IExperienceSignatureSource>();
             }
+
+            Services?.Invoke(collection);
 
             return collection.BuildServiceProvider();
         }

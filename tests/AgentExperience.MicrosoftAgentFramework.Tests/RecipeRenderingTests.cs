@@ -45,12 +45,19 @@ public class RecipeRenderingTests
         RankedExperience ranked,
         IEnumerable<string>? recipe,
         Func<ExperienceRecord, bool>? confirmed = null,
-        HistoricalReferenceRendering rendering = HistoricalReferenceRendering.Compact) =>
+        HistoricalReferenceRendering rendering = HistoricalReferenceRendering.Compact,
+        bool withoutSigning = true) =>
         HistoricalReferenceWriter.Write(
             [ranked],
             ExperienceInjectionLimits.Default,
             Arguments,
-            new HistoricalReferenceWriteSettings { Rendering = rendering, RecipeExcerpts = recipe, AreRecipeExcerptsConfirmed = confirmed }).Text;
+            new HistoricalReferenceWriteSettings
+            {
+                Rendering = rendering,
+                RecipeExcerpts = recipe,
+                AreRecipeExcerptsConfirmed = confirmed,
+                ShowRecipeExcerptsWithoutSigning = withoutSigning,
+            }).Text;
 
     private static RankedExperience Own() => new(Record(), 0.5d, []);
 
@@ -96,6 +103,49 @@ public class RecipeRenderingTests
         var without = Write(Own(), recipe: null);
         Assert.Equal(without, Write(Own(), [Pin], confirmed: _ => false));
         Assert.Contains(Excerpt, Write(Own(), [Pin], confirmed: _ => true), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Without_the_confirmation_delegate_or_the_explicit_opt_in_no_excerpt_is_shown()
+    {
+        var without = Write(Own(), recipe: null);
+        Assert.Equal(without, Write(Own(), [Pin], confirmed: null, withoutSigning: false));
+        Assert.Contains(Excerpt, Write(Own(), [Pin], confirmed: null, withoutSigning: true), StringComparison.Ordinal);
+
+        // The delegate wins over the opt-in.
+        Assert.Equal(without, Write(Own(), [Pin], confirmed: _ => false, withoutSigning: true));
+    }
+
+    [Fact]
+    public void The_signature_is_not_checked_when_the_working_attempt_carries_no_excerpt()
+    {
+        var asked = 0;
+        var stripped = Record() with
+        {
+            // On the working attempt, the calls that returned carry a blank excerpt or none; the failed call keeps its own.
+            Attempts = [.. Record().Attempts.Select((a, i) => i == 1
+                ? a with { ToolCalls = [.. a.ToolCalls.Select(c => c.Error is null ? c with { RecipeExcerpt = c.SequenceNumber == 0 ? "   " : null } : c)] }
+                : a)],
+        };
+
+        Write(new RankedExperience(stripped, 0.5d, []), [Pin], confirmed: _ => { asked++; return true; });
+        Assert.Equal(0, asked);
+
+        Write(Own(), [Pin], confirmed: _ => { asked++; return true; });
+        Assert.Equal(1, asked);
+    }
+
+    [Fact]
+    public void An_excerpt_of_only_invisible_characters_keeps_the_returned_marker()
+    {
+        var record = Record() with
+        {
+            Attempts = [Record().Attempts[1] with { ToolCalls = [Call(0, Pin, excerpt: "\u200B\u2060\u00AD\uFE0F")] }],
+        };
+
+        var text = Write(new RankedExperience(record, 0.5d, []), [Pin]);
+        Assert.Contains("pin_dependency(package=\"lib\") [returned] → completed", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("[returned: ", text, StringComparison.Ordinal);
     }
 
     [Fact]

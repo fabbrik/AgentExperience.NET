@@ -495,7 +495,8 @@ options.Capture = capture => capture.RecipeResultExcerpt = call =>
 - What it returns is stored on the call as `ToolCallRecord.RecipeExcerpt`, after the `ToolResult` sanitization policy
   (a redacted or omitted value leaves no excerpt; one the sanitizer refuses is dropped, never the attempt) and cut to
   `CaptureLimits.MaxRecipeExcerptLength` characters (200 by default) after sanitization, never between a surrogate
-  pair. A cut or a refusal is reported on the append's truncated fields. The record's payload carries the member only
+  pair. A lone surrogate becomes U+FFFD, so a host that slices its excerpt mid-pair never makes signing or the store
+  refuse the record. A cut or a refusal is reported on the append's truncated fields. The record's payload carries the member only
   when it is set.
 - A callback that throws records no excerpt and is reported once per run through `OnCaptureFailure` at stage
   `RecipeExcerpt`, naming only the exception type.

@@ -397,16 +397,17 @@ for nothing.
   are encoded: each attempt's byte saying whether it failed becomes its `Error` as a string (that byte is the string's
   presence byte), and each tool call's `Error` follows its arguments as a string. Every other byte is unchanged.
 
-  **Claims version 4: the recipe.** A record that carries a recipe excerpt (`ToolCallRecord.RecipeExcerpt`, see
-  [Injection](injection.md#showing-what-worked-the-recipe)) is signed claims version 4, `HMAC-SHA256.aexp-prov.v4`
-  (`ExperienceProvenanceSignature.HmacSha256ClaimsV4`): the version 3 encoding tagged `aexp-prov:v4`, whose content
-  encoding adds each tool call's excerpt as a string after its `Error`. Every other record is still signed version 3,
-  byte for byte, so the default `SignClaimsVersion = 3` changes nothing until a host turns the recipe on;
-  `SignClaimsVersion = 4` signs every record version 4. A version 4 signature confirms content like version 3, and it is
-  the only one that confirms an excerpt: with signing configured, injection shows an excerpt only under a version 4
-  signature that verifies (`ExperienceRetrievalService.AreRecipeExcerptsConfirmed`), and renders the rest of a record
-  without one as before. A node on an earlier build refuses a version 4 signature as one it cannot check, so turn the
-  recipe on once every node that verifies runs this build.
+  **Claims version 4: the recipe.** Under `SignClaimsVersion = 4`, finalization signs claims version 4,
+  `HMAC-SHA256.aexp-prov.v4` (`ExperienceProvenanceSignature.HmacSha256ClaimsV4`): the version 3 encoding tagged
+  `aexp-prov:v4`, whose content encoding adds each tool call's recipe excerpt (`ToolCallRecord.RecipeExcerpt`, see
+  [Injection](injection.md#showing-what-worked-the-recipe)) as a string after its `Error`. The default stays 3, which
+  signs every record, one carrying an excerpt included, exactly as before and leaves the excerpt unsigned. A version 4
+  signature confirms content like version 3, and it is the only one that confirms an excerpt: with signing configured,
+  injection shows an excerpt only under a version 4 signature that verifies
+  (`ExperienceRetrievalService.AreRecipeExcerptsConfirmed`), and renders the rest of a record without one as before.
+  Neither `TrustUnsignedRecordIds` nor `ConfirmContentRecordIds` confirms an excerpt. **To show recipe excerpts with
+  signing on, set `SignClaimsVersion = 4` once every node that verifies runs this release**: a node on an earlier build
+  refuses a version 4 signature as one it cannot check.
 
   **Version 2 records.** Signatures made by `0.1.0-preview.7` through `0.1.0-preview.9`, or during a
   `SignClaimsVersion = 2` rollout, carry `HMAC-SHA256.aexp-prov.v2` (`ExperienceProvenanceSignature.HmacSha256ClaimsV2`):

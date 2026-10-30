@@ -557,8 +557,8 @@ def _calls(calls: list[ToolCall], clamped: bool, options: BlockOptions, worked: 
 
 def _recipe_marker(call: ToolCall, recipe_excerpts: Sequence[str]) -> str | None:
     """The ``[returned: "…"]`` marker of ``call``'s recipe excerpt, or ``None`` when it shows none: the call recorded an
-    error, has no (or a blank) excerpt, or its tool is not in ``recipe_excerpts``. The excerpt is quoted and bounded
-    exactly as an argument string is, cut to ``MAX_RECIPE_EXCERPT_LENGTH``."""
+    error, has no (or a blank, or an only-invisible) excerpt, or its tool is not in ``recipe_excerpts``. The excerpt is
+    quoted and bounded exactly as an argument string is, cut to ``MAX_RECIPE_EXCERPT_LENGTH``."""
     excerpt = call.recipe_excerpt
     if (
         not recipe_excerpts
@@ -568,7 +568,11 @@ def _recipe_marker(call: ToolCall, recipe_excerpts: Sequence[str]) -> str | None
         or call.tool_name not in recipe_excerpts
     ):
         return None
-    return CALL_RETURNED_EXCERPT_PREFIX + _quoted(excerpt, MAX_RECIPE_EXCERPT_LENGTH) + CALL_MARKER_END
+    quoted = _quoted(excerpt, MAX_RECIPE_EXCERPT_LENGTH)
+    # An excerpt of only invisible characters is empty once cleaned: the call keeps its [returned] marker.
+    if quoted == '""':
+        return None
+    return CALL_RETURNED_EXCERPT_PREFIX + quoted + CALL_MARKER_END
 
 
 def _call_outcome(error: str | None, detail: FailureDetail) -> str:

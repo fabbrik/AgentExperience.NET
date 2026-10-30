@@ -605,7 +605,8 @@ what it was. The guarantees, each a test:
 - **Only a vouched excerpt, only of a call that returned.** Capture calls the host's callback only for a call it
   records as returned (not thrown, not classified failed by `ClassifyToolResult`); what the callback returns is
   sanitized by the `ToolResult` policy, as a result is, and cut to `CaptureLimits.MaxRecipeExcerptLength` (200)
-  characters after sanitization, never between a surrogate pair. A callback that throws records nothing and is reported
+  characters after sanitization, never between a surrogate pair; a lone surrogate (a host slicing mid-pair) becomes
+  U+FFFD, so the record can always be signed and stored. A callback that throws records nothing and is reported
   once per run at stage `RecipeExcerpt`, by exception type only. See [Capture](capture.md#the-recipe-a-vouched-result-excerpt).
 - **Only on the working attempt, only for an allowlisted tool.** The excerpt replaces that call's `[returned]` marker on
   the attempt the `Worked:` line names. A failed call, an earlier attempt and a tool `RecipeExcerpts` does not name never
@@ -615,7 +616,17 @@ what it was. The guarantees, each a test:
   characters with the cut marked outside the quotes. The record still counts against `MaxBytes` and is dropped whole.
 - **Signed, or not shown.** With [provenance signing](confidence.md#signing-provenance) configured, an excerpt is shown
   only when a claims version 4 signature confirms it (`ExperienceRetrievalService.AreRecipeExcerptsConfirmed`); a record
-  whose excerpt no version 4 signature covers renders exactly as it would without the recipe.
+  whose excerpt no version 4 signature covers renders exactly as it would without the recipe. Finalization signs
+  version 4 only under `SignClaimsVersion = 4`: at the default 3 the excerpt is stored but never shown while signing is
+  on. **To show recipe excerpts with signing on, set `SignClaimsVersion = 4`** once every node that verifies runs this
+  release. A record trusted unsigned (`TrustUnsignedRecordIds`) or listed as reviewed (`ConfirmContentRecordIds`) shows
+  its content but never an excerpt.
+- **Fail closed outside the provider.** Rendering through `HistoricalReferenceWriter.Write` with
+  `HistoricalReferenceWriteSettings.RecipeExcerpts` shows excerpts only when `AreRecipeExcerptsConfirmed` is supplied
+  (pass the retrieval service's) or when the host explicitly sets `ShowRecipeExcerptsWithoutSigning = true` because it
+  uses no provenance signing; with neither, no excerpt is shown. The provider always passes the retrieval service's
+  check.
+- **An excerpt that is empty once cleaned** (only invisible characters) leaves the call's `[returned]` marker as it was.
 - **A borrowed record only with the owner's consent.** A record read through a grant shows an excerpt only when the
   grant shows the approach (`LessonAndApproach` or `LessonApproachAndArguments`) and names the tool in
   `ExperienceGrantRequest.RecipeExcerpts` **and** the reader's `RecipeExcerpts` names it too; under `LessonOnly`, never.

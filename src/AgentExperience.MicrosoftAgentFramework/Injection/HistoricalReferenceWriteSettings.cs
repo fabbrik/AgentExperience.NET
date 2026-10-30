@@ -34,9 +34,18 @@ public sealed record HistoricalReferenceWriteSettings
 
     /// <summary>
     /// Whether a record's recipe excerpts are confirmed; pass <see cref="ExperienceRetrievalService.AreRecipeExcerptsConfirmed"/>
-    /// to show them as the provider does. <see langword="null"/> (the default) confirms every record's.
+    /// to show them as the provider does. <see langword="null"/> (the default) confirms none -- no excerpt is shown --
+    /// unless <see cref="ShowRecipeExcerptsWithoutSigning"/> is set. Fail closed: a caller that forgot the delegate shows
+    /// no unconfirmed excerpt.
     /// </summary>
     public Func<ExperienceRecord, bool>? AreRecipeExcerptsConfirmed { get; init; }
+
+    /// <summary>
+    /// The explicit opt-in for a host that uses no provenance signing: with <see cref="AreRecipeExcerptsConfirmed"/>
+    /// <see langword="null"/>, <see langword="true"/> shows every record's allowlisted excerpts. <see langword="false"/>
+    /// (the default) shows none without the delegate. Ignored when the delegate is set.
+    /// </summary>
+    public bool ShowRecipeExcerptsWithoutSigning { get; init; }
 }
 
 /// <summary>
@@ -54,7 +63,10 @@ internal sealed record RecipeRendering(RecipeExcerptAllowlist Allowlist, Func<Ex
     /// </summary>
     internal RecipeExcerptAllowlist For(RankedExperience ranked)
     {
-        if (Allowlist.IsEmpty || (AreConfirmed is { } confirmed && !confirmed(ranked.Record)))
+        // The signature is checked only when there is something to show: no excerpt on the working attempt, no HMAC.
+        if (Allowlist.IsEmpty
+            || !HistoricalReferenceWriter.WorkedAttemptCarriesExcerpt(ranked.Record)
+            || (AreConfirmed is { } confirmed && !confirmed(ranked.Record)))
         {
             return RecipeExcerptAllowlist.Empty;
         }

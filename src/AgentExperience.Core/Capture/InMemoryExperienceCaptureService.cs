@@ -983,6 +983,9 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
             return null;
         }
 
+        // A host may slice its excerpt mid-pair: a lone surrogate has no UTF-8 form, so signing would refuse the record and
+        // finalization would store nothing. Each one becomes U+FFFD, as a lossy decoder would show it.
+        excerpt = WithoutLoneSurrogates(excerpt);
         if (excerpt.Length <= maxLength)
         {
             return excerpt;
@@ -998,6 +1001,34 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
             diagnosticFieldPath,
             $"Sanitized recipe excerpt exceeded the configured limit of {maxLength} characters and was cut to it."));
         return length == 0 ? null : excerpt[..length];
+    }
+
+    /// <summary><paramref name="value"/> with every lone surrogate replaced by U+FFFD; the same instance when it has none.</summary>
+    internal static string WithoutLoneSurrogates(string value)
+    {
+        System.Text.StringBuilder? fixedUp = null;
+        for (var index = 0; index < value.Length; index++)
+        {
+            var c = value[index];
+            var paired = char.IsHighSurrogate(c) && index + 1 < value.Length && char.IsLowSurrogate(value[index + 1]);
+            if (paired)
+            {
+                fixedUp?.Append(c).Append(value[index + 1]);
+                index++;
+                continue;
+            }
+
+            if (char.IsSurrogate(c))
+            {
+                fixedUp ??= new System.Text.StringBuilder(value, 0, index, value.Length);
+                fixedUp.Append('\uFFFD');
+                continue;
+            }
+
+            fixedUp?.Append(c);
+        }
+
+        return fixedUp?.ToString() ?? value;
     }
 
     /// <summary>

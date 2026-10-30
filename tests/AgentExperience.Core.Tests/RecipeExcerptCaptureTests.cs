@@ -93,6 +93,14 @@ public class RecipeExcerptCaptureTests
     }
 
     [Fact]
+    public async Task A_lone_surrogate_becomes_U_FFFD_and_a_pair_is_kept()
+    {
+        Assert.Equal("a\uFFFDb\uFFFD\U0001F600", (await CaptureAsync("a\uDE00b\uD83D\U0001F600")).Call.RecipeExcerpt);
+        Assert.Equal("\uFFFD", (await CaptureAsync("\uD83D")).Call.RecipeExcerpt);
+        Assert.Same("plain", InMemoryExperienceCaptureService.WithoutLoneSurrogates("plain"));
+    }
+
+    [Fact]
     public void The_bound_defaults_to_200_and_must_be_positive()
     {
         Assert.Equal(200, new CaptureLimits(1, 1, 1, 1).MaxRecipeExcerptLength);
