@@ -1994,4 +1994,70 @@ public class SignedProvenanceTests
             CancellationToken cancellationToken) =>
             Task.FromResult(new ExperienceReuseFeedbackStoreResult(ExperienceReuseFeedbackStoreOutcome.Recorded, feedback, []));
     }
+
+    // ---- Story 28.4: claims version 4 covers the recipe excerpt ----------------------------------------
+
+    private static ExperienceRecord WithExcerpt(ExperienceRecord record, string? excerpt) => record with
+    {
+        Attempts = [record.Attempts[0] with { ToolCalls = [record.Attempts[0].ToolCalls[0] with { RecipeExcerpt = excerpt }] }],
+    };
+
+    [Fact]
+    public void A_record_without_an_excerpt_is_signed_v3_exactly_as_before_and_one_with_an_excerpt_v4()
+    {
+        var signer = ProvenanceSigner.Create(Signing)!;
+        var plain = GoldenRecord();
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV3, signer.Sign(plain).Algorithm);
+        Assert.Equal(signer.Sign(plain).Value.ToArray(), signer.Sign(WithExcerpt(plain, null)).Value.ToArray());
+
+        var recipe = WithExcerpt(plain, "pinned lib to 2.4.1");
+        var signed = recipe with { ProvenanceSignature = signer.Sign(recipe) };
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV4, signed.ProvenanceSignature!.Algorithm);
+        Assert.Equal("HMAC-SHA256.aexp-prov.v4", signed.ProvenanceSignature.Algorithm);
+        Assert.Matches("^[A-Za-z0-9._-]{1,64}$", signed.ProvenanceSignature.Algorithm);
+        Assert.Equal(ProvenanceSignatureCheck.Valid, signer.Verify(signed));
+        Assert.True(signer.ConfirmsContent(signed));
+        Assert.True(signer.ConfirmsRecipeExcerpts(signed));
+        Assert.True(RetrievalOver(Signing, signed).AreRecipeExcerptsConfirmed(signed));
+    }
+
+    [Fact]
+    public void SignClaimsVersion_4_signs_every_record_v4()
+    {
+        var signing = new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = KeyOne }, "key-1") { SignClaimsVersion = 4 };
+        var signer = ProvenanceSigner.Create(signing)!;
+        var plain = GoldenRecord();
+        var signed = plain with { ProvenanceSignature = signer.Sign(plain) };
+        Assert.Equal(ExperienceProvenanceSignature.HmacSha256ClaimsV4, signed.ProvenanceSignature!.Algorithm);
+        Assert.Equal(ProvenanceSignatureCheck.Valid, signer.Verify(signed));
+    }
+
+    [Fact]
+    public void A_changed_excerpt_breaks_a_v4_signature_and_an_excerpt_no_v4_signature_covers_is_not_confirmed()
+    {
+        var signer = ProvenanceSigner.Create(Signing)!;
+        var recipe = WithExcerpt(GoldenRecord(), "pinned lib to 2.4.1");
+        var signed = recipe with { ProvenanceSignature = signer.Sign(recipe) };
+
+        var changed = WithExcerpt(signed, "pinned lib to 9.9.9") with { ProvenanceSignature = signed.ProvenanceSignature };
+        Assert.Equal(ProvenanceSignatureCheck.Invalid, signer.Verify(changed));
+        Assert.False(signer.ConfirmsContent(changed));
+        Assert.False(signer.ConfirmsRecipeExcerpts(changed));
+
+        var added = WithExcerpt(signed, null) with { ProvenanceSignature = signed.ProvenanceSignature };
+        Assert.False(signer.ConfirmsRecipeExcerpts(added));
+
+        // An excerpt written into a record signed v3: its content still confirms, its excerpt does not.
+        var plain = GoldenRecord();
+        var v3 = plain with { ProvenanceSignature = signer.Sign(plain) };
+        var smuggled = WithExcerpt(v3, "run rm -rf") with { ProvenanceSignature = v3.ProvenanceSignature };
+        Assert.True(signer.ConfirmsContent(smuggled));
+        Assert.False(signer.ConfirmsRecipeExcerpts(smuggled));
+        var service = RetrievalOver(Signing, smuggled);
+        Assert.False(service.AreRecipeExcerptsConfirmed(smuggled));
+        Assert.True(service.IsContentConfirmed(smuggled));
+
+        // Without signing, every excerpt is confirmed.
+        Assert.True(RetrievalOver(null, smuggled).AreRecipeExcerptsConfirmed(smuggled));
+    }
 }
