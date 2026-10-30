@@ -1,0 +1,252 @@
+{
+  "results": [
+    {
+      "thrown": null,
+      "outcome": "Recorded",
+      "feedbackId": "00001170-0000-4000-8000-00000000f001",
+      "benefit": "Improved",
+      "attributionSource": "ComparativeEvaluation",
+      "exposures": [
+        {
+          "experienceId": "00001170-0000-4000-8000-000000000070",
+          "disposition": "EvidenceApplied",
+          "evidenceId": "dbd404f3-cf71-880d-bd6c-8786fa7303a7",
+          "counted": true,
+          "reuseConfidence": 0.75,
+          "status": "Validated",
+          "retryable": false,
+          "reason": null
+        }
+      ],
+      "errors": [],
+      "reason": null,
+      "isRetryable": false
+    },
+    {
+      "thrown": null,
+      "outcome": "Recorded",
+      "feedbackId": "00001170-0000-4000-8000-00000000f002",
+      "benefit": "Harmed",
+      "attributionSource": "ComparativeEvaluation",
+      "exposures": [
+        {
+          "experienceId": "00001170-0000-4000-8000-000000000070",
+          "disposition": "EvidenceApplied",
+          "evidenceId": "bf23818f-2d12-8b7c-bcf5-8259f2475a99",
+          "counted": false,
+          "reuseConfidence": 0.75,
+          "status": "Validated",
+          "retryable": false,
+          "reason": "The same run already produced evidence for this record; recorded, not counted."
+        }
+      ],
+      "errors": [],
+      "reason": null,
+      "isRetryable": false
+    }
+  ],
+  "ledger": [
+    {
+      "feedbackId": "00001170-0000-4000-8000-00000000f001",
+      "runId": "00001170-0000-4000-8000-000000005100",
+      "scope": {
+        "tenantId": "contract-tenant",
+        "applicationId": "contract-app",
+        "projectId": "contract-project",
+        "teamId": null,
+        "agentId": "refund-agent",
+        "userId": null
+      },
+      "runOutcome": "Verified",
+      "claimedBenefit": "Unknown",
+      "benefit": "Improved",
+      "attributionSource": "ComparativeEvaluation",
+      "reviewerIdentity": null,
+      "evaluatorId": "comparative-evaluator/2.0",
+      "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+      "assessmentId": null,
+      "rationale": "Runs with the lesson needed fewer tool calls.",
+      "evidenceIds": [
+        "00001170-0000-4000-8000-00000000e001",
+        "00001170-0000-4000-8000-00000000e002"
+      ],
+      "attributedAt": "2026-03-02T09:40:00+00:00",
+      "measure": {
+        "kind": "tool-calls",
+        "value": 7
+      },
+      "trialLabel": null,
+      "observedAt": "2026-03-02T09:30:00+00:00",
+      "exposures": [
+        {
+          "experienceId": "00001170-0000-4000-8000-000000000070",
+          "attributed": true,
+          "evidenceId": "dbd404f3-cf71-880d-bd6c-8786fa7303a7"
+        }
+      ]
+    },
+    {
+      "feedbackId": "00001170-0000-4000-8000-00000000f002",
+      "runId": "00001170-0000-4000-8000-000000005100",
+      "scope": {
+        "tenantId": "contract-tenant",
+        "applicationId": "contract-app",
+        "projectId": "contract-project",
+        "teamId": null,
+        "agentId": "refund-agent",
+        "userId": null
+      },
+      "runOutcome": "Verified",
+      "claimedBenefit": "Unknown",
+      "benefit": "Harmed",
+      "attributionSource": "ComparativeEvaluation",
+      "reviewerIdentity": null,
+      "evaluatorId": "comparative-evaluator/2.0",
+      "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+      "assessmentId": null,
+      "rationale": "Runs with the lesson needed fewer tool calls.",
+      "evidenceIds": [
+        "00001170-0000-4000-8000-00000000e001",
+        "00001170-0000-4000-8000-00000000e002"
+      ],
+      "attributedAt": "2026-03-02T09:40:00+00:00",
+      "measure": {
+        "kind": "tool-calls",
+        "value": 7
+      },
+      "trialLabel": null,
+      "observedAt": "2026-03-02T09:30:00+00:00",
+      "exposures": [
+        {
+          "experienceId": "00001170-0000-4000-8000-000000000070",
+          "attributed": true,
+          "evidenceId": "bf23818f-2d12-8b7c-bcf5-8259f2475a99"
+        }
+      ]
+    }
+  ],
+  "records": [
+    {
+      "columns": {
+        "experience_id": "00001170-0000-4000-8000-000000000070",
+        "source_run_id": "00001170-0000-4000-8000-000000000170",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.75,
+        "supporting_validations": 2,
+        "contradictions": 0,
+        "revision": 2,
+        "created_at": "2026-02-20T09:00:00+00:00",
+        "updated_at": "2026-03-02T12:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "00001170-0000-4000-8000-000000000e70",
+              "verificationRoundId": "00001170-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "00001170-0000-4000-8000-000000000270",
+          "experienceRunId": "00001170-0000-4000-8000-000000000170",
+          "lesson": "Verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "00001170-0000-4000-8000-000000000e70"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    }
+  ],
+  "histories": [
+    {
+      "experienceId": "00001170-0000-4000-8000-000000000070",
+      "events": [
+        {
+          "event_id": "56e68a9d-02ad-8824-ad67-229a5e17e105",
+          "experience_id": "00001170-0000-4000-8000-000000000070",
+          "tenant_id": "contract-tenant",
+          "application_id": "contract-app",
+          "project_id": "contract-project",
+          "team_id": null,
+          "agent_id": "refund-agent",
+          "user_id": null,
+          "prior_status": "Validated",
+          "current_status": "Validated",
+          "reason": "Reuse feedback 00001170-0000-4000-8000-00000000f001 attributed improvement to this record.",
+          "producer": "comparative-evaluator/2.0",
+          "occurred_at": "2026-03-02T09:30:00+00:00",
+          "recorded_at": "2026-03-02T12:00:00+00:00",
+          "expected_revision": 1,
+          "applied_revision": 2,
+          "replacement_experience_id": null,
+          "actor": "contract-principal",
+          "confidence_evidence_id": "dbd404f3-cf71-880d-bd6c-8786fa7303a7",
+          "confidence_kind": "Supporting",
+          "confidence_source": "Machine",
+          "confidence_run_id": "00001170-0000-4000-8000-000000005100",
+          "confidence_verification_round_id": "00001170-0000-4000-8000-000000005200",
+          "confidence_reviewer_identity": null,
+          "confidence_rule_version": "1.0.0",
+          "confidence_detail": "Runs with the lesson needed fewer tool calls.",
+          "prior_reuse_confidence": 0.6666666666666666,
+          "new_reuse_confidence": 0.75,
+          "prior_supporting_validations": 1,
+          "new_supporting_validations": 2,
+          "prior_contradictions": 0,
+          "new_contradictions": 0,
+          "confidence_assessment_id": null,
+          "confidence_admission": "HostTrusted"
+        }
+      ]
+    }
+  ]
+}

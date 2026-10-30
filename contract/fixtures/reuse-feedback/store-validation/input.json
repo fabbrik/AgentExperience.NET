@@ -1,0 +1,1086 @@
+{
+  "description": "The ledger validates what it is asked to write, before authorization, with every error in .NET's order: the identifiers, the scope, every enum, the instants, the measure, the trial label, the reserved rationale, the shape each attribution source requires, and the exposures (none, too many, null, empty, repeated, and an evidence ID present exactly on an attributed exposure). A valid submission outside the authorization is Denied. Through the service, a measure kind the service accepts and the ledger refuses (a NUL) is Invalid with the ledger's errors.",
+  "service": {
+    "engine": null,
+    "hostTrustedEvidence": "Counted"
+  },
+  "records": [],
+  "steps": [
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00000000-0000-0000-0000-000000000000",
+          "runId": "00000000-0000-0000-0000-000000000000",
+          "scope": {
+            "tenantId": "",
+            "applicationId": " ",
+            "projectId": "contract-project",
+            "teamId": "",
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Sideways",
+          "claimedBenefit": "Sideways",
+          "benefit": "Sideways",
+          "attributionSource": "Sideways",
+          "reviewerIdentity": null,
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": null,
+          "rationale": null,
+          "evidenceIds": [],
+          "attributedAt": "0001-01-01T00:00:00+00:00",
+          "measure": {
+            "kind": "",
+            "value": "Infinity"
+          },
+          "trialLabel": "  ",
+          "observedAt": "0001-01-01T00:00:00+00:00",
+          "exposures": null
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f101",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": null,
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Unknown",
+          "attributionSource": "None",
+          "reviewerIdentity": null,
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": null,
+          "rationale": null,
+          "evidenceIds": [],
+          "attributedAt": null,
+          "measure": null,
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": []
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f101",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Unknown",
+          "attributionSource": "None",
+          "reviewerIdentity": null,
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": null,
+          "rationale": "aexp-sealed:v1:abc",
+          "evidenceIds": [],
+          "attributedAt": null,
+          "measure": {
+            "kind": "tool\u0000calls",
+            "value": 7
+          },
+          "trialLabel": "trial\u0000",
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f102",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Improved",
+          "attributionSource": "HumanAssessment",
+          "reviewerIdentity": "reviewer-ü",
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": "00001170-0000-4000-8000-00000000a102",
+          "rationale": "(sealed)",
+          "evidenceIds": [],
+          "attributedAt": "2026-03-02T09:30:00+00:00",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": true,
+              "evidenceId": "5ef33329-00ec-8611-a085-f807063cf8b5"
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f102",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Unknown",
+          "attributionSource": "HumanAssessment",
+          "reviewerIdentity": " ",
+          "evaluatorId": "comparative-evaluator/2.0",
+          "verificationRoundId": "00000000-0000-0000-0000-000000000000",
+          "assessmentId": null,
+          "rationale": null,
+          "evidenceIds": [
+            "00001170-0000-4000-8000-00000000e001"
+          ],
+          "attributedAt": null,
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": true,
+              "evidenceId": "5ef33329-00ec-8611-a085-f807063cf8b5"
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f102",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Improved",
+          "attributionSource": "HumanAssessment",
+          "reviewerIdentity": null,
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": "00000000-0000-0000-0000-000000000000",
+          "rationale": "The reviewer saw the lesson applied.",
+          "evidenceIds": [],
+          "attributedAt": "2026-03-02T09:30:00+00:00",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": true,
+              "evidenceId": "5ef33329-00ec-8611-a085-f807063cf8b5"
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f103",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Improved",
+          "attributionSource": "ComparativeEvaluation",
+          "reviewerIdentity": "reviewer-ü",
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": "00001170-0000-4000-8000-00000000a103",
+          "rationale": " ",
+          "evidenceIds": [],
+          "attributedAt": null,
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f103",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Improved",
+          "attributionSource": "ComparativeEvaluation",
+          "reviewerIdentity": null,
+          "evaluatorId": "comparative-evaluator/2.0",
+          "verificationRoundId": "00000000-0000-0000-0000-000000000000",
+          "assessmentId": null,
+          "rationale": "Runs with the lesson needed fewer tool calls.",
+          "evidenceIds": [
+            "00000000-0000-0000-0000-000000000000"
+          ],
+          "attributedAt": "2026-03-02T09:30:00+00:00",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f103",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Improved",
+          "attributionSource": "ComparativeEvaluation",
+          "reviewerIdentity": null,
+          "evaluatorId": "comparative-evaluator/2.0",
+          "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+          "assessmentId": null,
+          "rationale": "Runs with the lesson needed fewer tool calls.",
+          "evidenceIds": [
+            "00001170-0000-4000-8000-00000000e001",
+            "00001170-0000-4000-8000-00000000e001"
+          ],
+          "attributedAt": "2026-03-02T09:30:00+00:00",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f101",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Unknown",
+          "attributionSource": "None",
+          "reviewerIdentity": "reviewer-ü",
+          "evaluatorId": "comparative-evaluator/2.0",
+          "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+          "assessmentId": "00001170-0000-4000-8000-00000000a101",
+          "rationale": "a claim",
+          "evidenceIds": [
+            "00001170-0000-4000-8000-00000000e001"
+          ],
+          "attributedAt": "2026-03-02T09:30:00+00:00",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f101",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Unknown",
+          "attributionSource": "None",
+          "reviewerIdentity": null,
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": null,
+          "rationale": null,
+          "evidenceIds": [],
+          "attributedAt": null,
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b01",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b02",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b03",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b04",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b05",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b06",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b07",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b08",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b09",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b0a",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b0b",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b0c",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b0d",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b0e",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b0f",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b10",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b11",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b12",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b13",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b14",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b15",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b16",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b17",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b18",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b19",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b1a",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b1b",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b1c",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b1d",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b1e",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b1f",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b20",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b21",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b22",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b23",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b24",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b25",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b26",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b27",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b28",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b29",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b2a",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b2b",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b2c",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b2d",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b2e",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b2f",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b30",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b31",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b32",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b33",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b34",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b35",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b36",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b37",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b38",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b39",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b3a",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b3b",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b3c",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b3d",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b3e",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b3f",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b40",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000b41",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f101",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Unknown",
+          "attributionSource": "None",
+          "reviewerIdentity": null,
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": null,
+          "rationale": null,
+          "evidenceIds": [],
+          "attributedAt": null,
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            null,
+            {
+              "experienceId": "00000000-0000-0000-0000-000000000000",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000121",
+              "attributed": true,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000122",
+              "attributed": false,
+              "evidenceId": "00001170-0000-4000-8000-00000000e002"
+            },
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000123",
+              "attributed": true,
+              "evidenceId": "00000000-0000-0000-0000-000000000000"
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "other-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f103",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Improved",
+          "attributionSource": "ComparativeEvaluation",
+          "reviewerIdentity": null,
+          "evaluatorId": "comparative-evaluator/2.0",
+          "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+          "assessmentId": null,
+          "rationale": "Runs with the lesson needed fewer tool calls.",
+          "evidenceIds": [
+            "00001170-0000-4000-8000-00000000e001"
+          ],
+          "attributedAt": "2026-03-02T09:30:00+00:00",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "other-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00000000-0000-0000-0000-000000000000",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Improved",
+          "attributionSource": "ComparativeEvaluation",
+          "reviewerIdentity": null,
+          "evaluatorId": "comparative-evaluator/2.0",
+          "verificationRoundId": "00001170-0000-4000-8000-000000005200",
+          "assessmentId": null,
+          "rationale": "Runs with the lesson needed fewer tool calls.",
+          "evidenceIds": [
+            "00001170-0000-4000-8000-00000000e001"
+          ],
+          "attributedAt": "2026-03-02T09:30:00+00:00",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001170-0000-4000-8000-000000000120",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "submit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f004",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "exposedExperienceIds": [
+            "00001170-0000-4000-8000-000000000120"
+          ],
+          "runOutcome": "Verified",
+          "measure": {
+            "kind": "tool\u0000calls",
+            "value": 7
+          },
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "claimedBenefit": "Unknown",
+          "humanAssessment": null,
+          "comparativeEvaluation": null,
+          "trialLabel": null
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    }
+  ]
+}
