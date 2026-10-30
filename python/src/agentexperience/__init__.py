@@ -118,9 +118,9 @@ try:
 except _metadata.PackageNotFoundError:  # running from a source tree that was never installed
     __version__ = "0.0.0+unknown"
 
-CONTRACT_VERSION = "1.13"
-"""The contract version this package passes: every fixture of contract 1.13, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
-1.6, 1.7, 1.8, 1.9, 1.10, 1.11 and 1.12 fixture."""
+CONTRACT_VERSION = "1.14"
+"""The contract version this package passes: every fixture of contract 1.14, and so every 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12 and 1.13 fixture."""
 
 SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.0",
@@ -137,6 +137,7 @@ SUPPORTED_CONTRACT_VERSIONS: tuple[str, ...] = (
     "1.11",
     "1.12",
     "1.13",
+    "1.14",
 )
 """Every contract version whose fixtures this package passes."""
 
