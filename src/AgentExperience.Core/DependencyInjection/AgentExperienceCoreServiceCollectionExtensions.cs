@@ -24,8 +24,8 @@ public static class AgentExperienceCoreServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the sanitizer, the in-memory capture service, the default reflector, the lifecycle
-    /// service, the finalization service and the consolidation service (story 28.6; it runs only when the
-    /// host calls it) as singletons.
+    /// service, the finalization service and the consolidation service (it runs only when the host
+    /// calls it) as singletons.
     /// </summary>
     /// <remarks>
     /// <para>

@@ -8,7 +8,7 @@ using AgentExperience.Core.Reflections;
 namespace AgentExperience.Core.Lifecycle;
 
 /// <summary>
-/// One living lesson per situation (story 28.6): an on-demand, deterministic pass that merges the validated records of
+/// One living lesson per situation: an on-demand, deterministic pass that merges the validated records of
 /// one scope that failed the same way and were fixed the same way into one consolidated record, which supersedes them
 /// through the ordinary lifecycle and carries their combined independent support.
 /// </summary>
@@ -23,7 +23,7 @@ namespace AgentExperience.Core.Lifecycle;
 /// with a reflection that is not model-authored and whose content is confirmed when provenance signing is configured (the
 /// injection's own rule), as one store read returns them (<see cref="ExperienceRecordQuery.MaxLimit"/>, newest first;
 /// erased and superseded records are never returned). Two records group together when they hold the same set of
-/// <em>resolved</em> failure signature keys (story 28.2's exact <see cref="ExperienceFailureSignature.Key"/>) and their
+/// <em>resolved</em> failure signature keys (the exact <see cref="ExperienceFailureSignature.Key"/>) and their
 /// working attempt -- the final attempt, ended without an error, the one the block's <c>Worked:</c> line names -- called
 /// the same tools in the same order, with the same values for the argument keys
 /// <see cref="ExperienceConsolidationOptions.ArgumentKeys"/> names. A record with no resolved signature or no working

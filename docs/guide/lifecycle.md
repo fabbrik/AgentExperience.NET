@@ -246,7 +246,7 @@ var result = await consolidation.ConsolidateAsync(
 **What is merged.** Records in exactly the scope asked for (never another scope's, never one a sharing grant lends),
 `Validated` or `Reinforced`, verified, with a lesson the library wrote (not model-authored, and confirmed by its
 signature when [provenance signing](confidence.md#signing-provenance) is on). Two records are one situation when they hold the same set of
-*resolved* [failure signatures](injection.md#recall-at-the-moment-of-failure) (story 28.2's exact key) and their
+*resolved* [failure signatures](injection.md#recall-at-the-moment-of-failure) (the exact `ExperienceFailureSignature.Key`) and their
 working attempt (the final one, ended without an error: the attempt the block's `Worked:` line names) called the same
 tools in the same order, with equal values for the argument keys `ArgumentKeys` names. Name the keys your blocks show
 (the lessons view defaults to the keys `options.Recipe` made visible), so `retry(delay=0)` and `retry(delay=30)` stay

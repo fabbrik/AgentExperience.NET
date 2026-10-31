@@ -648,7 +648,7 @@ public sealed record ExperienceLesson(
     public ExperienceLessonBenefit? MeasuredBenefit { get; init; }
 
     /// <summary>
-    /// When this lesson is a consolidated one (story 28.6, <see cref="AgentExperienceLessons.ConsolidateAsync"/>), how many
+    /// When this lesson is a consolidated one (<see cref="AgentExperienceLessons.ConsolidateAsync"/>), how many
     /// source records it was merged from: the records its provenance lists, each now superseded by it. Its lesson text says
     /// how many independent runs those were. <see langword="null"/> for every other lesson.
     /// </summary>
