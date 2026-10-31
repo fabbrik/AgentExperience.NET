@@ -137,13 +137,14 @@ internal sealed class ConfigTrust(string file)
 /// <summary>Writes a file whole or not at all: to a temporary file beside it, then renamed over it.</summary>
 internal static class AtomicFile
 {
-    public static void Write(string path, byte[] bytes, bool overwrite)
+    /// <remarks>The file is created with <c>mode</c> on Unix; owner read and write when it is <see langword="null"/>.</remarks>
+    public static void Write(string path, byte[] bytes, bool overwrite, UnixFileMode? mode = null)
     {
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
         if (!OperatingSystem.IsWindows())
         {
-            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            options.UnixCreateMode = mode ?? (UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
 
         try

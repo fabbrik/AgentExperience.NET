@@ -21,6 +21,12 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Story 28.9: Claude Code hook inputs, as the hooks reference documents them, and a project's settings file (kept under
+       a directory not named .claude; tests copy it into a temporary project). -->
+  <ItemGroup>
+    <None Include="HookFixtures\*.json;SettingsFixtures\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\AgentExperience.Cli\AgentExperience.Cli.csproj" />
   </ItemGroup>

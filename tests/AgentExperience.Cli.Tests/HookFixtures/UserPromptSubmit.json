@@ -1,0 +1,8 @@
+{
+  "session_id": "{{session}}",
+  "transcript_path": "/home/user/.claude/projects/example/{{session}}.jsonl",
+  "cwd": "/home/user/my-project",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "{{prompt}}"
+}

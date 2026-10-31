@@ -253,7 +253,12 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
     /// it) and finalizes it: the verdict becomes the run's evidence, and a verified run becomes a lesson. Works in any
     /// process after <c>run end</c>: the run comes back from the run store.
     /// </summary>
-    public async Task<FinalizeSummary> FinalizeAsync(Guid runId, int? reportedExitCode, CancellationToken cancellationToken)
+    /// <remarks>
+    /// <c>maxVerifierTime</c> is a tighter bound than the configured timeout, for a caller with a deadline of its own (a
+    /// Claude Code hook): the verifier gets the smaller of the two, and when it is cut short nothing is finalized, as with
+    /// the configured one.
+    /// </remarks>
+    public async Task<FinalizeSummary> FinalizeAsync(Guid runId, int? reportedExitCode, CancellationToken cancellationToken, TimeSpan? maxVerifierTime = null)
     {
         if (_journals.Exists(runId))
         {
@@ -281,13 +286,15 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
         else
         {
             var program = VerifierRunner.ResolveProgram(Settings.Verifier, Settings.ProjectRoot, environment);
-            verdict = await VerifierRunner.RunAsync(Settings.Verifier, program, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (verdict.TimedOut)
-        {
-            throw new AexpUsageException(
-                $"The verifier did not finish within {Settings.Verifier.Timeout}; nothing was finalized. Run 'aexp finalize --run {runId:D}' again.");
+            var verifier = maxVerifierTime is { } bound && bound < Settings.Verifier.Timeout
+                ? Settings.Verifier with { Timeout = bound > TimeSpan.Zero ? bound : TimeSpan.FromMilliseconds(1) }
+                : Settings.Verifier;
+            verdict = await VerifierRunner.RunAsync(verifier, program, cancellationToken).ConfigureAwait(false);
+            if (verdict.TimedOut)
+            {
+                throw new AexpVerifierTimedOutException(
+                    $"The verifier did not finish within {verifier.Timeout}; nothing was finalized. Run 'aexp finalize --run {runId:D}' again.");
+            }
         }
 
         var passed = verdict.ExitCode == 0;
@@ -325,6 +332,32 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
             result.ExperienceId,
             result.Status,
             result.Reason ?? result.RunStoreFailure);
+    }
+
+    /// <summary>An open run's journal as it stands, read without its lock; <see langword="null"/> when the run is not open.</summary>
+    public RunJournal? PeekOpenRun(Guid runId) => _journals.Exists(runId) ? _journals.Peek(runId) : null;
+
+    /// <summary>Deletes an open run without storing it: nothing it held is kept.</summary>
+    public void DiscardOpenRun(Guid runId) => _journals.Delete(runId);
+
+    /// <summary>The lessons the holdout measured as helping, read once, for a caller that writes them itself.</summary>
+    public async Task<(ExperienceLessonExportResult Result, IReadOnlyList<ExportedLesson> Lessons)> MeasuredLessonsAsync(CancellationToken cancellationToken)
+    {
+        await using var services = await BuildAsync(null, cancellationToken).ConfigureAwait(false);
+        var sink = new CollectingLessonSink();
+        var result = await services.GetAgentExperienceLessons().ExportMeasuredAsync(Identity(), sink, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return (result, sink.Lessons);
+    }
+
+    private sealed class CollectingLessonSink : IExperienceLessonSink
+    {
+        public IReadOnlyList<ExportedLesson> Lessons { get; private set; } = [];
+
+        public Task<ExperienceLessonSyncResult> SyncAsync(Scope scope, IReadOnlyList<ExportedLesson> current, CancellationToken cancellationToken)
+        {
+            Lessons = [.. current];
+            return Task.FromResult(new ExperienceLessonSyncResult(current.Count, 0, 0));
+        }
     }
 
     /// <summary>Deletes open runs started more than <paramref name="age"/> ago that no command is using.</summary>
