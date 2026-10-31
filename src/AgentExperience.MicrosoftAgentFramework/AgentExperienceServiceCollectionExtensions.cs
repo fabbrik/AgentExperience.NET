@@ -1,6 +1,7 @@
 using AgentExperience.Abstractions;
 using AgentExperience.Core.DependencyInjection;
 using AgentExperience.Core.Finalization;
+using AgentExperience.Core.Lifecycle;
 using AgentExperience.MicrosoftAgentFramework;
 using AgentExperience.MicrosoftAgentFramework.Injection;
 using Microsoft.Agents.AI;
@@ -110,7 +111,8 @@ public static class AgentExperienceServiceCollectionExtensions
                 provider.GetRequiredService<IExperienceRecordStore>(),
                 provider.GetRequiredService<ExperienceContextProvider>(),
                 registration.ClockFrom(provider),
-                registration);
+                registration,
+                provider.GetService<ExperienceConsolidationService>());
         });
 
         return new AgentExperienceBuilder(services);

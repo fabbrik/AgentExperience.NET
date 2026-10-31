@@ -1,5 +1,6 @@
 using AgentExperience.Abstractions;
 using AgentExperience.Core.Holdout;
+using AgentExperience.Core.Lifecycle;
 using AgentExperience.Core.Retrieval;
 using AgentExperience.MicrosoftAgentFramework.Export;
 using AgentExperience.MicrosoftAgentFramework.Injection;
@@ -31,17 +32,20 @@ public sealed class AgentExperienceLessons
     private readonly ExperienceContextProvider _provider;
     private readonly TimeProvider _clock;
     private readonly AgentExperienceRegistration? _registration;
+    private readonly ExperienceConsolidationService? _consolidation;
 
     internal AgentExperienceLessons(
         IExperienceRecordStore store,
         ExperienceContextProvider provider,
         TimeProvider clock,
-        AgentExperienceRegistration? registration = null)
+        AgentExperienceRegistration? registration = null,
+        ExperienceConsolidationService? consolidation = null)
     {
         _store = store;
         _provider = provider;
         _clock = clock;
         _registration = registration;
+        _consolidation = consolidation;
     }
 
     /// <summary>The context provider whose writer and options render the blocks. For tests.</summary>
@@ -342,6 +346,60 @@ public sealed class AgentExperienceLessons
     }
 
     /// <summary>
+    /// Merges the validated lessons in <paramref name="identity"/>'s scope that failed the same way and were fixed the same
+    /// way into one consolidated lesson each, which supersedes them: <see cref="ExperienceConsolidationService.ConsolidateAsync"/>
+    /// under the identity's own authorization, in exactly its scope (never a lesson another scope lends). Explicit: nothing
+    /// consolidates automatically. The view then lists one lesson per situation, with
+    /// <see cref="ExperienceLesson.ConsolidatedFrom"/> set.
+    /// </summary>
+    /// <remarks>
+    /// The injection holdout's measured benefit is per lesson, so a consolidated lesson starts with no measurements of its
+    /// own: the assignments and exposures that named its sources stay as they were, and are not carried over to it.
+    /// </remarks>
+    /// <param name="identity">The caller, from the host's own authentication: the authorization the store checks, and the scope consolidated.</param>
+    /// <param name="options">
+    /// What to merge; <see langword="null"/> for the defaults, with <see cref="ExperienceConsolidationOptions.ArgumentKeys"/> set
+    /// to the argument keys <see cref="AgentExperienceOptions.Recipe"/> made visible, so a merged lesson never hides an
+    /// argument value its sources' blocks showed. A host that sets <see cref="ExperienceInjectionOptions.ApproachArguments"/>
+    /// itself passes the same keys here.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the pass; a re-run finishes what it left.</param>
+    /// <returns>What the pass did, per group and per source.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="identity"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">The container has no <see cref="ExperienceConsolidationService"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="ExperienceConsolidationOptions.MinimumSources"/> is out of range.</exception>
+    /// <exception cref="ArgumentException"><see cref="ExperienceConsolidationOptions.ArgumentKeys"/> names a blank tool or key.</exception>
+    /// <exception cref="ExperienceStoreException">Storage failed while reading or creating.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    public Task<ExperienceConsolidationResult> ConsolidateAsync(
+        ExperienceIdentity identity,
+        ExperienceConsolidationOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        var consolidation = _consolidation
+            ?? throw new InvalidOperationException(
+                $"No {nameof(ExperienceConsolidationService)} is registered; AddAgentExperience registers one.");
+        options ??= DefaultConsolidationOptions();
+        return consolidation.ConsolidateAsync(identity.Authorization, identity.Scope, options, cancellationToken);
+    }
+
+    /// <summary>The default consolidation options: the argument keys the setup's recipes made visible.</summary>
+    private ExperienceConsolidationOptions DefaultConsolidationOptions()
+    {
+        var keys = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        foreach (var recipe in _registration?.Options.Recipes ?? [])
+        {
+            if (recipe.Arguments.Count > 0)
+            {
+                keys[recipe.ToolName] = recipe.Arguments;
+            }
+        }
+
+        return new ExperienceConsolidationOptions { ArgumentKeys = keys.Count > 0 ? keys : null };
+    }
+
+    /// <summary>
     /// Sets each listed lesson's <see cref="ExperienceLesson.MeasuredBenefit"/> from one estimate for the page's scope, over
     /// the context provider's benefit window and threshold (<see cref="ExperienceBenefitPolicy.Window"/> and
     /// <see cref="ExperienceBenefitPolicy.MinimumRunsPerArm"/>, whose defaults apply even with the policy off): the estimate
@@ -423,7 +481,11 @@ public sealed class AgentExperienceLessons
                 payload.Text,
                 ineligibility is null,
                 reason,
-                ineligibility);
+                ineligibility)
+            {
+                // Story 28.6: a consolidated lesson says how many source records it was merged from.
+                ConsolidatedFrom = ExperienceConsolidation.IsConsolidated(record) ? ExperienceConsolidation.SourcesOf(record).Count : null,
+            };
         }
 #pragma warning disable CA1031 // One record a store answered that cannot be rendered must not hide the rest.
         catch (Exception ex)
@@ -584,6 +646,13 @@ public sealed record ExperienceLesson(
     /// when no assigned run in the window named it, or when the store does not track the holdout.
     /// </summary>
     public ExperienceLessonBenefit? MeasuredBenefit { get; init; }
+
+    /// <summary>
+    /// When this lesson is a consolidated one (story 28.6, <see cref="AgentExperienceLessons.ConsolidateAsync"/>), how many
+    /// source records it was merged from: the records its provenance lists, each now superseded by it. Its lesson text says
+    /// how many independent runs those were. <see langword="null"/> for every other lesson.
+    /// </summary>
+    public int? ConsolidatedFrom { get; init; }
 }
 
 /// <summary>Why retrieval would not currently use a lesson.</summary>

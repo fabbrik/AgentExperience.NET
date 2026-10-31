@@ -605,6 +605,19 @@ internal sealed class ProvenanceSigner
         }
     }
 
+    /// <summary>
+    /// One tool call argument value's canonical encoding, exactly as the content digest encodes it: so two values that
+    /// sign alike (<c>1.5</c> and <c>1.50</c>, an enum and its name) encode alike here too. Story 28.6's consolidation
+    /// keys an allowlisted argument by it.
+    /// </summary>
+    /// <exception cref="ArgumentException">The value has no JSON form, or is nested too deeply.</exception>
+    internal static byte[] EncodeArgumentValue(object? value) => Guarded(() =>
+    {
+        using var buffer = new MemoryStream();
+        WriteValue(buffer, ToJson(value), depth: 0);
+        return buffer.ToArray();
+    });
+
     private static byte[] EncodeClaims(ExperienceRecord record)
     {
         using var buffer = new MemoryStream();

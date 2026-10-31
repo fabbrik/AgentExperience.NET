@@ -277,6 +277,9 @@ public sealed class ExperienceLifecycleService
     /// <summary>The one independence rule, shared with the reuse-feedback service.</summary>
     internal IndependenceVerifier Independence => _independence;
 
+    /// <summary>The confidence engine every score this service writes comes from; consolidation scores with it too.</summary>
+    internal ConfidenceEngineRule Confidence => _confidence;
+
     /// <summary>
     /// Determines whether the lifecycle allows moving a record from <paramref name="priorStatus"/> to
     /// <paramref name="currentStatus"/>. An undefined enum value is never allowed, so an external
