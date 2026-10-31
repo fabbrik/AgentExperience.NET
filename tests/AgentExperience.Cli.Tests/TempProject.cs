@@ -40,7 +40,15 @@ public sealed class TempProject : IDisposable
 
     /// <summary>The environment the tool sees: the real one, but this test's own user config directory.</summary>
     public string? Environment(string name) =>
-        name == "XDG_CONFIG_HOME" ? UserConfig : System.Environment.GetEnvironmentVariable(name);
+        name == "XDG_CONFIG_HOME" ? UserConfig
+        : Overrides.TryGetValue(name, out var value) ? value
+        : System.Environment.GetEnvironmentVariable(name);
+
+    /// <summary>Environment variables this test sets for the tool (PATH, say).</summary>
+    public Dictionary<string, string?> Overrides { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The clock the tool runs on; the system's unless a test moves it.</summary>
+    public TimeProvider Clock { get; set; } = TimeProvider.System;
 
     /// <summary>Approves the current config, as a person would with 'aexp trust'.</summary>
     public void Trust()
@@ -73,7 +81,7 @@ public sealed class TempProject : IDisposable
         var error = new StringWriter();
         var exit = await AexpCli.RunAsync(
             args,
-            new AexpConsole(output, error, Root, Environment, TimeProvider.System));
+            new AexpConsole(output, error, Root, Environment, Clock));
         return new CliResult(exit, output.ToString(), error.ToString());
     }
 
@@ -133,3 +141,9 @@ public sealed class TempProject : IDisposable
 }
 
 public sealed record CliResult(int Exit, string Output, string Error);
+
+/// <summary>The system clock, moved by a fixed amount.</summary>
+public sealed class ShiftedClock(TimeSpan shift) : TimeProvider
+{
+    public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow() + shift;
+}

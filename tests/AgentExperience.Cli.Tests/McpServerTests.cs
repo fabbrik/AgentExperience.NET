@@ -21,7 +21,7 @@ public sealed class McpServerTests
     public async Task It_lists_the_five_tools_and_says_their_output_is_untrusted()
     {
         using var project = new TempProject();
-        await using var session = await McpSession.StartAsync(project);
+        await using var session = await McpTestSession.StartAsync(project);
 
         var tools = await session.Client.ListToolsAsync();
         Assert.Equal(
@@ -46,7 +46,7 @@ public sealed class McpServerTests
     public async Task A_session_learns_and_a_later_session_is_given_the_lesson_and_the_hint()
     {
         using var project = new TempProject();
-        await using (var first = await McpSession.StartAsync(project))
+        await using (var first = await McpTestSession.StartAsync(project))
         {
             Assert.Equal("No verified lesson applies to this task.", await first.CallAsync("experience_recall", new() { ["task"] = Task }));
             await first.CallAsync("experience_record_call", new()
@@ -66,14 +66,14 @@ public sealed class McpServerTests
             Assert.Contains(HistoricalReferenceWriter.BlockBegin, lessons);
         }
 
-        await using (var second = await McpSession.StartAsync(project))
+        await using (var second = await McpTestSession.StartAsync(project))
         {
             var block = await second.CallAsync("experience_recall", new() { ["task"] = Task });
             Assert.StartsWith(HistoricalReferenceWriter.BlockBegin, block);
             Assert.Contains("add_reference [returned]", block);
         }
 
-        await using (var third = await McpSession.StartAsync(project))
+        await using (var third = await McpTestSession.StartAsync(project))
         {
             // No recall first: the run starts lazily with the task given here, and words that match nothing get no block.
             var hint = await third.CallAsync("experience_failure_hint", new()
@@ -91,7 +91,7 @@ public sealed class McpServerTests
     public async Task Errors_are_tool_errors_and_the_server_keeps_serving()
     {
         using var project = new TempProject();
-        await using var session = await McpSession.StartAsync(project);
+        await using var session = await McpTestSession.StartAsync(project);
 
         var finish = await session.Client.CallToolAsync("experience_finish", new Dictionary<string, object?>());
         Assert.True(finish.IsError == true);
@@ -113,54 +113,5 @@ public sealed class McpServerTests
         Assert.Equal("short", AexpMcpServer.Bound("short"));
     }
 
-    private static string Text(CallToolResult result) =>
-        string.Concat(result.Content.OfType<TextContentBlock>().Select(block => block.Text));
-
-    /// <summary>The server on one end of two pipes, the SDK's client on the other.</summary>
-    private sealed class McpSession : IAsyncDisposable
-    {
-        private readonly CancellationTokenSource _stop = new();
-        private readonly Pipe _toServer = new();
-        private readonly Pipe _toClient = new();
-        private System.Threading.Tasks.Task _server = System.Threading.Tasks.Task.CompletedTask;
-
-        public McpClient Client { get; private set; } = null!;
-
-        /// <summary>What the server wrote for its operator.</summary>
-        public StringWriter Log { get; } = new();
-
-        public static async Task<McpSession> StartAsync(TempProject project)
-        {
-            var session = new McpSession();
-            var settings = AexpConfigLoader.Load(null, project.Root, project.Environment);
-            var engine = new AexpEngine(settings, TimeProvider.System, project.Environment);
-            session._server = AexpMcpServer.RunAsync(engine, session._toServer.Reader.AsStream(), session._toClient.Writer.AsStream(), session.Log, session._stop.Token);
-            session.Client = await McpClient.CreateAsync(
-                new StreamClientTransport(session._toServer.Writer.AsStream(), session._toClient.Reader.AsStream()));
-            return session;
-        }
-
-        public async Task<string> CallAsync(string tool, Dictionary<string, object?> arguments)
-        {
-            var result = await Client.CallToolAsync(tool, arguments);
-            Assert.False(result.IsError == true, $"{tool} failed: {Text(result)}");
-            return Text(result);
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await Client.DisposeAsync();
-            await _stop.CancelAsync();
-            await _toServer.Writer.CompleteAsync();
-            try
-            {
-                await _server;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-
-            _stop.Dispose();
-        }
-    }
+    private static string Text(CallToolResult result) => McpTestSession.Text(result);
 }

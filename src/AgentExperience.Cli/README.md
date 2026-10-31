@@ -26,6 +26,10 @@ Then put a `.aexp/config.json` in your project:
 `verify.command` is the only command `aexp` ever runs: an argument vector, never a shell line. Exit code 0 is a pass. A
 run becomes a lesson only when that check passes.
 
+A config names a command, so a person approves it before `aexp` runs it: review it, then run `aexp trust` in the
+project. The approval is recorded (path and SHA-256) in your own user config directory, and any edit to the config
+revokes it until it is approved again.
+
 ## As an MCP server
 
 Register `aexp mcp` with your agent (for example `claude mcp add aexp -- aexp mcp`, run in the project). It offers five

@@ -517,6 +517,15 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   `aexp lessons [--all] [--html]`, `aexp export --markdown`, `aexp benefit`. **MCP tools**: `experience_recall`,
   `experience_failure_hint`, `experience_record_call`, `experience_finish` and `experience_lessons`, one open run per
   session started lazily, outputs bounded to 16 KB, errors as MCP tool errors.
+- **A config is code, so a person approves it**: `aexp trust` prints the verifier command, the program it resolves to
+  and `acceptExitCode`, and records the config's path and SHA-256 in the user's own config directory (owner-only);
+  `finalize` and `experience_finish` refuse a config that is not approved or changed since, and read-only commands warn.
+  The verifier's program is resolved by `aexp` (`PATH` only for a bare name, never the current directory; a relative path
+  inside the project). Discovery stops at the repository root or the home directory; a config another user owns is
+  refused. `finalize` checks the run before spawning anything; a timed-out verifier is killed with its process tree;
+  `experience_finish` keeps an ended run for a retry and names `aexp finalize --run <id>`. Open runs are written
+  atomically under a lock file and pruned with `aexp runs prune --older-than`; files are written inside the project
+  only; MCP errors carry fixed messages, with detail on standard error.
 - **The library's own answers**: the block and the hint come from a probe `ChatClientAgent` wired with
   `UseAgentExperience` over a scripted stand-in model, so retrieval, eligibility, the writer, recall's rules and the
   holdout are exactly the adapter's; with a run, the holdout arm and what was delivered are recorded against it. A call

@@ -211,7 +211,8 @@ claude mcp add aexp -- aexp mcp      # or any MCP client: the server is `aexp mc
 ```
 
 A `.aexp/config.json` in the project names the scope and the one command `aexp` may run, the verifier
-(`"verify": { "command": ["dotnet", "test"] }`, exit code 0 = pass). The MCP tools `experience_recall`,
+(`"verify": { "command": ["dotnet", "test"] }`, exit code 0 = pass), which runs only once a person has reviewed the
+config and approved it with `aexp trust` (an edit revokes the approval). The MCP tools `experience_recall`,
 `experience_failure_hint`, `experience_record_call`, `experience_finish` and `experience_lessons` (or the commands
 `aexp run start|call|end`, `aexp recall`, `aexp finalize`, `aexp lessons`) capture a run, verify it with that command,
 and hand the next run the lesson and, after a failure, the hint, through the same writer, rules and holdout as the

@@ -213,9 +213,16 @@ internal sealed class RunJournalStore(string directory)
         return new FileStream(path, options);
     }
 
-    /// <summary>ERROR_SHARING_VIOLATION or ERROR_LOCK_VIOLATION, which .NET also reports for a Unix advisory lock held elsewhere.</summary>
+    /// <summary>
+    /// The lock is held elsewhere: ERROR_SHARING_VIOLATION or ERROR_LOCK_VIOLATION on Windows; on Unix, where .NET takes
+    /// an advisory lock for <see cref="FileShare.None"/>, the would-block errno it reports (EAGAIN: 11 on Linux, 35 on
+    /// macOS and the BSDs). Anything else (a missing directory, a permission) is not waited out.
+    /// </summary>
     internal static bool IsSharingViolation(IOException exception) =>
-        (exception.HResult & 0xFFFF) is 32 or 33;
+        exception.GetType() == typeof(IOException)
+        && (OperatingSystem.IsWindows()
+            ? (exception.HResult & 0xFFFF) is 32 or 33
+            : exception.HResult == (OperatingSystem.IsLinux() ? 11 : 35));
 
     private void EnsureDirectory()
     {
