@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Story 28.8: the aexp tool, end to end: the CLI in process (each command builds the library afresh, as a new process
+       would), one finalize in a spawned process of the built tool, and the MCP server through an in-process client from
+       the SDK. No Docker and no network: every test has its own project directory and SQLite file in the temporary
+       directory, and the verifier is a one-line shell command. Keep "Postgres" out of every class name here. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Not packed/consumed, so missing XML doc comments on [Fact] methods aren't meaningful here. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentExperience.Cli\AgentExperience.Cli.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -68,8 +68,8 @@ internal sealed class AexpMcpServer
                 async (
                     [Description("The tool that failed.")] string tool,
                     [Description("The error it failed with, as it reported it.")] string error,
-                    [Description("The task, if experience_recall was not called first.")] string? task,
-                    CancellationToken cancellationToken) =>
+                    [Description("The task, if experience_recall was not called first.")] string? task = null,
+                    CancellationToken cancellationToken = default) =>
                     await GuardAsync(async () =>
                     {
                         var runId = await EnsureRunAsync(task, cancellationToken).ConfigureAwait(false);
@@ -87,11 +87,11 @@ internal sealed class AexpMcpServer
             McpServerTool.Create(
                 async (
                     [Description("The tool you called.")] string tool,
-                    [Description("Its arguments, as a JSON object.")] JsonElement? arguments,
-                    [Description("What it returned, when it succeeded.")] string? result,
-                    [Description("The error, when it failed.")] string? error,
-                    [Description("The task, if experience_recall was not called first.")] string? task,
-                    CancellationToken cancellationToken) =>
+                    [Description("Its arguments, as a JSON object.")] JsonElement? arguments = null,
+                    [Description("What it returned, when it succeeded.")] string? result = null,
+                    [Description("The error, when it failed.")] string? error = null,
+                    [Description("The task, if experience_recall was not called first.")] string? task = null,
+                    CancellationToken cancellationToken = default) =>
                     await GuardAsync(async () =>
                     {
                         var runId = await EnsureRunAsync(task, cancellationToken).ConfigureAwait(false);
@@ -108,7 +108,7 @@ internal sealed class AexpMcpServer
                     OpenWorld = false,
                 }),
             McpServerTool.Create(
-                async ([Description("completed (the default), failed or cancelled.")] string? status, CancellationToken cancellationToken) =>
+                async ([Description("completed (the default), failed or cancelled.")] string? status = null, CancellationToken cancellationToken = default) =>
                     await GuardAsync(async () =>
                     {
                         var runId = _runId ?? throw new McpException("No run is open: call experience_recall (or record a call) first.");
