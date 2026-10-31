@@ -255,6 +255,28 @@ public sealed partial class ClaudeCodeHookTests
     }
 
     [Fact]
+    public async Task A_call_keeps_its_allowed_arguments_and_its_result_only_under_a_recipe_consent()
+    {
+        using var project = new TempProject(config =>
+        {
+            config["sanitization"] = new JsonObject { ["allowArguments"] = new JsonArray("file_path") };
+            config["recipes"] = new JsonArray(new JsonObject { ["tool"] = "Bash", ["arguments"] = new JsonArray(), ["resultExcerpt"] = true });
+        });
+        const string session = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+        Assert.Null(await HookAsync(project, "UserPromptSubmit", Session(session, Task)));
+        Assert.Null(await HookAsync(project, "PostToolUse.write", Session(session)));
+        Assert.Null(await HookAsync(project, "PostToolUse.bash", Session(session)));
+
+        var journal = File.ReadAllText(Assert.Single(Directory.EnumerateFiles(project.RunsDirectory, "*.json")));
+        Assert.Contains("/home/user/my-project/src/ledger.js", journal); // file_path: allowed
+        Assert.DoesNotContain("module.exports", journal);              // Write's content argument: not allowed
+        Assert.DoesNotContain("filePath", journal);                      // Write's response: no consent
+        Assert.Contains("42 passing", journal);                          // Bash's output: consented
+        Assert.DoesNotContain("Run test suite", journal);                // Bash description argument: not allowed
+        Assert.DoesNotContain("\"command\"", journal);                     // Bash's command argument: not allowed
+    }
+
+    [Fact]
     public async Task A_tool_call_before_any_prompt_is_not_recorded()
     {
         using var project = new TempProject();

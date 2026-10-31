@@ -293,6 +293,13 @@ internal static class ClaudeCodeHooks
                 ? (null, string.IsNullOrWhiteSpace(input.Error) ? "the tool failed" : input.Error, input.IsInterrupt)
                 : input.ToolOutcome();
 
+            // A coding agent's tool results are file contents and command output: kept only when a recipe consent asks
+            // for that tool's result excerpt. The call's name, allowed arguments and outcome are what a lesson needs.
+            if (!settings.Recipes.Any(recipe => recipe.ResultExcerpt && string.Equals(recipe.Tool, input.ToolName, StringComparison.Ordinal)))
+            {
+                result = null;
+            }
+
             var hint = await WithSessionAsync<string?>(async session =>
             {
                 if (OpenRun(session) is not { } journal)
