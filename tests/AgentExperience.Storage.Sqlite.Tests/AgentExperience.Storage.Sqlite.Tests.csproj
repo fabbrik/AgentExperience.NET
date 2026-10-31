@@ -31,6 +31,7 @@
 
   <ItemGroup>
     <Compile Include="..\Shared\DurableCaptureScenario.cs" Link="Shared\DurableCaptureScenario.cs" />
+    <Compile Include="..\Shared\ConsolidationScenario.cs" Link="Shared\ConsolidationScenario.cs" />
   </ItemGroup>
 
 </Project>
