@@ -671,6 +671,11 @@ public sealed class SingleCallParityTests
             {
                 options.TimeProvider = new NeverFiringTimers();
             }
+            else
+            {
+                // The shared host defaults to timers that never fire; a test that needs a bound to fire says so.
+                options.TimeProvider = TimeProvider.System;
+            }
 
             var injection = options.Injection;
             options.Injection = settings =>

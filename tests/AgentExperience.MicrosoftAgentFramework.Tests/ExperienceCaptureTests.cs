@@ -1290,26 +1290,20 @@ public class ExperienceCaptureTests
     public async Task Row6_a_run_the_host_never_closes_is_completed_at_its_bound_and_reported()
     {
         var harness = new Harness();
+        var clock = new ManualBoundTimeProvider();
         var runId = Guid.NewGuid();
         var options = harness.Options(
             resolve: _ => new ExperienceRunDescriptor("incident-42", TestScope, ContinuesRunId: runId),
             shouldComplete: _ => false,
-            maxOpenRunDuration: TimeSpan.FromMilliseconds(150));
+            timeProvider: clock);
 
         await harness.Capture(CreateAgent(new ScriptedChatClient { Calls = [EchoCall()] }), options).RunAsync("attempt-1");
 
-        // Nobody ever comes back. The bound is the only thing that ends this run.
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline)
-        {
-            Assert.True(harness.Service.TryGetRun(runId, out var current));
-            if (current.ExecutionStatus is not null)
-            {
-                break;
-            }
-
-            await Task.Delay(20);
-        }
+        // Nobody ever comes back. The bound is the only thing that ends this run, and it fires only when the test says so,
+        // after the attempt is captured: a real 150 ms timer could fire first on a loaded machine and close the run empty.
+        Assert.Single(clock.Bounds).Fire();
+        await Eventually(() => StatusOf(harness, runId) is not null);
+        await Eventually(() => harness.Failures.Any(failure => failure.Reason.Contains("open-run bound", StringComparison.Ordinal)));
 
         Assert.True(harness.Service.TryGetRun(runId, out var run));
         Assert.Equal(RunExecutionStatus.Cancelled, run.ExecutionStatus);

@@ -440,6 +440,8 @@ public sealed class ProviderHoldoutTests
             .AddAgentExperience(options =>
             {
                 options.UseDevelopmentIdentity();
+                // No real timer fires: a loaded machine must not time out a retrieval that would have finished.
+                options.TimeProvider = NeverFiringTimeProvider.Instance;
                 options.ResolveIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(new ExperienceIdentity(Authorization, TestScope));
             })
             .UseInMemoryStorageForDevelopment();
