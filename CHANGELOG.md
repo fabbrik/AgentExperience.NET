@@ -586,17 +586,30 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   stores a run still open. Sessions map to runs in `.aexp/sessions/` under the same locks and atomic writes as runs.
   Every hook exits 0, says nothing to the model but aexp's own texts, and logs to a bounded, owner-only
   `.aexp/hook.log` that never holds a prompt or tool content.
+- **The session is the holdout's unit**: a session's arm is the library's assignment of an ID derived from the session
+  ID, and every run of the session gets a run ID the library assigns to that arm (a deterministic derived sequence,
+  bounded; if the bound is hit the run gets no block or hint and records nothing to the holdout), so block and hints
+  never mix arms within a session. The guide says how to read the run-level estimate with correlated turns.
 - **Trust holds on the hook path**: with an untrusted or changed config the hooks record and inject, but `Stop` does not
-  run the verifier and says why; nothing in the hook input decides the config, identity, scope or command.
+  run the verifier and says why; nothing in the hook input decides the config, identity, scope or command, and a hook
+  without `CLAUDE_PROJECT_DIR` (or `--config`/`AEXP_CONFIG`) does nothing rather than guess from its working directory.
+  A malformed hook command line exits 0 too. A call's result text is kept only under a recipe consent for its tool.
+- **What a turn changed** decides whether `Stop` verifies it: calls outside a read-only tool list, which the config can
+  replace (`claudeCode.readOnlyTools`) and extend with read-only Bash prefixes (`claudeCode.readOnlyBashPrefixes`, no
+  chaining, pipes or redirects). `aexp runs prune` also removes stale session files.
 - **`aexp setup claude-code [--print]`** merges the hooks into `.claude/settings.json` (keeping every existing hook and
   setting, never adding one twice, leaving a settings file it cannot read whole untouched), writes a default
   `.aexp/config.json` only when there is none (verifier detected for `dotnet test`, `npm test`, `pytest` or
   `go test ./...`, else a placeholder that refuses to run), adds `.aexp/` to `.gitignore`, and prints the permission
-  deny rules that keep the agent from editing `.aexp/` or running `aexp trust`. Idempotent; it never trusts the config.
+  deny rules for the user's own settings (no edits to any `.aexp/`, `.claude/` or the trust file's directory; no
+  `aexp trust` in its usual spellings), saying plainly that Bash can still write unless it is restricted. It keeps the
+  settings file's BOM, line endings and mode, writes through a link to its target, and escapes no character needlessly.
+  Idempotent; it never trusts the config.
 - **`aexp export --claude-md [file]` / `--agents-md [file]`** (and the same flags on the `Stop` hook) sync the lessons
   measured as helping into a fenced section (`<!-- aexp:lessons:begin -->` ... `<!-- aexp:lessons:end -->`) of the file,
   every lesson an indented code block under the untrusted-reference preamble with its measured benefit; every byte
-  outside the section is kept, and the same lessons give the same bytes.
+  outside the section is kept, and the same lessons give the same bytes. The read-modify-write holds a lock file, and
+  the file keeps its mode (and, when another user owns it, its owner and group, by an in-place rewrite).
 - **Library change**: none. Guide: [Claude Code](docs/guide/claude-code.md).
 
 ## 0.1.0-preview.17

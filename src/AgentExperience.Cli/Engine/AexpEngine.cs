@@ -48,7 +48,11 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
         AexpHost.BuildAsync(Settings, clock, environment, probe, cancellationToken);
 
     /// <summary>Opens a run: prints nothing but its identifier, which every later command names.</summary>
-    public async Task<Guid> StartRunAsync(string task, string? taskId, CancellationToken cancellationToken)
+    /// <remarks>
+    /// <c>runId</c> names the run when the caller chose it (the Claude Code hooks pick one whose holdout arm is the
+    /// session's); a new random one otherwise.
+    /// </remarks>
+    public async Task<Guid> StartRunAsync(string task, string? taskId, CancellationToken cancellationToken, Guid? runId = null)
     {
         task = RequireTask(task);
         var resolvedTaskId = string.IsNullOrWhiteSpace(taskId) ? Settings.TaskId : RequireIdentifier(taskId, "task ID");
@@ -64,7 +68,7 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
 
         var journal = new RunJournal
         {
-            RunId = Guid.NewGuid(),
+            RunId = runId ?? Guid.NewGuid(),
             TaskId = resolvedTaskId,
             Task = sanitizedTask,
             Scope = Settings.Scope,

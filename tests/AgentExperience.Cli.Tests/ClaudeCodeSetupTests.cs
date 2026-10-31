@@ -92,8 +92,12 @@ public sealed class ClaudeCodeSetupTests
         Assert.Equal("""["dotnet","test"]""", config["verify"]!["command"]!.ToJsonString());
         Assert.Equal("bin/\nobj/\n# aexp: the local lesson store, open runs and the config\n.aexp/\n", File.ReadAllText(Path.Combine(project.Root, ".gitignore")));
         Assert.Contains("aexp trust", first.Output);
-        Assert.Contains("Edit(/.aexp/**)", first.Output);
+        Assert.Contains("Edit(//**/.aexp/**)", first.Output);
+        Assert.Contains("Edit(//**/.claude/**)", first.Output);
         Assert.Contains("Bash(aexp trust *)", first.Output);
+        Assert.Contains("Bash(dotnet tool run aexp trust *)", first.Output);
+        Assert.Contains("~/.claude/settings.json", first.Output);
+        Assert.Contains("unless Bash is restricted", first.Output);
         var lessons = await project.RunAsync("lessons");
         Assert.Contains("is not trusted", lessons.Error);
 
@@ -139,6 +143,87 @@ public sealed class ClaudeCodeSetupTests
         var trust = await project.RunAsync("trust");
         Assert.Equal(0, trust.Exit);
         Assert.Contains("(cannot run: verify.command is still the placeholder", trust.Output);
+    }
+
+    [Fact]
+    public void The_trust_file_directory_is_denied_by_its_own_location()
+    {
+        var unix = ClaudeCodeSetup.RecommendedDenyRules(name => name switch { "HOME" => "/home/alice", "XDG_CONFIG_HOME" => null, _ => null });
+        var xdg = ClaudeCodeSetup.RecommendedDenyRules(name => name switch { "HOME" => "/home/alice", "XDG_CONFIG_HOME" => "/srv/cfg", _ => null });
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        Assert.Contains("Edit(~/.config/aexp/**)", unix);
+        Assert.Contains("Edit(//srv/cfg/aexp/**)", xdg);
+        Assert.DoesNotContain(unix, rule => rule.StartsWith("Write(", StringComparison.Ordinal)); // never matched by Claude Code
+    }
+
+    [Fact]
+    public async Task Setup_keeps_the_settings_files_bom_line_endings_mode_and_link_and_escapes_nothing_needlessly()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var project = new Bare();
+        Directory.CreateDirectory(Path.Combine(project.Root, ".claude"));
+        var real = Path.Combine(project.Root, "shared-settings.json");
+        var text = "{\r\n  \"env\": { \"GREETING\": \"olá <b> & 'x'\" }\r\n}\r\n";
+        File.WriteAllBytes(real, [.. Encoding.UTF8.Preamble, .. Encoding.UTF8.GetBytes(text)]);
+        File.SetUnixFileMode(real, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        File.CreateSymbolicLink(project.Settings, real);
+
+        var result = await project.RunAsync("setup", "claude-code");
+        Assert.True(result.Exit == 0, result.Error);
+
+        Assert.NotNull(new FileInfo(project.Settings).LinkTarget);                 // still a link
+        var bytes = File.ReadAllBytes(real);                                        // written through it
+        Assert.True(bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble));
+        var written = Encoding.UTF8.GetString(bytes.AsSpan(3));
+        Assert.Contains("aexp hook Stop", written);
+        Assert.Contains("olá <b> & 'x'", written);
+        Assert.DoesNotContain("\\u", written);
+        Assert.DoesNotContain("\n", written.Replace("\r\n", string.Empty, StringComparison.Ordinal));
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(real));
+    }
+
+    [Fact]
+    public async Task Export_keeps_the_files_mode()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var project = new TempProject();
+        var claudeMd = Path.Combine(project.Root, "CLAUDE.md");
+        File.WriteAllText(claudeMd, "# Notes\n");
+        var mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead;
+        File.SetUnixFileMode(claudeMd, mode);
+        Assert.Contains("CLAUDE.md added", await project.OkAsync("export", "--claude-md"));
+        Assert.Equal(mode, File.GetUnixFileMode(claudeMd));
+    }
+
+    [Fact]
+    public async Task Prune_removes_stale_session_files_and_their_locks()
+    {
+        using var project = new TempProject();
+        var sessions = Path.Combine(project.Root, ".aexp", "sessions");
+        Directory.CreateDirectory(sessions);
+        File.WriteAllText(Path.Combine(sessions, "old-session.json"), "{\"sessionId\":\"old-session\"}");
+        File.WriteAllText(Path.Combine(sessions, "old-session.lock"), string.Empty);
+        File.WriteAllText(Path.Combine(sessions, "orphan.lock"), string.Empty);
+        File.WriteAllText(Path.Combine(sessions, "new-session.json"), "{\"sessionId\":\"new-session\"}");
+        foreach (var old in new[] { "old-session.json", "old-session.lock", "orphan.lock" })
+        {
+            File.SetLastWriteTimeUtc(Path.Combine(sessions, old), DateTime.UtcNow.AddDays(-30));
+        }
+
+        Assert.Contains("and 1 Claude Code session file(s)", await project.OkAsync("runs", "prune", "--older-than", "7d"));
+        Assert.Equal(["new-session.json"], Directory.EnumerateFiles(sessions).Select(Path.GetFileName));
     }
 
     [Theory]

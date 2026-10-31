@@ -15,11 +15,61 @@ namespace AgentExperience.Cli.ClaudeCode;
 /// </summary>
 internal static class ClaudeCodeSetup
 {
-    /// <summary>The permission rules setup recommends, so the agent cannot edit its own verifier or approve it.</summary>
-    public static IReadOnlyList<string> RecommendedDenyRules { get; } =
-        ["Edit(/.aexp/**)", "Bash(aexp trust)", "Bash(aexp trust *)"];
+    /// <summary>
+    /// The permission deny rules setup recommends for the user's own settings (<c>~/.claude/settings.json</c>, which a
+    /// project session does not edit): no file tool edits any project's <c>.aexp/</c> or <c>.claude/</c>, nor the trust
+    /// file's directory, and the agent cannot run <c>aexp trust</c> in its usual spellings. Paths are <c>//</c>-absolute
+    /// or <c>~/</c>-relative, since a <c>/</c>-anchored rule in user settings means <c>~/.claude/…</c>. Claude Code
+    /// matches path rules for <c>Edit</c> and <c>Read</c> only; an <c>Edit</c> rule covers Write and the other editing tools.
+    /// </summary>
+    public static IReadOnlyList<string> RecommendedDenyRules(Func<string, string?> environment)
+    {
+        var rules = new List<string> { "Edit(//**/.aexp/**)", "Edit(//**/.claude/**)" };
+        try
+        {
+            rules.Add("Edit(" + RulePath(Path.GetDirectoryName(ConfigTrust.ForUser(environment).File)!, environment) + "/**)");
+        }
+        catch (AexpConfigException)
+        {
+            rules.Add("Edit(~/.config/aexp/**)");
+        }
 
-    private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true, IndentSize = 2 };
+        foreach (var runner in new[] { "aexp", "dotnet aexp", "dotnet tool run aexp" })
+        {
+            rules.Add($"Bash({runner} trust)");
+            rules.Add($"Bash({runner} trust *)");
+        }
+
+        return rules;
+    }
+
+    /// <summary>A directory as a permission-rule path: <c>~/…</c> under the home directory, else <c>//…</c> (Windows paths in POSIX form, <c>//c/Users/…</c>).</summary>
+    internal static string RulePath(string directory, Func<string, string?> environment)
+    {
+        var home = environment(OperatingSystem.IsWindows() ? "USERPROFILE" : "HOME");
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        if (!OperatingSystem.IsWindows() && !string.IsNullOrWhiteSpace(home) && AexpConfigLoader.IsInside(home, full))
+        {
+            var relative = Path.GetRelativePath(home, full);
+            return relative == "." ? "~" : "~/" + relative.Replace('\\', '/');
+        }
+
+        var posix = full.Replace('\\', '/');
+        if (posix.Length >= 2 && posix[1] == ':')
+        {
+            posix = "/" + char.ToLowerInvariant(posix[0]) + posix[2..];
+        }
+
+        return "/" + posix;
+    }
+
+    private static readonly JsonSerializerOptions Indented = new()
+    {
+        WriteIndented = true,
+        IndentSize = 2,
+        // Settings are read by people and by Claude Code, not embedded in HTML: '<', '>', '&' and non-ASCII stay as written.
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 
     public static async Task<int> RunAsync(AexpCli.Arguments args, AexpConsole console, CancellationToken cancellationToken)
     {
@@ -35,7 +85,13 @@ internal static class ClaudeCodeSetup
 
         // 1. The hooks, merged into the project's settings.
         var settingsPath = Path.Combine(root, ".claude", "settings.json");
-        var existing = File.Exists(settingsPath) ? await File.ReadAllTextAsync(settingsPath, cancellationToken).ConfigureAwait(false) : null;
+        // A settings file that is a link is written through to its target, never replaced by a file of its own.
+        var settingsTarget = File.Exists(settingsPath) && File.ResolveLinkTarget(settingsPath, returnFinalTarget: true) is { } linked
+            ? linked.FullName
+            : settingsPath;
+        var existingBytes = File.Exists(settingsTarget) ? await File.ReadAllBytesAsync(settingsTarget, cancellationToken).ConfigureAwait(false) : null;
+        var bom = existingBytes is not null && existingBytes.AsSpan().StartsWith(Encoding.UTF8.Preamble);
+        var existing = existingBytes is null ? null : Encoding.UTF8.GetString(existingBytes.AsSpan(bom ? 3 : 0));
         if (print)
         {
             await output.WriteLineAsync("Hooks for .claude/settings.json (merged with what is there; nothing written):").ConfigureAwait(false);
@@ -50,12 +106,18 @@ internal static class ClaudeCodeSetup
             }
             else
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
-                var mode = existing is not null && !OperatingSystem.IsWindows() ? File.GetUnixFileMode(settingsPath) : DefaultFileMode;
-                AtomicFile.Write(settingsPath, Encoding.UTF8.GetBytes(merged), overwrite: true, mode);
+                Directory.CreateDirectory(Path.GetDirectoryName(settingsTarget)!);
+                if (existing is not null && existing.Contains("\r\n", StringComparison.Ordinal))
+                {
+                    merged = merged.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\n", "\r\n", StringComparison.Ordinal);
+                }
+
+                byte[] bytes = [.. bom ? Encoding.UTF8.Preamble : [], .. Encoding.UTF8.GetBytes(merged)];
+                var mode = existing is not null && !OperatingSystem.IsWindows() ? File.GetUnixFileMode(settingsTarget) : DefaultFileMode;
+                AtomicFile.Write(settingsTarget, bytes, overwrite: true, mode);
                 if (!OperatingSystem.IsWindows())
                 {
-                    File.SetUnixFileMode(settingsPath, mode);
+                    File.SetUnixFileMode(settingsTarget, mode);
                 }
 
                 await output.WriteLineAsync($".claude/settings.json: added the {string.Join(", ", added)} hook(s); every existing hook kept.").ConfigureAwait(false);
@@ -111,7 +173,7 @@ internal static class ClaudeCodeSetup
             await output.WriteLineAsync(".gitignore: added .aexp/.").ConfigureAwait(false);
         }
 
-        await output.WriteLineAsync(NextSteps()).ConfigureAwait(false);
+        await output.WriteLineAsync(NextSteps(console.Environment)).ConfigureAwait(false);
         return AexpCli.Ok;
     }
 
@@ -290,20 +352,24 @@ internal static class ClaudeCodeSetup
         gitignore.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').Select(line => line.Trim())
             .Any(line => line is ".aexp" or ".aexp/" or "/.aexp" or "/.aexp/" or ".aexp/*" or "/.aexp/*" or ".aexp/**" or "/.aexp/**");
 
-    private static string NextSteps()
+    private static string NextSteps(Func<string, string?> environment)
     {
-        var deny = new JsonObject { ["permissions"] = new JsonObject { ["deny"] = new JsonArray([.. RecommendedDenyRules.Select(rule => (JsonNode?)JsonValue.Create(rule))]) } };
+        var deny = new JsonObject { ["permissions"] = new JsonObject { ["deny"] = new JsonArray([.. RecommendedDenyRules(environment).Select(rule => (JsonNode?)JsonValue.Create(rule))]) } };
         return $"""
 
             Next (these are a person's steps, not the agent's):
               1. Review .aexp/config.json: verify.command is the one command aexp runs to check the agent's work.
               2. Run 'aexp trust' yourself. Until then the hooks record and inject, but the Stop hook does not run the
                  verifier. Any edit to the config revokes the approval.
-              3. Protect the config from the agent: add these permission rules to .claude/settings.json (or your user
-                 settings), so Claude Code's file tools cannot edit .aexp/ and the agent cannot approve the config:
+              3. Protect the config and the approval from the agent. Add these deny rules to your USER settings,
+                 ~/.claude/settings.json, which a session in this project cannot edit (project settings can be):
             {deny.ToJsonString(Indented)}
-                 A session that can still rewrite the verifier some other way (a script, say) can fake success; the
-                 lesson's checks name the verifier, so a reviewer can see what verified it.
+                 They stop Claude Code's file tools (and the shell commands and redirections it recognizes) from editing
+                 any .aexp/ or .claude/ directory and your aexp trust file, and the usual spellings of 'aexp trust'.
+                 They are not an operating-system boundary: unless Bash is restricted (Claude Code's sandbox, or deny
+                 rules on Bash itself), a command or script the agent runs can still write those files, and a session
+                 that rewrites its own verifier can fake success. The verifier's verdict is only as trustworthy as that;
+                 each lesson names its check, so a reviewer can see what verified it.
               4. Install aexp where the hooks can find it: dotnet tool install --global AgentExperience.Cli --prerelease
             Turn it off: remove the 'aexp hook' entries from .claude/settings.json.
             """;

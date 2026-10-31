@@ -46,7 +46,9 @@ internal sealed record AexpSettings(
     int? MaxHintsPerRun,
     int? MaxHintBytes,
     bool AllowCoarseMatch,
-    TimeSpan? LookupTimeout)
+    TimeSpan? LookupTimeout,
+    IReadOnlyList<string>? ReadOnlyTools = null,
+    IReadOnlyList<string>? ReadOnlyBashPrefixes = null)
 {
     /// <summary>Where open runs are kept between commands: beside the config file, owner-only.</summary>
     public string RunsDirectory => Path.Combine(Path.GetDirectoryName(ConfigPath)!, "runs");
@@ -273,6 +275,23 @@ internal static class AexpConfigLoader
             MaxHintsPerRun: recall?.MaxHintsPerRun,
             MaxHintBytes: recall?.MaxHintBytes,
             AllowCoarseMatch: recall?.AllowCoarseMatch ?? false,
-            LookupTimeout: lookupTimeout);
+            LookupTimeout: lookupTimeout,
+            ReadOnlyTools: ClaudeCodeList(file.ClaudeCode?.ReadOnlyTools, "claudeCode.readOnlyTools"),
+            ReadOnlyBashPrefixes: ClaudeCodeList(file.ClaudeCode?.ReadOnlyBashPrefixes, "claudeCode.readOnlyBashPrefixes"));
+    }
+
+    private static IReadOnlyList<string>? ClaudeCodeList(IReadOnlyList<string>? values, string name)
+    {
+        if (values is null)
+        {
+            return null;
+        }
+
+        if (values.Any(value => string.IsNullOrWhiteSpace(value) || value.Any(char.IsControl)))
+        {
+            throw new AexpConfigException($"{name}: every entry is a non-empty name or command prefix without control characters.");
+        }
+
+        return [.. values.Select(value => value.Trim())];
     }
 }

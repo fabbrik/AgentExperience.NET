@@ -60,6 +60,12 @@ internal static class AexpCli
 
     public static async Task<int> RunAsync(string[] args, AexpConsole console, CancellationToken cancellationToken = default)
     {
+        // A hook never fails the agent: it parses its own arguments, inside its own error handling, and always exits 0.
+        if (args is ["hook", ..])
+        {
+            return await ClaudeCodeHooks.RunAsync(args, console, cancellationToken).ConfigureAwait(false);
+        }
+
         Arguments parsed;
         try
         {
@@ -83,12 +89,7 @@ internal static class AexpCli
             return parsed.Command.Count == 0 && !parsed.Flag("help") ? Usage : Ok;
         }
 
-        // A hook never fails the agent and handles its own config; setup runs before there is a config.
-        if (parsed.Command is ["hook", ..])
-        {
-            return await ClaudeCodeHooks.RunAsync(parsed, console, cancellationToken).ConfigureAwait(false);
-        }
-
+        // Setup runs before there is a config.
         if (parsed.Command is ["setup", ..])
         {
             try
@@ -262,8 +263,12 @@ internal static class AexpCli
 
             case ["runs", "prune"]:
                 args.Only("older-than");
-                var removed = await engine.PruneRunsAsync(ParseAge(args.Require("older-than")), cancellationToken).ConfigureAwait(false);
-                await output.WriteLineAsync($"Removed {removed} open run(s).").ConfigureAwait(false);
+                var age = ParseAge(args.Require("older-than"));
+                var removed = await engine.PruneRunsAsync(age, cancellationToken).ConfigureAwait(false);
+                var sessions = await new HookSessionStore(Path.Combine(Path.GetDirectoryName(engine.Settings.ConfigPath)!, "sessions"))
+                    .PruneAsync(console.Clock.GetUtcNow() - age, cancellationToken).ConfigureAwait(false);
+                await output.WriteLineAsync($"Removed {removed} open run(s)"
+                    + (sessions > 0 ? $" and {sessions} Claude Code session file(s)." : ".")).ConfigureAwait(false);
                 return Ok;
 
             default:

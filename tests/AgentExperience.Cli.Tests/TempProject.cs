@@ -87,8 +87,8 @@ public sealed class TempProject : IDisposable
 
     /// <summary>
     /// Runs <c>aexp hook &lt;event&gt;</c> with a recorded hook input from <c>HookFixtures</c> on standard input, its
-    /// <c>{{name}}</c> placeholders replaced (JSON-escaped). Claude Code's own project variable is cleared, so the hook
-    /// finds this project's config from its working directory.
+    /// <c>{{name}}</c> placeholders replaced (JSON-escaped). Claude Code's project variable names this project, as Claude
+    /// Code sets it for its hooks.
     /// </summary>
     public async Task<CliResult> HookAsync(string fixture, IReadOnlyDictionary<string, string> values, params string[] extra)
     {
@@ -105,7 +105,7 @@ public sealed class TempProject : IDisposable
     /// <summary>Runs <c>aexp hook &lt;event&gt;</c> with <paramref name="input"/> as its standard input.</summary>
     public async Task<CliResult> HookRawAsync(string hookEvent, byte[] input, params string[] extra)
     {
-        Overrides["CLAUDE_PROJECT_DIR"] = null;
+        Overrides.TryAdd("CLAUDE_PROJECT_DIR", Root);
         var output = new StringWriter();
         var error = new StringWriter();
         using var stdin = new MemoryStream(input);

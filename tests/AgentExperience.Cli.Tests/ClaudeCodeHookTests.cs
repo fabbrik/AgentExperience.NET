@@ -153,25 +153,58 @@ public sealed partial class ClaudeCodeHookTests
     }
 
     [Fact]
-    public async Task A_verifier_longer_than_the_hook_leaves_the_run_stored_for_a_later_finalize()
+    public async Task A_verifier_that_does_not_finish_leaves_the_run_stored_for_a_later_finalize()
     {
         if (OperatingSystem.IsWindows())
         {
             return;
         }
 
-        // Fails fast once fixed is gone... and hangs until killed while it is missing: the hook cannot wait for it.
-        using var project = new TempProject(config => config["verify"]!["command"] = new JsonArray("sh", "-c", "test -f fixed && exit 0; sleep 300"));
+        // Hangs until killed while 'fixed' is missing; its own bound (2 s) is far inside the hook's (600 s).
+        using var project = new TempProject(config =>
+        {
+            config["verify"]!["command"] = new JsonArray("sh", "-c", "test -f fixed && exit 0; sleep 300");
+            config["verify"]!["timeoutSeconds"] = 2;
+        });
         const string session = "66666666-6666-4666-8666-666666666666";
         Assert.Null(await HookAsync(project, "UserPromptSubmit", Session(session, Task)));
         Assert.Null(await HookAsync(project, "PostToolUse.write", Session(session)));
-        var stop = await HookAsync(project, "Stop", Session(session), "--timeout", "12");
+        var stop = await HookAsync(project, "Stop", Session(session), "--timeout", "600");
         var message = (string?)stop?["systemMessage"];
         Assert.NotNull(message);
-        Assert.Contains("did not finish within this hook's time", message);
+        Assert.Contains("the verifier did not finish in the time it had (2s)", message);
 
         project.Fix();
         Assert.Contains("finalization Validated", await project.OkAsync("finalize", "--run", RunIdIn(message)));
+    }
+
+    [Fact]
+    public async Task With_no_time_left_in_the_hook_the_verifier_is_not_started()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var project = new TempProject(config => config["verify"]!["command"] = new JsonArray("sh", "-c", "touch verifier-ran; test -f fixed"));
+        const string session = "67676767-6767-4676-8676-676767676767";
+        Assert.Null(await HookAsync(project, "UserPromptSubmit", Session(session, Task)));
+        Assert.Null(await HookAsync(project, "PostToolUse.write", Session(session)));
+        var reserve = ClaudeCodeHooks.FinalizeReserve;
+        ClaudeCodeHooks.FinalizeReserve = TimeSpan.FromDays(1);
+        try
+        {
+            var stop = await HookAsync(project, "Stop", Session(session), "--timeout", "600");
+            var message = (string?)stop?["systemMessage"];
+            Assert.Contains("no time was left in this hook for the verifier", message);
+            Assert.False(File.Exists(Path.Combine(project.Root, "verifier-ran")));
+            project.Fix();
+            Assert.Contains("finalization Validated", await project.OkAsync("finalize", "--run", RunIdIn(message!)));
+        }
+        finally
+        {
+            ClaudeCodeHooks.FinalizeReserve = reserve;
+        }
     }
 
     [Fact]
@@ -215,6 +248,11 @@ public sealed partial class ClaudeCodeHookTests
     [InlineData("""{"hook_event_name":"Stop"}""", "malformed input: the hook input has no session_id")]
     [InlineData("""{"hook_event_name":"PreToolUse","session_id":"abc"}""", "is a PreToolUse event, not PostToolUse")]
     [InlineData("""{"hook_event_name":"PostToolUse","session_id":"../../etc"}""", "the session_id is not a session ID")]
+    [InlineData("""{"hook_event_name":"PostToolUse","session_id":".."}""", "the session_id is not a session ID")]
+    [InlineData("""{"hook_event_name":"PostToolUse","session_id":"a/b"}""", "the session_id is not a session ID")]
+    [InlineData("""{"hook_event_name":"PostToolUse","session_id":"a\\b"}""", "the session_id is not a session ID")]
+    [InlineData("""{"hook_event_name":"PostToolUse","session_id":""}""", "the session_id is not a session ID")]
+    [InlineData("""{"hook_event_name":"PostToolUse","session_id":42}""", "the hook input has no session_id")]
     [InlineData("""{"hook_event_name":"PostToolUse","session_id":"abc"}""", "the input has no tool_name")]
     public async Task Malformed_input_exits_0_says_nothing_to_the_agent_and_is_logged(string input, string logged)
     {
@@ -238,7 +276,7 @@ public sealed partial class ClaudeCodeHookTests
             using var stdin = new MemoryStream("{}"u8.ToArray());
             var exit = await AexpCli.RunAsync(
                 ["hook", "Stop"],
-                new AexpConsole(output, error, empty, name => name == "CLAUDE_PROJECT_DIR" ? null : Environment.GetEnvironmentVariable(name), TimeProvider.System, stdin));
+                new AexpConsole(output, error, empty, name => name == "CLAUDE_PROJECT_DIR" ? empty : Environment.GetEnvironmentVariable(name), TimeProvider.System, stdin));
             Assert.Equal(0, exit);
             Assert.Equal(string.Empty, output.ToString());
             Assert.Contains("no usable config", error.ToString());
@@ -274,6 +312,160 @@ public sealed partial class ClaudeCodeHookTests
         Assert.Contains("42 passing", journal);                          // Bash's output: consented
         Assert.DoesNotContain("Run test suite", journal);                // Bash description argument: not allowed
         Assert.DoesNotContain("\"command\"", journal);                     // Bash's command argument: not allowed
+    }
+
+    [Fact]
+    public async Task Without_claude_project_dir_a_hook_refuses_rather_than_guess_from_its_working_directory()
+    {
+        using var project = new TempProject();
+        project.Overrides["CLAUDE_PROJECT_DIR"] = null;
+        project.Overrides["AEXP_CONFIG"] = null;
+        var result = await project.HookAsync("UserPromptSubmit", Session("d0d0d0d0-d0d0-4d0d-8d0d-d0d0d0d0d0d0", Task));
+        Assert.Equal(0, result.Exit);
+        Assert.Equal(string.Empty, result.Output);
+        Assert.Contains("CLAUDE_PROJECT_DIR is not set", result.Error);
+        Assert.False(Directory.Exists(project.RunsDirectory) && Directory.EnumerateFiles(project.RunsDirectory, "*.json").Any());
+    }
+
+    [Theory]
+    [InlineData("hook")]
+    [InlineData("hook", "Stop", "--timeout")]
+    [InlineData("hook", "Stop", "--timeout", "5", "stray")]
+    [InlineData("hook", "Stop", "--timeout", "5", "--timeout", "6")]
+    [InlineData("hook", "Stop", "--timeout", "never")]
+    [InlineData("hook", "Stop", "--tenant", "evil")]
+    [InlineData("hook", "Stop", "Extra")]
+    public async Task A_bad_hook_command_line_still_exits_0(params string[] args)
+    {
+        using var project = new TempProject();
+        var output = new StringWriter();
+        var error = new StringWriter();
+        using var stdin = new MemoryStream("{}"u8.ToArray());
+        var exit = await AexpCli.RunAsync(args, new AexpConsole(output, error, project.Root, project.Environment, TimeProvider.System, stdin));
+        Assert.Equal(0, exit);
+        Assert.Equal(string.Empty, output.ToString());
+    }
+
+    [Fact]
+    public async Task A_stop_while_a_stop_hook_is_already_continuing_does_nothing()
+    {
+        using var project = new TempProject();
+        const string session = "e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1";
+        Assert.Null(await HookAsync(project, "UserPromptSubmit", Session(session, Task)));
+        Assert.Null(await HookAsync(project, "PostToolUse.write", Session(session)));
+        Assert.Null(await HookAsync(project, "Stop.active", Session(session)));
+        Assert.Single(Directory.EnumerateFiles(project.RunsDirectory, "*.json"));
+        Assert.Contains("already continuing because of a stop hook", project.HookLog);
+    }
+
+    [Fact]
+    public async Task A_resumed_session_gets_its_runs_block_again_and_an_interrupt_is_never_hinted()
+    {
+        using var project = new TempProject();
+        await LearnAsync(project, "f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1");
+
+        const string session = "f2f2f2f2-f2f2-4f2f-8f2f-f2f2f2f2f2f2";
+        var block = AdditionalContext(await HookAsync(project, "UserPromptSubmit", Session(session, Task)), "UserPromptSubmit");
+        Assert.StartsWith(HistoricalReferenceWriter.BlockBegin, block);
+        Assert.Equal(block, AdditionalContext(await HookAsync(project, "SessionStart.resume", Session(session)), "SessionStart"));
+
+        // Another session, other task: a failure that would be hinted is not, when it was an interrupt.
+        const string other = "f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f3f3";
+        Assert.Null(await HookAsync(project, "UserPromptSubmit", Session(other, "Rotate the staging certificates")));
+        Assert.Null(await HookAsync(project, "PostToolUseFailure.interrupt", Session(other, error: MissingModule)));
+        Assert.Contains("recorded (interrupted)", project.HookLog);
+        Assert.NotNull(AdditionalContext(await HookAsync(project, "PostToolUseFailure.bash", Session(other, error: MissingModule)), "PostToolUseFailure"));
+    }
+
+    [Fact]
+    public async Task Parallel_tool_calls_of_one_session_are_all_recorded()
+    {
+        using var project = new TempProject();
+        const string session = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
+        Assert.Null(await HookAsync(project, "UserPromptSubmit", Session(session, Task)));
+        var fixtures = Enumerable.Range(0, 12).Select(i => (i % 3) switch { 0 => "PostToolUse.write", 1 => "PostToolUse.bash", _ => "PostToolUse.read" });
+        var results = await System.Threading.Tasks.Task.WhenAll(fixtures.Select(fixture => project.HookAsync(fixture, Session(session))));
+        Assert.All(results, result => Assert.Equal(0, result.Exit));
+        var journal = JsonNode.Parse(File.ReadAllText(Assert.Single(Directory.EnumerateFiles(project.RunsDirectory, "*.json"))))!;
+        Assert.Equal(12, journal["calls"]!.AsArray().Count);
+    }
+
+    [Fact]
+    public async Task Read_only_bash_prefixes_from_the_config_keep_a_turn_unverified()
+    {
+        using var project = new TempProject(config => config["claudeCode"] = new JsonObject { ["readOnlyBashPrefixes"] = new JsonArray("git status", "ls") });
+        const string session = "b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1";
+        Assert.Null(await HookAsync(project, "UserPromptSubmit", Session(session, Task)));
+        foreach (var command in new[] { "git status", "git status --short", "ls -la" })
+        {
+            Assert.Null(await HookAsync(project, "PostToolUse.bash-git-status", new(Session(session)) { ["command"] = command }));
+        }
+
+        Assert.Null(await HookAsync(project, "Stop", Session(session)));
+        Assert.Contains("changed nothing yet", project.HookLog);
+
+        // Not read-only: a chained command, a prefix that is only a prefix of a word, a redirect.
+        foreach (var command in new[] { "git status; rm -rf build", "lsof -i", "ls > out.txt" })
+        {
+            Assert.False(ClaudeCodeHooks.OnlyReads(
+                Configuration.AexpConfigLoader.Load(null, project.Root, project.Environment),
+                "Bash",
+                new JsonObject { ["command"] = command }));
+        }
+
+        Assert.Null(await HookAsync(project, "PostToolUse.bash-git-status", new(Session(session)) { ["command"] = "git status && git push" }));
+        Assert.NotNull((await HookAsync(project, "Stop", Session(session)))?["systemMessage"]);
+    }
+
+    [Fact]
+    public async Task All_runs_of_a_session_share_its_holdout_arm_and_two_sessions_can_differ()
+    {
+        using var project = new TempProject(config => config["injection"] = new JsonObject { ["holdoutRate"] = 0.5 });
+        await LearnAsync(project, "c0c0c0c0-c0c0-4c0c-8c0c-c0c0c0c0c0c0");
+
+        // One session the library puts in each arm.
+        var salt = MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions.DefaultSalt;
+        string Find(Abstractions.HoldoutArm arm) => Enumerable.Range(0, 1000)
+            .Select(i => $"c1c1c1c1-c1c1-4c1c-8c1c-{i:D12}")
+            .First(id => SessionHoldout.ArmOf(id, salt, 0.5) == arm);
+        foreach (var (session, arm) in new[] { (Find(Abstractions.HoldoutArm.Treatment), Abstractions.HoldoutArm.Treatment), (Find(Abstractions.HoldoutArm.Holdout), Abstractions.HoldoutArm.Holdout) })
+        {
+            for (var turn = 0; turn < 4; turn++)
+            {
+                var block = AdditionalContext(await HookAsync(project, "UserPromptSubmit", Session(session, Task + " turn " + turn)), "UserPromptSubmit");
+                Assert.True((block is not null) == (arm == Abstractions.HoldoutArm.Treatment), $"turn {turn} of a {arm} session: block {(block is null ? "withheld" : "given")}");
+                Assert.Null(await HookAsync(project, "PostToolUse.write", Session(session)));
+                var stop = (string?)(await HookAsync(project, "Stop", Session(session)))?["systemMessage"];
+                Assert.Equal(arm, SessionHoldout.ArmOfRun(Guid.Parse(RunIdIn(stop!)), salt, 0.5));
+            }
+        }
+
+        var benefit = await project.OkAsync("benefit");
+        Assert.Contains("Given lessons:    4/4 verified", benefit);
+        Assert.Contains("Lessons withheld: 4/4 verified", benefit);
+    }
+
+    [Fact]
+    public void Run_ids_are_pinned_to_the_session_arm_deterministically()
+    {
+        var salt = MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions.DefaultSalt;
+        foreach (var rate in new[] { 0.05, 0.2, 0.5, 0.95 })
+        {
+            for (var i = 0; i < 20; i++)
+            {
+                var session = $"session-{i}";
+                var arm = SessionHoldout.ArmOf(session, salt, rate);
+                var first = SessionHoldout.RunIdFor(session, 1, arm, salt, rate);
+                Assert.NotNull(first);
+                Assert.Equal(first, SessionHoldout.RunIdFor(session, 1, arm, salt, rate));
+                Assert.NotEqual(first, SessionHoldout.RunIdFor(session, 2, arm, salt, rate));
+                Assert.Equal(arm, SessionHoldout.ArmOfRun(first!.Value, salt, rate));
+                Assert.Equal(8, first.Value.Version);
+            }
+        }
+
+        // An arm the rate makes all but unreachable: the bound is hit and the caller fails closed.
+        Assert.Null(SessionHoldout.RunIdFor("s", 1, Abstractions.HoldoutArm.Holdout, salt, 1e-9));
     }
 
     [Fact]
@@ -330,7 +522,7 @@ public sealed partial class ClaudeCodeHookTests
             UseShellExecute = false,
         };
         start.Environment["XDG_CONFIG_HOME"] = project.UserConfig;
-        start.Environment.Remove("CLAUDE_PROJECT_DIR");
+        start.Environment["CLAUDE_PROJECT_DIR"] = project.Root;
         foreach (var arg in new[] { Path.Combine(AppContext.BaseDirectory, "AgentExperience.Cli.dll"), "hook", hookEvent, "--timeout", "120" })
         {
             start.ArgumentList.Add(arg);

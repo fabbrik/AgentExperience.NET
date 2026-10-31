@@ -50,9 +50,10 @@ The hooks it adds (each passes its own timeout to `aexp`, so the hook can finish
 }
 ```
 
-The hooks find the config from Claude Code's project directory (`CLAUDE_PROJECT_DIR`), else from their working
-directory, exactly as every other `aexp` command does. Nothing in the hook input (its `cwd`, a path, the transcript)
-decides the config, the identity, the scope or what runs.
+The hooks find the config from Claude Code's project directory, `CLAUDE_PROJECT_DIR`, which Claude Code sets for every
+hook (or from `--config` / `AEXP_CONFIG` when given). Without it a hook does nothing and says why on standard error: it
+never guesses from its working directory, which a session can move. Nothing in the hook input (its `cwd`, a path, the
+transcript) decides the config, the identity, the scope or what runs.
 
 ## What each hook does
 
@@ -64,7 +65,7 @@ A run is a stretch of work: it opens with a prompt and ends at the first `Stop` 
 | `UserPromptSubmit` | With no open run, opens one with the prompt as its task (through the same text rules as any task) and asks for its block: the [holdout](injection.md) arm decides, and what is delivered is recorded. A later prompt in the same run adds nothing. | The block, once per run, as `additionalContext`. |
 | `PostToolUse` | Records the call: tool name, the arguments the config allows (`sanitization.allowArguments`), and its outcome. Its result (file contents, command output) is kept only when a [recipe consent](injection.md#showing-what-worked-the-recipe) for the tool sets `resultExcerpt`. A response that reports an error, an interruption or a non-zero exit code is recorded as failed. | The hint, after a failure, when recall has one. |
 | `PostToolUseFailure` | Records the failed call by its error class (Claude Code reports a failed Bash command as `Exit code N`, so it is kept as `exit N`), then asks recall for a hint: a resolved failure signature only, once per signature per run, at most `recall.maxHintsPerRun`. An interrupt is recorded, never hinted. | The hint, as `additionalContext`. |
-| `Stop` | If the run changed something (any tool beyond reading, searching and planning), ends it and finalizes it with the configured verifier, inside the hook's time. The verdict is the verifier's exit code, never anything the model said. The next prompt opens a new run. A turn that only read leaves its run open for the next turn. | Nothing: a `Stop` hook's `additionalContext` would make Claude carry on. You see one line (`systemMessage`): the verdict and what finalization made of it, or why it did not run. |
+| `Stop` | If the run changed something (any call not on the read-only list, below), ends it and finalizes it with the configured verifier, inside the hook's time. The verdict is the verifier's exit code, never anything the model said. The next prompt opens a new run. A turn that only read leaves its run open for the next turn. | Nothing: a `Stop` hook's `additionalContext` would make Claude carry on. You see one line (`systemMessage`): the verdict and what finalization made of it, or why it did not run. |
 | `SessionEnd` | A run still open that changed something is ended and stored, for `aexp finalize --run <id>` later (Claude Code gives `SessionEnd` hooks seconds, not enough for tests); one that changed nothing is discarded. | Nothing (Claude Code discards it). |
 
 **A long test suite.** The verifier gets the smaller of `verify.timeoutSeconds` and what is left of the `Stop` hook's
@@ -80,7 +81,25 @@ says why on standard error, which Claude Code shows only in its debug output.
 
 **Sessions** live in `.aexp/sessions/<session_id>.json` (owner-only), one per Claude Code session, under the same lock
 files and atomic writes as [open runs](cli-and-mcp.md#how-it-works). Parallel tool calls take turns on them. A session ID
-that is not a plain identifier is refused. `aexp runs prune --older-than 7d` removes runs a crashed session left open.
+that is not a plain identifier is refused. `aexp runs prune --older-than 7d` removes runs a crashed session left open,
+and session files (with their lock files) not touched for that long.
+
+**What counts as only reading.** By default: `Read`, `Grep`, `Glob`, `LS`, `NotebookRead`, `WebFetch`, `WebSearch`,
+`TodoWrite`, `TodoRead`, `ToolSearch`, `AskUserQuestion`, `ExitPlanMode`, `BashOutput`, `TaskList`, `TaskGet`. Every
+Bash command counts as a change. The config can replace the tool list and name Bash commands that only read:
+
+```json
+"claudeCode": {
+  "readOnlyTools": ["Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "TodoWrite"],
+  "readOnlyBashPrefixes": ["git status", "git log", "git diff", "ls"]
+}
+```
+
+A Bash command is read-only when it starts with one of the prefixes (followed by nothing or a space) and has no `;`,
+`&`, `|`, redirect, `$`, backquote, parenthesis or line break, so `git status && git push` still counts as a change. The
+trade-off is cost against coverage: every turn that counts as a change runs your test suite when it stops, so a long list
+saves test runs on turns that only looked around, while a wrong entry (a command that does change files) lets a turn's
+change go unverified until a later turn's run, or never.
 
 ## Trust model
 
@@ -93,22 +112,41 @@ success. So:
   inject, but the `Stop` hook does not run the verifier; it says so, logs it, and keeps the run stored, so once a person
   has reviewed the config and run `aexp trust`, `aexp finalize --run <id>` finishes it. **`aexp trust` is a human step**:
   never let the agent run it.
-- **Protect the config with Claude Code's permission rules.** `aexp setup claude-code` prints these; add them to
-  `.claude/settings.json` (or your user settings):
+- **Protect the config and the approval with Claude Code's permission rules, in your user settings.** `aexp setup
+  claude-code` prints them, with your trust file's real location. Put them in `~/.claude/settings.json`: a session can
+  edit a project's `.claude/settings.json`, and these rules also stop it from doing so.
 
   ```json
   {
     "permissions": {
-      "deny": ["Edit(/.aexp/**)", "Bash(aexp trust)", "Bash(aexp trust *)"]
+      "deny": [
+        "Edit(//**/.aexp/**)",
+        "Edit(//**/.claude/**)",
+        "Edit(~/.config/aexp/**)",
+        "Bash(aexp trust)", "Bash(aexp trust *)",
+        "Bash(dotnet aexp trust)", "Bash(dotnet aexp trust *)",
+        "Bash(dotnet tool run aexp trust)", "Bash(dotnet tool run aexp trust *)"
+      ]
     }
   }
   ```
 
-  `Edit(/.aexp/**)` stops Claude Code's file-editing tools, and the shell commands and redirections Claude Code
-  recognizes, from changing anything under `.aexp/` (the leading `/` anchors the pattern at the project root). The
-  `Bash` rules stop the agent from approving the config itself. They are Claude Code's checks of what it can see, not an
-  operating-system boundary: a script the agent writes and runs can still open files itself. For that, use Claude Code's
-  sandbox.
+  - `Edit(//**/.aexp/**)` and `Edit(//**/.claude/**)`: no `.aexp/` (config, store, runs) and no `.claude/` (settings,
+    hooks) in any project may be edited. In user settings a rule starting with one `/` would mean `~/.claude/…`, so
+    these are anchored at the filesystem root (`//`) and match at any depth. `.claude/**` also covers your user
+    `~/.claude/` (memory, skills): narrow it to `Edit(//**/.claude/settings*.json)` if that gets in your way.
+  - `Edit(~/.config/aexp/**)`: the trust file's directory. With `XDG_CONFIG_HOME` set it is `$XDG_CONFIG_HOME/aexp`, and
+    on Windows `%APPDATA%\aexp` (written in POSIX form, `//c/Users/<you>/AppData/Roaming/aexp/**`); setup prints the
+    right one.
+  - Claude Code checks paths against `Edit` and `Read` rules only: an `Edit` rule covers Write and every other editing
+    tool, and a `Write(path)` rule would never match.
+  - The `Bash` rules cover `aexp trust` as the agent usually spells it. A rule matches command text after Claude Code
+    strips wrappers such as `timeout` and `nice`; other spellings (a full path, `sh -c`, a script) are not matched.
+
+  **These rules are Claude Code's checks of the commands it can read, not an operating-system boundary.** Unless Bash
+  is restricted (Claude Code's sandbox, or denying Bash), a command or script the agent runs can still write `.aexp/`,
+  the settings or the trust file, and a session that rewrites its own verifier, or approves its own config, can fake
+  success. The verifier's verdict is only as trustworthy as that.
 - **What is left is visible.** The agent can still change the code the verifier runs: the test files themselves, or a
   script `verify.command` names. That is the same trust you place in a pull request's tests. Each lesson's checks name
   the verifier's check ID (`verify.checkId`) and its evidence kind (`ToolExitCode`), shown in the
@@ -120,8 +158,13 @@ success. So:
 
 ## Reading the benefit estimate
 
-The holdout `setup` turns on (`injection.holdoutRate: 0.2`) withholds the block from one run in five, and records both
-arms. Once enough runs have been verified, `aexp benefit` compares them:
+The holdout `setup` turns on (`injection.holdoutRate: 0.2`) withholds lessons from one **session** in five, and records
+both arms. **The session, not the turn, is what is randomized**: a session's arm is drawn once (the library's own
+assignment of an ID derived from the session ID, with the configured salt and rate), and every run of the session is
+given an ID the library assigns to that same arm, so a session never mixes turns given lessons with turns denied them,
+and the block and every hint follow the session's arm. (If no such ID turns up within 4,096 tries, practically
+impossible at sane rates, the run gets no block or hint and nothing is recorded to the holdout for it.) Once enough runs
+have been verified, `aexp benefit` compares them:
 
 ```text
 Verdict: Helps
@@ -133,8 +176,11 @@ Runs per arm needed for a verdict: 20; not yet verified: 3
 
 `Helps` means the 95% interval of the difference (given minus withheld) lies wholly above zero; `Hurts` that it lies
 wholly below; `NoEvidence` that it straddles zero, or that an arm has fewer verified runs than the minimum (20 by
-default). Read it as evidence about your project's sessions, not a promise: a run is a turn, so a long task split over
-many turns counts many times. `aexp lessons` shows each lesson's own verdict. See [the holdout](injection.md) for how the arms are assigned.
+default). Read it as evidence about your project's sessions, not a promise. The estimate counts **runs** (turns), and
+the turns of one session are correlated: they share the session's arm, its task and often its outcome. The interval
+treats them as independent, so it is narrower than the evidence supports; a session of many turns weighs as many. Look
+at how many sessions are behind the counts (`ls .aexp/sessions` shows the live ones; the hook log names each session's
+runs) before trusting a verdict reached with few sessions. `aexp benefit` cannot count sessions yet. `aexp lessons` shows each lesson's own verdict. See [the holdout](injection.md) for how the arms are assigned.
 
 ## Lessons in CLAUDE.md or AGENTS.md
 

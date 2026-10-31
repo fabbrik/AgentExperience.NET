@@ -50,7 +50,7 @@ internal static class ClaudeCodeHooks
     /// Built-in tools that only read: a turn that used nothing else changed nothing, so its run stays open (no verifier
     /// runs for a question), and the next turn continues it.
     /// </summary>
-    public static IReadOnlySet<string> ReadOnlyTools { get; } = new HashSet<string>(StringComparer.Ordinal)
+    public static IReadOnlySet<string> DefaultReadOnlyTools { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "Read", "Grep", "Glob", "LS", "NotebookRead", "WebFetch", "WebSearch", "TodoWrite", "TodoRead", "ToolSearch",
         "AskUserQuestion", "ExitPlanMode", "BashOutput", "TaskList", "TaskGet",
@@ -70,14 +70,16 @@ internal static class ClaudeCodeHooks
         _ => TimeSpan.FromSeconds(600),
     };
 
-    public static async Task<int> RunAsync(AexpCli.Arguments args, AexpConsole console, CancellationToken cancellationToken)
+    public static async Task<int> RunAsync(string[] rawArgs, AexpConsole console, CancellationToken cancellationToken)
     {
         var started = Stopwatch.GetTimestamp();
-        var hookEvent = args.Command.Count == 2 ? args.Command[1] : "(none)";
+        var hookEvent = rawArgs.Length >= 2 && rawArgs[1].All(char.IsAsciiLetter) && rawArgs[1].Length <= 40 ? rawArgs[1] : "(none)";
         HookLog? log = null;
         string? sessionId = null;
         try
         {
+            // Parsed here, inside the hook's own error handling: a bad hook command line must not fail the agent either.
+            var args = AexpCli.Arguments.Parse(rawArgs);
             if (args.Command.Count != 2 || !Events.Any(known => known.Event == hookEvent))
             {
                 throw new AexpUsageException(
@@ -101,7 +103,7 @@ internal static class ClaudeCodeHooks
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(budget);
 
-            var settings = AexpConfigLoader.Load(args.Value("config"), StartDirectory(console), console.Environment);
+            var settings = AexpConfigLoader.Load(args.Value("config"), StartDirectory(console, args.Value("config")), console.Environment);
             log = new HookLog(Path.Combine(Path.GetDirectoryName(settings.ConfigPath)!, "hook.log"), console.Clock);
 
             var bytes = await ReadInputAsync(console, deadline.Token).ConfigureAwait(false);
@@ -149,13 +151,27 @@ internal static class ClaudeCodeHooks
         return AexpCli.Ok;
     }
 
-    /// <summary>Where the config is looked for: the project directory Claude Code names in the environment, else the working directory.</summary>
-    private static string StartDirectory(AexpConsole console)
+    /// <summary>
+    /// Where the config is looked for: the project directory Claude Code names in the environment. Without it (and
+    /// without an explicit <c>--config</c> or <c>AEXP_CONFIG</c>) the hook refuses rather than guess from its working
+    /// directory, which a session can move.
+    /// </summary>
+    private static string StartDirectory(AexpConsole console, string? explicitConfig)
     {
         var project = console.Environment("CLAUDE_PROJECT_DIR");
-        return !string.IsNullOrWhiteSpace(project) && Path.IsPathFullyQualified(project) && Directory.Exists(project)
-            ? project
-            : console.WorkingDirectory;
+        if (!string.IsNullOrWhiteSpace(project) && Path.IsPathFullyQualified(project) && Directory.Exists(project))
+        {
+            return project;
+        }
+
+        if (!string.IsNullOrWhiteSpace(explicitConfig) || !string.IsNullOrWhiteSpace(console.Environment(AexpConfigLoader.EnvironmentVariable)))
+        {
+            return console.WorkingDirectory;
+        }
+
+        throw new AexpConfigException(
+            "CLAUDE_PROJECT_DIR is not set (or is not an existing absolute directory), so the project is unknown; nothing done. "
+            + "Claude Code sets it for hooks; elsewhere name the config with --config or AEXP_CONFIG.");
     }
 
     private static async Task<byte[]> ReadInputAsync(AexpConsole console, CancellationToken cancellationToken)
@@ -186,6 +202,35 @@ internal static class ClaudeCodeHooks
     };
 
     internal static JsonObject Message(string text) => new() { ["systemMessage"] = text };
+
+    /// <summary>
+    /// Whether a call only read: a tool on the read-only list (the config's, else the default), or a Bash command that
+    /// starts with one of the config's read-only prefixes and chains, pipes or redirects nothing.
+    /// </summary>
+    internal static bool OnlyReads(AexpSettings settings, string tool, JsonObject? toolInput)
+    {
+        var tools = settings.ReadOnlyTools is { } configured ? configured : (IEnumerable<string>)DefaultReadOnlyTools;
+        if (tools.Contains(tool, StringComparer.Ordinal))
+        {
+            return true;
+        }
+
+        if (tool != "Bash" || settings.ReadOnlyBashPrefixes is not { Count: > 0 } prefixes
+            || toolInput?["command"] is not JsonValue value || !value.TryGetValue<string>(out var command))
+        {
+            return false;
+        }
+
+        command = command.Trim();
+        if (command.IndexOfAny([';', '&', '|', '>', '<', '`', '$', '\n', '\r', '(', ')']) >= 0)
+        {
+            return false;
+        }
+
+        return prefixes.Any(prefix =>
+            command.StartsWith(prefix, StringComparison.Ordinal)
+            && (command.Length == prefix.Length || command[prefix.Length] == ' '));
+    }
 
     private sealed class Handler(
         AexpEngine engine,
@@ -225,35 +270,60 @@ internal static class ClaudeCodeHooks
             var journal = engine.PeekOpenRun(runId);
             if (journal is null)
             {
-                session.RunId = null;
+                Forget(session);
             }
 
             return journal;
         }
 
+        private static void Forget(HookSession session)
+        {
+            session.RunId = null;
+            session.RunChanged = false;
+            session.RunUnpinned = false;
+        }
+
         private async Task<JsonObject?> SessionStartAsync(CancellationToken cancellationToken)
         {
+            var source = OneWord(input.Source ?? "unknown");
             var block = await WithSessionAsync<string?>(async session =>
             {
                 if (OpenRun(session) is not { } journal)
                 {
-                    Log($"session started ({OneWord(input.Source ?? "unknown")}); the run opens with the first prompt");
+                    Log($"session started ({source}); the run opens with the first prompt");
                     return null;
                 }
 
                 if (!journal.BlockRequested)
                 {
-                    Log($"session {OneWord(input.Source ?? "unknown")}: continues run {journal.RunId:D}");
+                    Log($"session {source}: continues run {journal.RunId:D}");
                     return null;
                 }
 
                 // The context was resumed or compacted: give the run's block again. Asked again, the CLI repeats what was
                 // delivered and records nothing new.
-                Log($"session {OneWord(input.Source ?? "unknown")}: continues run {journal.RunId:D}; its block given again");
+                Log($"session {source}: continues run {journal.RunId:D}; its block given again");
                 return await engine.RecallBlockAsync(null, journal.RunId, cancellationToken).ConfigureAwait(false);
             }, cancellationToken).ConfigureAwait(false);
 
             return block is null ? null : Context(SessionStart, block);
+        }
+
+        /// <summary>
+        /// The next run's ID: with the holdout on, one the library assigns to the session's arm (drawn once per session);
+        /// <see langword="null"/> when none was found within the bound.
+        /// </summary>
+        private Guid? NextRunId(HookSession session)
+        {
+            session.Turns++;
+            if (settings.HoldoutRate <= 0)
+            {
+                return Guid.NewGuid();
+            }
+
+            var salt = settings.HoldoutSalt ?? MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions.DefaultSalt;
+            session.Arm ??= SessionHoldout.ArmOf(input.SessionId, salt, settings.HoldoutRate);
+            return SessionHoldout.RunIdFor(input.SessionId, session.Turns, session.Arm.Value, salt, settings.HoldoutRate);
         }
 
         private async Task<JsonObject?> PromptAsync(CancellationToken cancellationToken)
@@ -272,11 +342,32 @@ internal static class ClaudeCodeHooks
                     return null;
                 }
 
-                var runId = await engine.StartRunAsync(input.Prompt, null, cancellationToken).ConfigureAwait(false);
+                var pinned = NextRunId(session);
+                var runId = await engine.StartRunAsync(input.Prompt, null, cancellationToken, pinned ?? Guid.NewGuid()).ConfigureAwait(false);
+
+                // Linked before anything else can fail: the session file is written even if what follows throws.
                 session.RunId = runId;
-                var given = await engine.RecallBlockAsync(null, runId, cancellationToken).ConfigureAwait(false);
-                Log($"prompt: run {runId:D} opened; " + (given is null ? "no block (none applies, or the holdout withheld it)" : "block given"));
-                return given;
+                session.RunChanged = false;
+                session.RunUnpinned = pinned is null;
+                if (pinned is null)
+                {
+                    Log($"prompt: run {runId:D} opened; no run ID in the session's holdout arm was found, so it gets no block "
+                        + "or hint and nothing is recorded to the holdout");
+                    return null;
+                }
+
+                try
+                {
+                    var given = await engine.RecallBlockAsync(null, runId, cancellationToken).ConfigureAwait(false);
+                    Log($"prompt: run {runId:D} opened (arm {session.Arm?.ToString() ?? "none"}); "
+                        + (given is null ? "no block (none applies, or the holdout withheld it)" : "block given"));
+                    return given;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Log($"prompt: run {runId:D} opened; the block could not be asked for ({Describe(ex)})");
+                    return null;
+                }
             }, cancellationToken).ConfigureAwait(false);
 
             return block is null ? null : Context(UserPromptSubmit, block);
@@ -300,6 +391,7 @@ internal static class ClaudeCodeHooks
                 result = null;
             }
 
+            var changes = !OnlyReads(settings, input.ToolName, input.ToolInput);
             var hint = await WithSessionAsync<string?>(async session =>
             {
                 if (OpenRun(session) is not { } journal)
@@ -309,9 +401,11 @@ internal static class ClaudeCodeHooks
                 }
 
                 await engine.RecordCallAsync(journal.RunId, input.ToolName, input.ToolInput?.ToJsonString(), result, error, cancellationToken).ConfigureAwait(false);
-                if (error is null || interrupted)
+                session.RunChanged |= changes;
+                var kind = error is null ? "returned" : interrupted ? "interrupted" : "failed";
+                if (error is null || interrupted || session.RunUnpinned)
                 {
-                    Log($"{input.ToolName}: recorded ({(error is null ? "returned" : "interrupted")}) in run {journal.RunId:D}");
+                    Log($"{input.ToolName}: recorded ({kind}{(changes ? string.Empty : ", read-only")}) in run {journal.RunId:D}");
                     return null;
                 }
 
@@ -341,14 +435,14 @@ internal static class ClaudeCodeHooks
                     return null;
                 }
 
-                if (!journal.Calls.Any(call => !ReadOnlyTools.Contains(call.ToolName)))
+                if (!session.RunChanged)
                 {
                     Log($"stop: run {journal.RunId:D} changed nothing yet ({journal.Calls.Count} read-only call(s)); it stays open");
                     return null;
                 }
 
                 await engine.EndRunAsync(journal.RunId, RunExecutionStatus.Completed, cancellationToken).ConfigureAwait(false);
-                session.RunId = null;
+                Forget(session);
                 return journal.RunId;
             }, cancellationToken).ConfigureAwait(false);
 
@@ -358,16 +452,16 @@ internal static class ClaudeCodeHooks
             }
 
             var message = await FinalizeAsync(runId, cancellationToken).ConfigureAwait(false);
-            if (ManagedExport.Targets(args, engine, console) is { Count: > 0 } targets)
+            try
             {
-                try
+                if (ManagedExport.Targets(args, engine, console) is { Count: > 0 } targets)
                 {
                     message += " " + await ManagedExport.WriteAsync(engine, targets, cancellationToken).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (ex is AexpUsageException or IOException or UnauthorizedAccessException)
-                {
-                    message += " Lessons not exported: " + (ex is AexpUsageException ? ex.Message : $"the file could not be written ({ex.GetType().Name}).");
-                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                message += " Lessons not exported: " + Describe(ex);
             }
 
             Log(message);
@@ -396,8 +490,8 @@ internal static class ClaudeCodeHooks
             }
             catch (AexpVerifierTimedOutException)
             {
-                return $"aexp: run {runId:D} recorded; the verifier did not finish within this hook's time ({Seconds(remaining)}), so "
-                    + "nothing was finalized. " + later;
+                return $"aexp: run {runId:D} recorded; the verifier did not finish in the time it had "
+                    + $"({Seconds(remaining < settings.Verifier.Timeout ? remaining : settings.Verifier.Timeout)}), so nothing was finalized. " + later;
             }
             catch (AexpUsageException ex)
             {
@@ -407,35 +501,37 @@ internal static class ClaudeCodeHooks
 
         private async Task<JsonObject?> SessionEndAsync(CancellationToken cancellationToken)
         {
+            var reason = OneWord(input.Reason ?? "unknown");
             await WithSessionAsync(async session =>
             {
                 if (OpenRun(session) is not { } journal)
                 {
-                    Log($"session ended ({OneWord(input.Reason ?? "unknown")})");
+                    Log($"session ended ({reason})");
                     return 0;
                 }
 
-                if (journal.Calls.Any(call => !ReadOnlyTools.Contains(call.ToolName)))
+                if (session.RunChanged)
                 {
                     // No time to verify here (Claude Code gives SessionEnd hooks seconds): store it for a later finalize.
                     await engine.EndRunAsync(journal.RunId, RunExecutionStatus.Completed, cancellationToken).ConfigureAwait(false);
-                    Log($"session ended ({OneWord(input.Reason ?? "unknown")}); run {journal.RunId:D} stored, not finalized: "
-                        + $"run 'aexp finalize --run {journal.RunId:D}'");
+                    Log($"session ended ({reason}); run {journal.RunId:D} stored, not finalized: run 'aexp finalize --run {journal.RunId:D}'");
                 }
                 else
                 {
                     engine.DiscardOpenRun(journal.RunId);
-                    Log($"session ended ({OneWord(input.Reason ?? "unknown")}); run {journal.RunId:D} changed nothing and was discarded");
+                    Log($"session ended ({reason}); run {journal.RunId:D} changed nothing and was discarded");
                 }
 
-                session.RunId = null;
+                Forget(session);
                 return 0;
             }, cancellationToken).ConfigureAwait(false);
             _sessions.Delete(input.SessionId);
             return null;
         }
 
+        private static string Describe(Exception ex) => ex is AexpUsageException ? ex.Message : $"{ex.GetType().Name}";
+
         private static string Seconds(TimeSpan time) =>
-            Math.Max(0, (int)time.TotalSeconds).ToString(CultureInfo.InvariantCulture) + "s";
+            Math.Max(0, (int)Math.Round(time.TotalSeconds)).ToString(CultureInfo.InvariantCulture) + "s";
     }
 }

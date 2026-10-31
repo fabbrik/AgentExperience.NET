@@ -124,16 +124,27 @@ internal static class ManagedSection
     }
 
     /// <summary>
-    /// Writes the section into the file at <paramref name="path"/> (created when missing), atomically, keeping the file's
-    /// mode. An unchanged section is not written.
+    /// Writes the section into the file at <paramref name="path"/> (created when missing), holding the lock file
+    /// <paramref name="lockPath"/> for the whole read-modify-write, so two exports (a Stop hook and a person, say) never
+    /// interleave. An unchanged section is not written. The file keeps its mode; one this user owns is replaced
+    /// atomically, one another user owns (and this user may write) is rewritten in place, which keeps its owner and group.
     /// </summary>
-    public static ManagedSectionChange Write(string path, IReadOnlyList<ExportedLesson> lessons)
+    public static async Task<ManagedSectionChange> WriteAsync(string path, IReadOnlyList<ExportedLesson> lessons, string lockPath, CancellationToken cancellationToken)
     {
+        await using var held = await FileLock.AcquireAsync(lockPath, "The managed section of " + Path.GetFileName(path), cancellationToken).ConfigureAwait(false);
         var exists = File.Exists(path);
-        var before = exists ? File.ReadAllBytes(path) : [];
+        var before = exists ? await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false) : [];
         var (after, change) = Splice(before, lessons);
         if (change == ManagedSectionChange.Unchanged)
         {
+            return change;
+        }
+
+        if (exists && FileOwnership.OwnedByCurrentUser(path) == false)
+        {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read);
+            await stream.WriteAsync(after, CancellationToken.None).ConfigureAwait(false);
+            stream.SetLength(after.Length);
             return change;
         }
 

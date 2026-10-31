@@ -48,8 +48,22 @@ internal static class ManagedExport
         }
 
         text.Append(": ");
-        text.AppendJoin(", ", targets.Select(path =>
-            Path.GetRelativePath(engine.Settings.ProjectRoot, path) + " " + ManagedSection.Write(path, lessons).ToString().ToLowerInvariant()));
+        var written = new List<string>();
+        foreach (var path in targets)
+        {
+            var change = await ManagedSection.WriteAsync(path, lessons, LockOf(engine, path), cancellationToken).ConfigureAwait(false);
+            written.Add(Path.GetRelativePath(engine.Settings.ProjectRoot, path) + " " + change.ToString().ToLowerInvariant());
+        }
+
+        text.AppendJoin(", ", written);
         return text.Append('.').ToString();
+    }
+
+    /// <summary>The lock for one file's section: beside the config, named by a hash of the file's full path.</summary>
+    private static string LockOf(AexpEngine engine, string path)
+    {
+        var directory = Path.GetDirectoryName(engine.Settings.ConfigPath)!;
+        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(path))))[..16];
+        return Path.Combine(directory, "managed-" + hash + ".lock");
     }
 }
