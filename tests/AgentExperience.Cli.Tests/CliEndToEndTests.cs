@@ -206,6 +206,28 @@ public sealed class CliEndToEndTests
     }
 
     [Fact]
+    public async Task A_run_that_asked_for_its_block_is_counted_in_its_holdout_arm()
+    {
+        using var project = new TempProject(config => config["injection"] = new JsonObject { ["holdoutRate"] = 0.5 });
+        var learned = await project.RunTaskAsync(Task, FailThenFix);
+        project.Fix();
+        await project.OkAsync("finalize", "--run", learned);
+
+        // Shown or withheld by the run's arm; either way the assignment is recorded against the run before the process
+        // would exit, so the verified run is counted in exactly one arm.
+        var run = (await project.OkAsync("run", "start", "--task", Task)).Trim();
+        await project.RunAsync("recall", "--run", run);
+        await project.OkAsync("run", "call", "--run", run, "--tool", "run_tests", "--result", "all passed");
+        await project.OkAsync("run", "end", "--run", run);
+        await project.OkAsync("finalize", "--run", run);
+
+        var benefit = await project.OkAsync("benefit");
+        var given = benefit.Contains("Given lessons:    1/1 verified", StringComparison.Ordinal);
+        var withheld = benefit.Contains("Lessons withheld: 1/1 verified", StringComparison.Ordinal);
+        Assert.True(given ^ withheld, benefit);
+    }
+
+    [Fact]
     public async Task Identity_and_scope_are_never_taken_from_arguments()
     {
         using var project = new TempProject();
