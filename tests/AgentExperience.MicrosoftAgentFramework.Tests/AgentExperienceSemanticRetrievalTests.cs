@@ -466,6 +466,8 @@ public sealed class AgentExperienceSemanticRetrievalTests
             {
                 options.UseDevelopmentIdentity();
                 options.Embeddings = Embeddings;
+                // No real timer fires: a loaded machine must not time out a retrieval or an indexing call that would have finished.
+                options.TimeProvider = NeverFiringTimeProvider.Instance;
                 options.Verify = ExperienceVerifiers.Check("done", (_, _) => ValueTask.FromResult<bool?>(true));
                 options.Injection = settings => settings.OnContextInjected = Injections.Add;
                 options.Capture = capture =>
