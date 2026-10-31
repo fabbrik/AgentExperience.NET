@@ -219,6 +219,11 @@ and hand the next run the lesson and, after a failure, the hint, through the sam
 adapter. No tool takes identity, scope, a path or a command, and no model is called. See
 [CLI and MCP](docs/guide/cli-and-mcp.md).
 
+For Claude Code there is a recipe with no code: `aexp setup claude-code` adds hooks that record every tool call, check
+each turn that changed something with your tests when it stops, and hand the next session the lesson and the failure
+hint; `aexp export --claude-md` keeps the lessons measured as helping in a managed section of `CLAUDE.md`. See
+[Claude Code](docs/guide/claude-code.md).
+
 ## Seeing what it learned
 
 After the quick start, `provider.GetAgentExperienceLessons().ListForDevelopmentIdentityAsync()` lists the lessons it
@@ -309,6 +314,7 @@ cd go/maf && go run ./examples/quickstart
 | [Compared with MAF memory](docs/compared-with-maf-memory.md) | MAF's memory providers and this library: what each stores and trusts, and when to use which |
 | [Deployment](docs/guide/deployment.md) | The one-call setup, explicit wiring, the two database roles, the trust boundary |
 | [CLI and MCP](docs/guide/cli-and-mcp.md) | `aexp`: the loop for any agent, from a shell or over MCP; config reference and trust model |
+| [Claude Code](docs/guide/claude-code.md) | The hooks recipe: setup in three commands, what each hook does, trust, the benefit, the managed `CLAUDE.md` section |
 | [Capture](docs/guide/capture.md) · [Finalization](docs/guide/finalization.md) · [Lifecycle](docs/guide/lifecycle.md) · [Confidence](docs/guide/confidence.md) | The learning loop, step by step |
 | [Retrieval](docs/guide/retrieval.md) · [Indexing](docs/guide/indexing.md) · [Injection](docs/guide/injection.md) · [Reuse feedback](docs/guide/reuse-feedback.md) | Finding, ranking, delivering and scoring lessons |
 | [Sharing](docs/guide/sharing.md) · [Deletion and retention](docs/guide/deletion-and-retention.md) · [Crypto-shredding](docs/guide/crypto-shredding.md) · [PostgreSQL schema](docs/guide/postgres-schema.md) | Operating it |

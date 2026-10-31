@@ -573,6 +573,32 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   `ExperienceLesson.ConsolidatedFrom` ("consolidated from N" on the HTML page), and the benefit estimate treats a
   consolidated lesson as a new lesson: holdout rows that named its sources stay as they are.
 
+### A Claude Code recipe (story 28.9)
+
+- **`aexp hook <event>`** turns Claude Code's hooks into runs, with no code: `SessionStart`, `UserPromptSubmit`,
+  `PostToolUse`, `PostToolUseFailure`, `Stop` and `SessionEnd`, read from the hook JSON on standard input and answered
+  with the hooks output contract (as published in October 2026). The first prompt opens a run and gets the block once;
+  every tool call is recorded through the config's capture rules; a failed one (Bash's `Exit code N` kept as `exit N`)
+  gets the failure hint; `Stop` ends a turn that changed something and finalizes it with the configured verifier inside
+  the hook's timeout, reporting the verdict as a one-line `systemMessage` (never `additionalContext`, which would keep
+  Claude going); a verifier that cannot finish in time leaves the run stored for `aexp finalize --run <id>`. A turn that
+  only read keeps its run open; a resumed or compacted session continues its run and gets its block again; `SessionEnd`
+  stores a run still open. Sessions map to runs in `.aexp/sessions/` under the same locks and atomic writes as runs.
+  Every hook exits 0, says nothing to the model but aexp's own texts, and logs to a bounded, owner-only
+  `.aexp/hook.log` that never holds a prompt or tool content.
+- **Trust holds on the hook path**: with an untrusted or changed config the hooks record and inject, but `Stop` does not
+  run the verifier and says why; nothing in the hook input decides the config, identity, scope or command.
+- **`aexp setup claude-code [--print]`** merges the hooks into `.claude/settings.json` (keeping every existing hook and
+  setting, never adding one twice, leaving a settings file it cannot read whole untouched), writes a default
+  `.aexp/config.json` only when there is none (verifier detected for `dotnet test`, `npm test`, `pytest` or
+  `go test ./...`, else a placeholder that refuses to run), adds `.aexp/` to `.gitignore`, and prints the permission
+  deny rules that keep the agent from editing `.aexp/` or running `aexp trust`. Idempotent; it never trusts the config.
+- **`aexp export --claude-md [file]` / `--agents-md [file]`** (and the same flags on the `Stop` hook) sync the lessons
+  measured as helping into a fenced section (`<!-- aexp:lessons:begin -->` ... `<!-- aexp:lessons:end -->`) of the file,
+  every lesson an indented code block under the untrusted-reference preamble with its measured benefit; every byte
+  outside the section is kept, and the same lessons give the same bytes.
+- **Library change**: none. Guide: [Claude Code](docs/guide/claude-code.md).
+
 ## 0.1.0-preview.17
 
 This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of

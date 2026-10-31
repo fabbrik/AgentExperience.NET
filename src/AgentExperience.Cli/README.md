@@ -51,5 +51,17 @@ aexp finalize --run "$run"                                 # runs the configured
 aexp lessons
 ```
 
+## With Claude Code
+
+```bash
+aexp setup claude-code    # in the project root: hooks, a default config, the .gitignore entry
+aexp trust                # after you reviewed .aexp/config.json: a person's step, never the agent's
+```
+
+The hooks record every tool call, check each turn that changed something with the configured test command when it
+stops, and give the next session the lessons and, after a failure, the hint. `aexp export --claude-md` keeps the lessons
+measured as helping in a managed section of `CLAUDE.md`. Guide:
+[Claude Code](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/claude-code.md).
+
 The full guide, the configuration reference and the trust model are in
 [CLI and MCP](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/cli-and-mcp.md).
