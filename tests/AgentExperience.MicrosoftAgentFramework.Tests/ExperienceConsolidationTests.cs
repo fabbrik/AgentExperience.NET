@@ -60,6 +60,12 @@ public sealed class ExperienceConsolidationTests
             Assert.Null(item.ConsolidatedFrom);
         });
         Assert.Contains("consolidated from 3", ExperienceLessonsHtml.Render(page), StringComparison.Ordinal);
+        Assert.True(result.Groups.Single().Complete);
+        Assert.Equal(0, result.IncompleteGroups);
+
+        // Before erasing a source, the host finds the consolidated lesson that copied it.
+        var copies = await lessons.FindConsolidatedContainingAsync(Caller, group.Sources[0].ExperienceId);
+        Assert.Equal([group.ConsolidatedExperienceId], copies.ExperienceIds);
 
         // The next run is given the one consolidated lesson, not three.
         await Agent(services, model, ["exit=0", "exit=0"]).RunAsync("Ticket #4999: a refund is stuck on a lock. Triage it.");

@@ -243,56 +243,90 @@ var result = await consolidation.ConsolidateAsync(
     cancellationToken);
 ```
 
-**What is merged.** Records in exactly the scope asked for (never another scope's, never one a sharing grant lends),
-`Validated` or `Reinforced`, verified, with a lesson the library wrote (not model-authored, and confirmed by its
-signature when [provenance signing](confidence.md#signing-provenance) is on). Two records are one situation when they hold the same set of
-*resolved* [failure signatures](injection.md#recall-at-the-moment-of-failure) (the exact `ExperienceFailureSignature.Key`) and their
-working attempt (the final one, ended without an error: the attempt the block's `Worked:` line names) called the same
-tools in the same order, with equal values for the argument keys `ArgumentKeys` names. Name the keys your blocks show
-(the lessons view defaults to the keys `options.Recipe` made visible), so `retry(delay=0)` and `retry(delay=30)` stay
-two lessons. A group is merged once it holds at least two records from `MinimumSources` (default 3) distinct runs. The
-pass reads at most 500 such records, newest first (`MayHaveMore` says when there were more).
+**Which records are sources.** Only records the library finalized and can still vouch for: in exactly the scope
+asked for (never another scope's, never one a sharing grant lends), `Validated` or `Reinforced`, verified,
+`Origin == Finalized`, and, when [provenance signing](confidence.md#signing-provenance) is on, carrying a signature that
+verifies (or listed in `TrustUnsignedRecordIds`), with a library-written lesson whose content is confirmed. That is the
+rule confidence verification applies to a run's record. A record written through the store port by hand is never a
+source, whatever it claims. The pass reads at most 500 such records, newest first (`MayHaveMore` says when there were
+more).
+
+**What is one situation.** Two sources are one situation when they hold the same set of *resolved*
+[failure signatures](injection.md#recall-at-the-moment-of-failure) (the exact `ExperienceFailureSignature.Key`) and
+their working attempt (the final one, ended without an error: the attempt the block's `Worked:` line names) called the
+same tools in the same order, with equal values for the argument keys `ArgumentKeys` names. Name the keys your blocks
+show (the lessons view defaults to the keys `options.Recipe` made visible), so `retry(delay=0)` and `retry(delay=30)`
+stay two lessons. A group is merged once it holds at least two records from `MinimumSources` (default 3) distinct runs.
 
 **The consolidated record.** A new record whose ID is derived from its source IDs
 (`ExperienceConsolidation.ConsolidatedIdFor`), so re-running a pass finds the record it made. Its task, summary,
-attempts, outcome and environment are its most recent source's, so its `Tried:` and `Worked:` lines and recipe render
-as that source's did. Its lesson reads `Verified in N independent runs (latest 2026-10-07). Failed first with
-TimeoutException from run_tests in N of them. Worked: run_tests → run_tests.` (template version 1), and its
-preconditions are the distinct ones its sources carried (at most 16). Its counters are its sources' independent
-evidence, deduplicated by [independence key](confidence.md#independence-is-keyed-and-the-database-owns-the-key) rather than summed by record: each source's own validation
-under its run and closed round, and every counted update in each source's history, so a run that produced one source
-and was also counted as reuse of another counts once; its score is your confidence engine's over those counters. It is
-marked in its provenance, so no store, schema, port or contract changes: `Provenance.Source` is
-`AgentExperience.Consolidation`, its reflection's producer `AgentExperience.Consolidation/1`, and `Provenance.ExposedTo`
-lists its source records (at most 256) at the revision the pass read them. `ExperienceConsolidation.IsConsolidated` and
-`SourcesOf` read it back. Its `Origin` stays `HostWritten` and its `SourceRunId` is a derived identifier no run has: it
-vouches for no run. With provenance signing it is signed like a finalized record, and since the signed claims cover
-`ExposedTo`, its source list cannot be changed without the signature failing. A consolidated record's initial counters
-are not explained by its own history, so `ReadConfidenceAsync` with `VerifiedOnly` counts them as unverified, as for
-any record written without finalization.
+attempts, outcome, environment and reflection fields are its most recent source's (nothing is copied from the older
+ones), so its `Tried:` and `Worked:` lines and recipe render as that source's did. Its lesson reads `Verified in N
+independent runs (latest 2026-10-07). Failed first with TimeoutException from run_tests in N of them. Worked: run_tests
+→ run_tests.` (template version 1). It is marked in its provenance, so no store, schema, port or contract changes:
+`Provenance.Source` is `AgentExperience.Consolidation`, its reflection's producer `AgentExperience.Consolidation/1`
+(signed content), and `Provenance.ExposedTo` lists its source records (at most 256) at the revision the pass read them.
+`ExperienceConsolidation.IsConsolidated` and `SourcesOf` read it back. Its `Origin` stays `HostWritten` and its
+`SourceRunId` is a derived identifier no run has: it vouches for no run. With provenance signing it is signed like a
+finalized record, and since the signed claims cover `ExposedTo`, its source list cannot be changed without the
+signature failing.
 
-**Supersession.** The record is created as a `Candidate` and validated, and then each source is moved to `Superseded`
-by it through `CommitAsync`, one commit per source, at the revision and status the pass read. A source that changed
-meanwhile (a contradiction, a revocation, a reinforcement) is left untouched and reported with its `StaleRevision` or
+**Its counters are verified evidence only**, deduplicated by
+[independence key](confidence.md#independence-is-keyed-and-the-database-owns-the-key) rather than summed by record: each
+source's own validation, never more than the one finalization sets, under its run and closed round; and every counted
+update admitted `Verified` in each source's history and in each merged consolidated record's own. Host-trusted evidence
+and evidence with no recorded admission are never carried, and neither is any counter someone raised in the store. So a
+run that produced one source and was also counted as reuse of another counts once. The record is created at the score
+those counters explain, as finalization creates every record; your confidence engine scores it from its first evidence
+on. Reading it back: `ReadConfidenceAsync` with `ExcludeHostTrusted` reports what is stored. With `VerifiedOnly`, a
+consolidated record counts its initial counters as verified only when signing is configured and its signature verifies
+(it then covers the producer and the source list), capped at one per listed source; without signing it is treated like
+any record written without finalization, and its initial counters are left out.
+
+**Supersession.** Right before the record is created, the pass reads its sources again and leaves out any that changed
+since it first read them (the group is re-evaluated; if they keep changing the group is reported `Deferred`). The
+record is created as a `Candidate` and validated, and then each source is moved to `Superseded` by it through
+`CommitAsync`, one commit per source, at the revision and status the pass read. A source that changed in between (a
+contradiction, a revocation, a reinforcement) is left untouched and reported with its `StaleRevision` or
 `StatusMismatch`; each commit is the store's own transaction, so a source is either superseded or untouched, never
-half. Every event ID and timestamp is derived, so an interrupted pass, or two passes at once, converge on the same
-record, and the next pass finishes the supersessions (`ExperienceConsolidationGroupOutcome.Existing`). Each source's
-history ends with the supersession that names the consolidated record and the producer `AgentExperience.Consolidation/1`.
+half. Each source's history ends with the supersession that names the consolidated record and the producer
+`AgentExperience.Consolidation/1`.
+
+**The window where both exist.** Between the record's validation and the last supersession, the consolidated record and
+its sources are all eligible, and retrieval can return both. A pass that stops in that window (a crash, a refused
+commit, a source that changed) leaves them coexisting until the next pass: its group's `Complete` is `false` and the
+result's `IncompleteGroups` counts it. Every event ID and timestamp is derived, so an interrupted pass, or two passes at
+once, converge on the same record, and the next pass finishes the supersessions (`ExperienceConsolidationGroupOutcome.Existing`).
+A record already stored under the derived ID is adopted only when it is a consolidated record this library would
+accept as a source (producer, signature, confirmed content) over the same sources, with the same lesson and the same
+starting counters the pass computed; otherwise the group is `Refused` and nothing is superseded.
 
 **Reversal and later runs.** A consolidated record is an ordinary record: contest or revoke it like any other. Its
 sources stay superseded (the transition table never moves a superseded record back), so withdrawing a consolidated
 lesson withdraws the situation's lesson. A later verified run in the same situation is finalized into an ordinary
 record; the next pass folds it in, creating a record over the larger source set (a new derived ID) that supersedes the
-old consolidated record and the new one. A source erased since is left out of the next merge; what it contributed to
-the old record's counters is kept, uncounted by key.
+old consolidated record and the new one. A source the old record lists is carried over only when it is still a trusted
+source of the same situation that the old record superseded: one revoked or erased since is left out of the list, the
+run count and the counters.
+
+**Erasure does not reach a copy.** A consolidated record copies its most recent source's content and lists every
+source's ID, so erasing a source leaves that copy in place. Before erasing a record, call
+`FindConsolidatedContainingAsync` (on the service, or on `GetAgentExperienceLessons()` with the identity), which
+follows the source's supersession chain and scans the scope's 500 most recent records, and erase what it returns too
+(see [Deletion and retention](deletion-and-retention.md#deleting-a-record)).
+
+**Limits and deferral.** A consolidated record lists at most 256 sources. A group with more takes the consolidated
+records' sources and the newest records that fit, and reports the rest in `Deferred`; once a consolidated record lists
+256 sources, further runs of the same situation stay their own records, and their group is reported with the outcome
+`Deferred`.
 
 **Measurement.** Exposure rows and holdout assignments that named a source stay as they are. The
-[benefit estimate](injection.md#measuring-benefit-the-holdout) is per lesson, so a consolidated record is a new lesson with no measurements of its
-own yet. The lessons view shows a consolidated lesson's `ConsolidatedFrom` ("consolidated from N" on the HTML page).
+[benefit estimate](injection.md#measuring-benefit-the-holdout) is per lesson, so a consolidated record is a new lesson
+with no measurements of its own yet. The lessons view shows a consolidated lesson's `ConsolidatedFrom` ("consolidated
+from N" on the HTML page).
 
 **Not done here.** The Python and Go ports read, render and move consolidated records like any other, but do not run a
-pass. A group would list at most 256 sources; once a consolidated record lists that many, further runs of the same
-situation stay their own records.
+pass.
 
 ## In Python and Go
 

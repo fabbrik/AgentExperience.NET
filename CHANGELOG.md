@@ -544,22 +544,31 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 - **`ExperienceConsolidationService.ConsolidateAsync(authorization, scope, options, ct)`** (Core, registered by the
   one-call setup; `provider.GetAgentExperienceLessons().ConsolidateAsync(identity)` from the lessons view) merges the
-  validated records of one scope that failed the same way and were fixed the same way into one consolidated record. The
-  grouping key is exact: the scope (never another scope, never a lesson a grant lends), the set of resolved failure
-  signature keys (story 28.2) and the working attempt's tool sequence, plus the values of the argument keys
-  `ExperienceConsolidationOptions.ArgumentKeys` names (the recipe's argument keys by default from the lessons view), so
-  `retry(delay=0)` and `retry(delay=30)` stay two lessons. Only verified, validated or reinforced records with a
-  library-written lesson, whose content is confirmed when signing is on, are merged, and only once a group holds
-  records from `MinimumSources` (3) distinct runs. Deterministic and explicit: no model, nothing runs it automatically.
-- **The consolidated record** renders as its most recent source does (task, attempts, recipe), with the lesson
-  `Verified in N independent runs (latest yyyy-MM-dd). Failed first with <class> from <tool> in K of them. Worked: …`
-  (template version 1), the distinct preconditions its sources carried, and counters that are its sources' independent
-  evidence deduplicated by independence key, not summed by record. Its ID is derived from its source IDs, so a re-run
-  is idempotent and a later verified run is folded in by a new record that supersedes the old one. It is marked in its
-  provenance (`ExperienceConsolidation.ProvenanceSource`; its `Provenance.ExposedTo` lists its sources, and is signed
-  with the rest of its claims when signing is on), so no store, schema, port or contract changes.
-- **Its sources are superseded** through the ordinary lifecycle, one compare-and-set commit each; a source that changed
-  meanwhile is left untouched and reported, and an interrupted pass is finished by the next. Contesting or revoking a
+  validated records of one scope that failed the same way and were fixed the same way into one consolidated record.
+  Only records the library finalized and can vouch for are sources: `Origin == Finalized`, a verifying provenance
+  signature when signing is on, verified, with a library-written, confirmed lesson; never a hand-written record, never
+  another scope's or a grant's. The grouping key is exact: the set of resolved failure signature keys (story 28.2) and
+  the working attempt's tool sequence, plus the values of the argument keys `ExperienceConsolidationOptions.ArgumentKeys`
+  names (the recipe's by default from the lessons view), so `retry(delay=0)` and `retry(delay=30)` stay two lessons. A
+  group merges once it holds records from `MinimumSources` (3) distinct runs. Deterministic and explicit: no model,
+  nothing runs it automatically.
+- **The consolidated record** renders as its most recent source does (its content is copied from that source only),
+  with the lesson `Verified in N independent runs (latest yyyy-MM-dd). Failed first with <class> from <tool> in K of
+  them. Worked: …` (template version 1). Its counters are verified evidence only, deduplicated by independence key: one
+  validation per source, plus the `Verified` updates in the sources' histories; host-trusted evidence and raised
+  counters are never carried. `ReadConfidenceAsync(VerifiedOnly)` counts them as verified when signing is on and the
+  record's signature (over the producer and the source list) verifies. Its ID is derived from its source IDs, so a
+  re-run is idempotent and a later verified run is folded in by a new record that supersedes the old one. It is marked
+  in its provenance (`ExperienceConsolidation.ProvenanceSource`; `Provenance.ExposedTo` lists its sources, a signed
+  claim), so no store, schema, port or contract changes.
+- **Its sources are superseded** through the ordinary lifecycle: re-read right before the record is created (a changed
+  one is left out), then one compare-and-set commit each; a source that changed in between is left untouched and
+  reported. Until then the record and its sources coexist: `ExperienceConsolidationGroupResult.Complete` and the
+  result's `IncompleteGroups` say so, and the next pass finishes. A record already at the derived ID is adopted only when
+  its signature, producer, sources, lesson and starting counters match. Groups beyond 256 sources, or whose records kept
+  changing, are reported `Deferred`.
+- **Erasure does not reach a copy**: `FindConsolidatedContainingAsync` (service and lessons view) finds the consolidated
+  records that list a source, to erase with it; the next pass leaves an erased source out. Contesting or revoking a
   consolidated record works as for any record; its sources stay superseded. The lessons view shows
   `ExperienceLesson.ConsolidatedFrom` ("consolidated from N" on the HTML page), and the benefit estimate treats a
   consolidated lesson as a new lesson: holdout rows that named its sources stay as they are.

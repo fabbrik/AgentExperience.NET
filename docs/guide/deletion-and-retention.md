@@ -13,6 +13,12 @@ the KL-2 boundary in [Known limits and documented boundaries](../known-limits.md
 
 ## Deleting a record
 
+> **Consolidated lessons copy content.** A [consolidated lesson](lifecycle.md#consolidating-repeated-lessons) carries a
+> copy of its most recent source's task, attempts, outcome and reflection, and lists every source's ID. Erasing a
+> source does **not** reach a consolidated record made from it. Before erasing a record, call
+> `FindConsolidatedContainingAsync` (on `ExperienceConsolidationService`, or `GetAgentExperienceLessons()` with the
+> identity) and erase the records it returns too; the next consolidation pass leaves the erased source out.
+
 ```csharp
 var store = new PostgresExperienceRecordStore(dataSource);
 
@@ -353,6 +359,9 @@ below shrink to the derived search data, and that page says exactly what remains
 - **Exported telemetry.** Spans and metrics this library emitted carry record IDs; erasing a record does not
   retract them. The erasure's own telemetry adds nothing that was erased (see [below](#telemetry)).
 - **External artifacts a record merely named.** Tickets, logs, commits: the library never held them.
+- **Consolidated records made from the erased one.** A consolidated record copies its latest source's content and
+  lists every source's ID; erase it too (`FindConsolidatedContainingAsync` finds it, see
+  [above](#deleting-a-record)).
 - **The dead heap tuple — until `VACUUM`, the erased text is still in this database.** The tombstone is written
   with an `UPDATE`, and an `UPDATE` in PostgreSQL writes a new row version and leaves the old one in the heap.
   Until `VACUUM` reclaims it, the previous version of the record row still carries the task summary, the lesson,
