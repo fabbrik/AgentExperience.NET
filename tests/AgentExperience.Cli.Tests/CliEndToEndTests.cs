@@ -286,6 +286,18 @@ public sealed class CliEndToEndTests
         Assert.Contains("No lessons yet.", byVariable.ToString());
     }
 
+    [Fact]
+    public async Task Version_and_help_need_no_config()
+    {
+        var output = new StringWriter();
+        Assert.Equal(AexpCli.Ok, await AexpCli.RunAsync(["--version"], new AexpConsole(output, new StringWriter(), Path.GetTempPath(), static _ => null, TimeProvider.System)));
+        Assert.StartsWith("0.1.0-preview.", output.ToString());
+
+        var help = new StringWriter();
+        Assert.Equal(AexpCli.Ok, await AexpCli.RunAsync(["--help"], new AexpConsole(help, new StringWriter(), Path.GetTempPath(), static _ => null, TimeProvider.System)));
+        Assert.Contains("aexp mcp", help.ToString());
+    }
+
     [Theory]
     [InlineData("run")]
     [InlineData("run", "start")]

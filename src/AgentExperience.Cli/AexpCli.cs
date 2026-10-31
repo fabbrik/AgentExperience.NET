@@ -63,16 +63,16 @@ internal static class AexpCli
             return Usage;
         }
 
+        if (parsed.Flag("version") || parsed.Command is ["version"])
+        {
+            await console.Out.WriteLineAsync(AexpEngine.Version).ConfigureAwait(false);
+            return Ok;
+        }
+
         if (parsed.Command.Count == 0 || parsed.Flag("help") || parsed.Command[0] is "help")
         {
             await console.Out.WriteLineAsync(HelpText).ConfigureAwait(false);
             return parsed.Command.Count == 0 && !parsed.Flag("help") ? Usage : Ok;
-        }
-
-        if (parsed.Command[0] is "version" || parsed.Flag("version"))
-        {
-            await console.Out.WriteLineAsync(AexpEngine.Version).ConfigureAwait(false);
-            return Ok;
         }
 
         AexpSettings settings;
