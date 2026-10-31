@@ -62,7 +62,8 @@ await agent.RunAsync("Ticket #4977: a refund is stuck on a lock again. Triage it
 ## Any agent: CLI and MCP
 
 Agents outside the Agent Framework (Claude Code, Codex, Cursor, a script) get the same loop through `aexp`, a .NET tool
-that is both a command line and an MCP stdio server, over a local SQLite file by default:
+that is both a command line and an MCP stdio server, over a local SQLite file by default (published from the next
+preview, `0.1.0-preview.18`; until then, [build it from this repository](dogfood/README.md)):
 
 ```bash
 dotnet tool install --global AgentExperience.Cli --prerelease
