@@ -612,6 +612,26 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   the file keeps its mode (and, when another user owns it, its owner and group, by an in-place rewrite).
 - **Library change**: none. Guide: [Claude Code](docs/guide/claude-code.md).
 
+### Dogfood on this repository (story 28.10)
+
+- **`aexp benefit --markdown <file>`** writes the holdout's estimate as a results page: counts per arm, rates, the
+  difference with its 95% interval, the verdict, the pending, unverified and mixed-arm runs, the reading rules, and what
+  the page can and cannot say (among them that runs of one Claude Code session are correlated and the store cannot count
+  sessions). No path or run ID, only the date, so it can be committed. Inside the project root only, never through a
+  link. `aexp benefit` without it prints what it did before.
+- **[`dogfood/`](dogfood/README.md)**: everything to run the Claude Code recipe on this repository's own sessions, up to
+  switching it on, which stays a person's step. A config (`dogfood/aexp.config.json`: SQLite under `.aexp/`, holdout
+  0.5, recall on, only file paths kept, no recipe consents, each choice commented), the verifier (`dogfood/verify.sh`:
+  `dotnet build`, then every Docker-free test project from CONTRIBUTING.md, kept equal to that list by a test), and a
+  pre-registration written before any session ran (`dogfood/preregistration.json`: the session as the randomized unit,
+  the run as the analysed one, 20 verified runs per arm before the one reading, a stated second look at 50, a deadline,
+  exclusions and limits, and the SHA-256 of both files, which a test checks). `.gitignore` now excludes `.aexp/`.
+- **README**: leads with what the library is for, the block a second run gets after a first run failed and recovered,
+  the evidence so far (now with the real-task and CI-triage results: no overall benefit shown; lesson content beat a
+  placebo, p = 0.035; wrong lessons did worse than none; CI triage `NoEvidence` for lack of runs) and the three ways in.
+  Detail moved down; a "Real work" section says the dogfood run has no result yet.
+- **Library change**: none.
+
 ## 0.1.0-preview.17
 
 This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of

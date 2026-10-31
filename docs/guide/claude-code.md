@@ -180,7 +180,7 @@ default). Read it as evidence about your project's sessions, not a promise. The 
 the turns of one session are correlated: they share the session's arm, its task and often its outcome. The interval
 treats them as independent, so it is narrower than the evidence supports; a session of many turns weighs as many. Look
 at how many sessions are behind the counts (`ls .aexp/sessions` shows the live ones; the hook log names each session's
-runs) before trusting a verdict reached with few sessions. `aexp benefit` cannot count sessions yet. `aexp lessons` shows each lesson's own verdict. See [the holdout](injection.md) for how the arms are assigned.
+runs) before trusting a verdict reached with few sessions. `aexp benefit` cannot count sessions yet. `aexp benefit --markdown <file>` writes the same estimate as a results page to commit, with the reading rules and these limits beside it; [`dogfood/`](../../dogfood/README.md) is this repository's own setup and pre-registration, as a worked example. `aexp lessons` shows each lesson's own verdict. See [the holdout](injection.md) for how the arms are assigned.
 
 ## Lessons in CLAUDE.md or AGENTS.md
 
