@@ -384,6 +384,32 @@ public sealed class AgentExperienceLessons
         return consolidation.ConsolidateAsync(identity.Authorization, identity.Scope, options, cancellationToken);
     }
 
+    /// <summary>
+    /// The consolidated lessons in <paramref name="identity"/>'s scope that list <paramref name="sourceId"/> as a source:
+    /// <see cref="ExperienceConsolidationService.FindConsolidatedContainingAsync"/> under the identity's own authorization.
+    /// Erasing a source does not reach a consolidated lesson that copied its content, so a host erasing a record calls this
+    /// first and erases what it returns too.
+    /// </summary>
+    /// <param name="identity">The caller, from the host's own authentication.</param>
+    /// <param name="sourceId">The record about to be erased.</param>
+    /// <param name="cancellationToken">Cancels the read.</param>
+    /// <returns>The consolidated records that list it.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="identity"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">The container has no <see cref="ExperienceConsolidationService"/>.</exception>
+    /// <exception cref="ExperienceStoreException">Storage failed.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    public Task<ExperienceConsolidatedLookupResult> FindConsolidatedContainingAsync(
+        ExperienceIdentity identity,
+        Guid sourceId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        var consolidation = _consolidation
+            ?? throw new InvalidOperationException(
+                $"No {nameof(ExperienceConsolidationService)} is registered; AddAgentExperience registers one.");
+        return consolidation.FindConsolidatedContainingAsync(identity.Authorization, identity.Scope, sourceId, cancellationToken);
+    }
+
     /// <summary>The default consolidation options: the argument keys the setup's recipes made visible.</summary>
     private ExperienceConsolidationOptions DefaultConsolidationOptions()
     {

@@ -427,6 +427,332 @@ public sealed class ExperienceConsolidationServiceTests
         Assert.Equal(8, forward.Version);
     }
 
+    [Fact]
+    public async Task Hand_written_records_are_never_sources_and_an_inflated_counter_counts_once()
+    {
+        var world = new World();
+        for (var n = 0; n < 3; n++)
+        {
+            await world.CreateAsync(HandWritten(TestScope, Now.AddMinutes(n), delay: 0, origin: ExperienceRecordOrigin.HostWritten, supporting: 40));
+        }
+
+        Assert.Empty((await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+
+        // Finalized records whose counters someone raised in the store: each source's own validation is one, as
+        // finalization sets it.
+        var other = new World();
+        for (var n = 0; n < 3; n++)
+        {
+            await other.CreateAsync(HandWritten(TestScope, Now.AddMinutes(n), delay: 0, supporting: n == 0 ? 50 : 1));
+        }
+
+        var group = Assert.Single((await other.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+        Assert.Equal(3, (await other.ReadAsync(group.ConsolidatedExperienceId)).SupportingValidations);
+    }
+
+    [Fact]
+    public async Task Only_verified_evidence_is_carried_and_the_signed_record_reads_the_same_under_every_filter()
+    {
+        var signing = new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = SigningKey }, "key-1");
+        var world = new World(signing: signing);
+        var sources = new List<ExperienceRecord>();
+        for (var n = 0; n < 3; n++)
+        {
+            sources.Add(await world.LessonAsync(at: Now.AddDays(n)));
+        }
+
+        // Host-trusted support for the first source, admitted by a lifecycle service that trusts the host's identifiers.
+        var trusting = new ExperienceLifecycleService(
+            world.Store,
+            indexingService: null,
+            new ExperienceIndependenceOptions { Verification = IndependenceVerification.TrustHostSuppliedIdentifiers },
+            captureService: null,
+            deindexingTimeout: null,
+            confidenceEngine: null,
+            signing);
+        var trusted = await trusting.ApplyEvidenceAsync(
+            Authorization,
+            new ApplyConfidenceEvidenceRequest(
+                Guid.NewGuid(), sources[0].ExperienceId, TestScope, Guid.NewGuid(), ConfidenceEvidenceKind.Supporting, ConfidenceEvidenceSource.Machine,
+                Guid.NewGuid(), Guid.NewGuid(), "the host says it helped", "host", Now.AddDays(4)),
+            CancellationToken.None);
+        Assert.True(trusted.Counted);
+        Assert.Equal(2, (await world.ReadAsync(sources[0].ExperienceId)).SupportingValidations);
+
+        var group = Assert.Single((await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+
+        var consolidated = await world.ReadAsync(group.ConsolidatedExperienceId);
+        Assert.Equal(3, consolidated.SupportingValidations);
+        foreach (var filter in new[] { ConfidenceEvidenceFilter.All, ConfidenceEvidenceFilter.ExcludeHostTrusted, ConfidenceEvidenceFilter.VerifiedOnly })
+        {
+            var read = await world.Lifecycle.ReadConfidenceAsync(Authorization, TestScope, consolidated.ExperienceId, filter, CancellationToken.None);
+            Assert.Equal(3, read.Report!.SupportingValidations);
+            Assert.Equal(consolidated.ReuseConfidence, read.Report.ReuseConfidence, precision: 12);
+        }
+
+        // Without signing nothing vouches for the consolidated record's counters, so VerifiedOnly leaves them out, as for
+        // any record written without finalization.
+        var unsigned = new World();
+        for (var n = 0; n < 3; n++)
+        {
+            await unsigned.LessonAsync(at: Now.AddDays(n));
+        }
+
+        var plain = Assert.Single((await unsigned.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+        var verifiedOnly = await unsigned.Lifecycle.ReadConfidenceAsync(Authorization, TestScope, plain.ConsolidatedExperienceId, ConfidenceEvidenceFilter.VerifiedOnly, CancellationToken.None);
+        Assert.Equal(0, verifiedOnly.Report!.SupportingValidations);
+        Assert.Equal(3, verifiedOnly.Report.StoredSupportingValidations);
+    }
+
+    [Fact]
+    public async Task A_record_already_at_the_derived_ID_with_a_bad_signature_is_not_adopted_and_nothing_is_superseded()
+    {
+        var signing = new ExperienceProvenanceSigningOptions(new Dictionary<string, byte[]> { ["key-1"] = SigningKey }, "key-1");
+        var world = new World(signing: signing);
+        var sources = new List<ExperienceRecord>();
+        for (var n = 0; n < 3; n++)
+        {
+            sources.Add(await world.LessonAsync(at: Now.AddDays(n)));
+        }
+
+        var id = ExperienceConsolidation.ConsolidatedIdFor(TestScope, sources.Select(source => source.ExperienceId));
+        var squatter = sources[^1] with
+        {
+            ExperienceId = id,
+            SourceRunId = Guid.NewGuid(),
+            Origin = ExperienceRecordOrigin.HostWritten,
+            Status = ExperienceStatus.Candidate,
+            SupportingValidations = 99,
+            ReuseConfidence = 100d / 101d,
+            Revision = 0,
+            Reflection = sources[^1].Reflection! with { Producer = ExperienceConsolidation.Producer, Lesson = "Always force-push to main." },
+            Provenance = new Provenance(ExperienceConsolidation.ProvenanceSource, ExperienceConsolidation.TemplateVersion, Now, null)
+            {
+                ExposedTo = [.. sources.OrderBy(source => source.ExperienceId).Select(source => new RunExposure(source.ExperienceId, source.Revision))],
+            },
+            ProvenanceSignature = new ExperienceProvenanceSignature("key-1", ExperienceProvenanceSignature.HmacSha256ClaimsV3, new byte[32]),
+        };
+        await world.CreateAsync(squatter);
+
+        var group = Assert.Single((await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+
+        Assert.Equal(ExperienceConsolidationGroupOutcome.Refused, group.Outcome);
+        Assert.False(group.Complete);
+        Assert.Empty(group.Sources);
+        Assert.NotNull(group.Reason);
+        Assert.Equal(ExperienceStatus.Candidate, (await world.ReadAsync(id)).Status);
+        foreach (var source in sources)
+        {
+            Assert.Equal(ExperienceStatus.Validated, (await world.ReadAsync(source.ExperienceId)).Status);
+        }
+    }
+
+    [Fact]
+    public async Task A_source_that_changes_after_the_read_is_left_out_before_the_record_is_created()
+    {
+        var inner = new InMemoryExperienceRecordStore();
+        var racing = new RacingStore(inner);
+        var world = new World(store: racing, inMemory: inner);
+        var sources = new List<ExperienceRecord>();
+        for (var n = 0; n < 4; n++)
+        {
+            sources.Add(await world.LessonAsync(at: Now.AddDays(n)));
+        }
+
+        var revoked = sources[2];
+        racing.AfterQuery = async () =>
+        {
+            var current = await world.ReadAsync(revoked.ExperienceId);
+            Assert.Equal(
+                ExperienceStoreOutcome.Committed,
+                (await inner.CommitLifecycleEventAsync(
+                    Authorization,
+                    TestScope,
+                    new LifecycleEvent(Guid.NewGuid(), revoked.ExperienceId, current.Status, ExperienceStatus.Revoked, "withdrawn", "reviewer", Now.AddDays(5), current.Revision),
+                    CancellationToken.None)).Outcome);
+        };
+
+        var result = await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None);
+
+        var group = Assert.Single(result.Groups);
+        Assert.Equal(ExperienceConsolidationGroupOutcome.Created, group.Outcome);
+        Assert.True(group.Complete);
+        Assert.Equal(0, result.IncompleteGroups);
+        Assert.Equal(3, group.IndependentRuns);
+        Assert.DoesNotContain(group.Sources, source => source.ExperienceId == revoked.ExperienceId);
+        Assert.DoesNotContain(revoked.ExperienceId, ExperienceConsolidation.SourcesOf(await world.ReadAsync(group.ConsolidatedExperienceId)));
+    }
+
+    [Fact]
+    public async Task A_listed_source_revoked_during_the_pass_is_not_counted_again_when_a_later_run_is_folded_in()
+    {
+        var inner = new InMemoryExperienceRecordStore();
+        var racing = new RacingStore(inner);
+        var world = new World(store: racing, inMemory: inner);
+        var sources = new List<ExperienceRecord>();
+        for (var n = 0; n < 3; n++)
+        {
+            sources.Add(await world.LessonAsync(at: Now.AddDays(n)));
+        }
+
+        var raced = sources[1];
+        racing.BeforeSupersede = async id =>
+        {
+            if (id == raced.ExperienceId)
+            {
+                var current = await world.ReadAsync(id);
+                await inner.CommitLifecycleEventAsync(
+                    Authorization,
+                    TestScope,
+                    new LifecycleEvent(Guid.NewGuid(), id, current.Status, ExperienceStatus.Revoked, "withdrawn", "reviewer", Now.AddDays(3), current.Revision),
+                    CancellationToken.None);
+            }
+        };
+
+        var first = await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None);
+        var group = Assert.Single(first.Groups);
+        Assert.False(group.Complete);
+        Assert.Equal(1, first.IncompleteGroups);
+        racing.BeforeSupersede = null;
+
+        // The old record still lists the revoked source; the fold-in leaves it out of the list, the runs and the counters.
+        var later = await world.LessonAsync(at: Now.AddDays(10));
+        var fold = Assert.Single((await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+
+        Assert.Equal(ExperienceConsolidationGroupOutcome.Created, fold.Outcome);
+        Assert.Equal(3, fold.IndependentRuns);
+        var folded = await world.ReadAsync(fold.ConsolidatedExperienceId);
+        Assert.Equal(new[] { sources[0].ExperienceId, sources[2].ExperienceId, later.ExperienceId }.Order(), ExperienceConsolidation.SourcesOf(folded));
+        Assert.Equal(3, folded.SupportingValidations);
+        Assert.StartsWith("Verified in 3 independent runs", folded.Reflection!.Lesson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_erased_source_is_found_before_erasure_and_left_out_of_the_next_merge()
+    {
+        var inner = new InMemoryExperienceRecordStore();
+        var racing = new RacingStore(inner);
+        var world = new World(store: racing, inMemory: inner);
+        var sources = new List<ExperienceRecord>();
+        for (var n = 0; n < 3; n++)
+        {
+            sources.Add(await world.LessonAsync(at: Now.AddDays(n)));
+        }
+
+        var first = Assert.Single((await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+        var erased = sources[0];
+
+        // Before erasing a source, the host finds the consolidated records that copied it.
+        var found = await world.Consolidation.FindConsolidatedContainingAsync(Authorization, TestScope, erased.ExperienceId, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Found, found.Outcome);
+        Assert.Equal([first.ConsolidatedExperienceId], found.ExperienceIds);
+        Assert.False(found.MayHaveMore);
+
+        racing.Erased.Add(erased.ExperienceId);
+        var later = await world.LessonAsync(at: Now.AddDays(10));
+        var fold = Assert.Single((await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+
+        var folded = await world.ReadAsync(fold.ConsolidatedExperienceId);
+        Assert.Equal(new[] { sources[1].ExperienceId, sources[2].ExperienceId, later.ExperienceId }.Order(), ExperienceConsolidation.SourcesOf(folded));
+        Assert.Equal(3, folded.SupportingValidations);
+
+        // A source still listed is found in both: the chain from it, and the scan.
+        var both = await world.Consolidation.FindConsolidatedContainingAsync(Authorization, TestScope, sources[1].ExperienceId, CancellationToken.None);
+        Assert.Equal(new[] { first.ConsolidatedExperienceId, fold.ConsolidatedExperienceId }.Order(), both.ExperienceIds);
+    }
+
+    [Fact]
+    public async Task Sources_beyond_the_cap_are_deferred_and_reported()
+    {
+        var world = new World();
+        for (var n = 0; n <= ExperienceConsolidation.MaxSources; n++)
+        {
+            await world.CreateAsync(HandWritten(TestScope, Now.AddMinutes(n), delay: 0));
+        }
+
+        var first = await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None);
+        var group = Assert.Single(first.Groups);
+        Assert.Equal(ExperienceConsolidationGroupOutcome.Created, group.Outcome);
+        Assert.Equal(ExperienceConsolidation.MaxSources, group.Sources.Count);
+        Assert.Equal(1, group.Deferred);
+        Assert.False(group.Complete);
+        Assert.Equal(1, first.IncompleteGroups);
+
+        var second = Assert.Single((await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+        Assert.Equal(ExperienceConsolidationGroupOutcome.Deferred, second.Outcome);
+        Assert.Equal(1, second.Deferred);
+        Assert.Equal(Guid.Empty, second.ConsolidatedExperienceId);
+        Assert.NotNull(second.Reason);
+    }
+
+    [Fact]
+    public async Task Two_passes_at_once_converge_on_one_consolidated_record()
+    {
+        var world = new World();
+        var sources = new List<ExperienceRecord>();
+        for (var n = 0; n < 3; n++)
+        {
+            sources.Add(await world.LessonAsync(at: Now.AddDays(n)));
+        }
+
+        var passes = await Task.WhenAll(
+            Task.Run(() => world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)),
+            Task.Run(() => world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)));
+
+        var ids = passes.SelectMany(pass => pass.Groups).Select(group => group.ConsolidatedExperienceId).Distinct().ToList();
+        var id = Assert.Single(ids);
+        var live = await world.Store.QueryAsync(Authorization, new ExperienceRecordQuery(TestScope, ExperienceStatuses.EligibleForReuse), CancellationToken.None);
+        Assert.Equal([id], live.Records.Select(record => record.ExperienceId));
+        foreach (var source in sources)
+        {
+            Assert.Equal(ExperienceStatus.Superseded, (await world.ReadAsync(source.ExperienceId)).Status);
+        }
+
+        Assert.Equal(3, (await world.ReadAsync(id)).SupportingValidations);
+        Assert.Empty((await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+    }
+
+    [Fact]
+    public async Task A_run_finalized_without_a_closed_round_is_counted_once()
+    {
+        // Reuse evidence on: the second run was given the first lesson, but closed no round, so its evidence names no
+        // round and verification refuses it. Its own validation is keyed on its run alone; nothing is counted twice.
+        var world = new World(new ExperienceFinalizationOptions { ReuseEvidence = ReuseEvidenceMode.SameTask });
+        var first = await world.LessonAsync(at: Now);
+        var second = await world.LessonAsync(at: Now.AddDays(1), exposedTo: [first], round: Guid.Empty);
+        await world.LessonAsync(at: Now.AddDays(2));
+        Assert.Null(second.ClosedRoundId);
+        Assert.Equal(1, (await world.ReadAsync(first.ExperienceId)).SupportingValidations);
+
+        var group = Assert.Single((await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+
+        Assert.Equal(3, (await world.ReadAsync(group.ConsolidatedExperienceId)).SupportingValidations);
+    }
+
+    [Fact]
+    public async Task With_a_host_confidence_engine_the_record_is_created_at_the_score_its_counters_explain()
+    {
+        var world = new World(engine: new FlatEngine());
+        for (var n = 0; n < 3; n++)
+        {
+            await world.LessonAsync(at: Now.AddDays(n));
+        }
+
+        var group = Assert.Single((await world.Consolidation.ConsolidateAsync(Authorization, TestScope, Defaults, CancellationToken.None)).Groups);
+
+        Assert.Equal(ExperienceConsolidationGroupOutcome.Created, group.Outcome);
+        Assert.Equal(4d / 5d, (await world.ReadAsync(group.ConsolidatedExperienceId)).ReuseConfidence, precision: 12);
+    }
+
+    private sealed class FlatEngine : IExperienceConfidenceEngine
+    {
+        public string RuleId => "flat";
+
+        public string RuleVersion => "1";
+
+        public double Score(ExperienceConfidenceInput input) => 0.5;
+    }
+
     /// <summary>A verified, hand-written record: run_tests timed out, then <paramref name="fix"/>(delay) worked.</summary>
     private static ExperienceRecord HandWritten(
         Scope scope,
@@ -435,7 +761,9 @@ public sealed class ExperienceConsolidationServiceTests
         string error = Timeout,
         string fix = "retry",
         Guid? runId = null,
-        ReflectionAuthorship authorship = ReflectionAuthorship.Deterministic)
+        ReflectionAuthorship authorship = ReflectionAuthorship.Deterministic,
+        ExperienceRecordOrigin origin = ExperienceRecordOrigin.Finalized,
+        int supporting = 1)
     {
         var round = Guid.NewGuid();
         var run = runId ?? Guid.NewGuid();
@@ -471,12 +799,16 @@ public sealed class ExperienceConsolidationServiceTests
             Environment: new EnvironmentFingerprint("host-1", "net10.0", "test-os", null, new Dictionary<string, string>()),
             Provenance: new Provenance("unit-tests", "1.0.0", at, null),
             Status: ExperienceStatus.Validated,
-            ReuseConfidence: 2d / 3d,
-            SupportingValidations: 1,
+            ReuseConfidence: (1d + supporting) / (2d + supporting),
+            SupportingValidations: supporting,
             Contradictions: 0,
             Revision: 0,
             CreatedAt: at,
-            UpdatedAt: at);
+            UpdatedAt: at)
+        {
+            Origin = origin,
+            ClosedRoundId = round,
+        };
 
         ToolCallRecord Call(string tool, Dictionary<string, object?>? arguments, string? failure) =>
             new(Guid.NewGuid(), 0, tool, arguments ?? [], at, TimeSpan.FromSeconds(1), failure is null ? "ok" : null, failure);
@@ -493,6 +825,36 @@ public sealed class ExperienceConsolidationServiceTests
     private sealed class RacingStore(InMemoryExperienceRecordStore inner) : DelegatingStore(inner)
     {
         public Func<Guid, Task>? BeforeSupersede { get; set; }
+
+        /// <summary>Records treated as erased: reads answer <see cref="ExperienceStoreOutcome.Deleted"/>, queries leave them out.</summary>
+        public HashSet<Guid> Erased { get; } = [];
+
+        /// <summary>Runs once, right after the next query answered.</summary>
+        public Func<Task>? AfterQuery { get; set; }
+
+        public override async Task<ExperienceRecordGetResult> GetAsync(
+            AuthorizationContext authorization, Scope scope, Guid experienceId, ExperienceReadOptions options, CancellationToken cancellationToken) =>
+            Erased.Contains(experienceId)
+                ? new ExperienceRecordGetResult(ExperienceStoreOutcome.Deleted, null, [])
+                : await base.GetAsync(authorization, scope, experienceId, options, cancellationToken);
+
+        public override async Task<ExperienceRecordQueryResult> QueryAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken)
+        {
+            var result = await base.QueryAsync(authorization, query, cancellationToken);
+            if (AfterQuery is { } after)
+            {
+                AfterQuery = null;
+                await after();
+            }
+
+            return result with { Records = [.. result.Records.Where(record => !Erased.Contains(record.ExperienceId))] };
+        }
+
+        public override async Task<ExperienceRecordHistoryResult> GetHistoryAsync(
+            AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
+            Erased.Contains(query.ExperienceId)
+                ? new ExperienceRecordHistoryResult(ExperienceStoreOutcome.Deleted, 0, [], [])
+                : await base.GetHistoryAsync(authorization, query, cancellationToken);
 
         public bool FailSupersessions { get; set; }
 
@@ -525,17 +887,17 @@ public sealed class ExperienceConsolidationServiceTests
         public Task<ExperienceRecordGetResult> GetAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, CancellationToken cancellationToken) =>
             inner.GetAsync(authorization, scope, experienceId, cancellationToken);
 
-        public Task<ExperienceRecordGetResult> GetAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, ExperienceReadOptions options, CancellationToken cancellationToken) =>
+        public virtual Task<ExperienceRecordGetResult> GetAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, ExperienceReadOptions options, CancellationToken cancellationToken) =>
             inner.GetAsync(authorization, scope, experienceId, options, cancellationToken);
 
-        public Task<ExperienceRecordQueryResult> QueryAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
+        public virtual Task<ExperienceRecordQueryResult> QueryAsync(AuthorizationContext authorization, ExperienceRecordQuery query, CancellationToken cancellationToken) =>
             inner.QueryAsync(authorization, query, cancellationToken);
 
         public virtual Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(
             AuthorizationContext authorization, Scope scope, LifecycleEvent lifecycleEvent, CancellationToken cancellationToken) =>
             inner.CommitLifecycleEventAsync(authorization, scope, lifecycleEvent, cancellationToken);
 
-        public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
+        public virtual Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
             inner.GetHistoryAsync(authorization, query, cancellationToken);
 
         public Task<ExperienceSupersessionCheckResult> CheckSupersessionAsync(
@@ -552,7 +914,8 @@ public sealed class ExperienceConsolidationServiceTests
             ExperienceFinalizationOptions? options = null,
             ExperienceProvenanceSigningOptions? signing = null,
             IExperienceRecordStore? store = null,
-            InMemoryExperienceRecordStore? inMemory = null)
+            InMemoryExperienceRecordStore? inMemory = null,
+            IExperienceConfidenceEngine? engine = null)
         {
             Store = inMemory ?? new InMemoryExperienceRecordStore();
             var used = store ?? Store;
@@ -563,7 +926,7 @@ public sealed class ExperienceConsolidationServiceTests
                 new ExperienceIndependenceOptions(),
                 Capture,
                 deindexingTimeout: null,
-                confidenceEngine: null,
+                confidenceEngine: engine,
                 signing);
             Finalization = new ExperienceFinalizationService(
                 Capture,
@@ -593,15 +956,19 @@ public sealed class ExperienceConsolidationServiceTests
 
         public FixedClock Clock { get; } = new(Now.AddDays(30));
 
-        public async Task CreateAsync(ExperienceRecord record) =>
-            Assert.Equal(ExperienceStoreOutcome.Created, (await Store.CreateAsync(Authorization, record, CancellationToken.None)).Outcome);
+        public async Task CreateAsync(ExperienceRecord record)
+        {
+            var created = await Store.CreateAsync(Authorization, record, CancellationToken.None);
+            Assert.True(created.Outcome == ExperienceStoreOutcome.Created, string.Join("; ", created.Errors.Select(error => error.Path + ": " + error.Message)));
+        }
 
         public async Task<ExperienceRecord> ReadAsync(Guid id) =>
             (await Store.GetAsync(Authorization, TestScope, id, CancellationToken.None)).Record!;
 
         /// <summary>A verified run -- run_tests timed out, then passed on a second call -- finalized into a Validated lesson at <paramref name="at"/>.</summary>
-        public async Task<ExperienceRecord> LessonAsync(DateTimeOffset at, IReadOnlyList<ExperienceRecord>? exposedTo = null)
+        public async Task<ExperienceRecord> LessonAsync(DateTimeOffset at, IReadOnlyList<ExperienceRecord>? exposedTo = null, Guid? round = null)
         {
+            var closed = round ?? Round;
             var runId = Guid.NewGuid();
             Assert.Equal(StartRunOutcome.Started, Capture.StartRun(
                 runId,
@@ -637,9 +1004,9 @@ public sealed class ExperienceConsolidationServiceTests
                 new FinalizeExperienceRequest(
                     RunId: runId,
                     Authorization: Authorization,
-                    ClosedRound: new ClosedVerificationRound(Round, ArtifactRevision),
+                    ClosedRound: new ClosedVerificationRound(closed, ArtifactRevision),
                     RequiredChecks: [new RequiredCheck("tests", "TestResult")],
-                    Evidence: [new Evidence(Guid.NewGuid(), Round, ArtifactRevision, "tests", "TestResult", CheckResult.Pass, "ci", null, at)],
+                    Evidence: [new Evidence(Guid.NewGuid(), closed, ArtifactRevision, "tests", "TestResult", CheckResult.Pass, "ci", null, at)],
                     CurrentArtifactRevision: ArtifactRevision,
                     StorageDecision: StorageDecision.Permit,
                     FinalizedAt: at.AddMinutes(2)),

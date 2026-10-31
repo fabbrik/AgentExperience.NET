@@ -92,7 +92,7 @@ public static class ExperienceConsolidation
     /// <summary>The most source records one consolidated record lists: <see cref="RunExposure.MaxPerRun"/>, the bound on <see cref="Provenance.ExposedTo"/>.</summary>
     public const int MaxSources = RunExposure.MaxPerRun;
 
-    /// <summary>The most distinct preconditions a consolidated record's reflection carries.</summary>
+    /// <summary>The most preconditions a consolidated record's reflection carries: its most recent source's, cut to this many.</summary>
     public const int MaxPreconditions = 16;
 
     /// <summary>The most tool names the lesson text's <c>Worked:</c> sentence names; the rest are counted.</summary>
@@ -229,6 +229,13 @@ public sealed record ExperienceConsolidationResult(
 
     /// <summary>The store's validation errors when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>.</summary>
     public IReadOnlyList<StoreValidationError> Errors { get; init; } = [];
+
+    /// <summary>
+    /// How many groups are incomplete: not <see cref="ExperienceConsolidationGroupResult.Complete"/> (a consolidated record
+    /// coexists with sources it did not supersede, or the group was refused or deferred). Zero when the pass finished
+    /// everything it started; otherwise run it again.
+    /// </summary>
+    public int IncompleteGroups => Groups.Count(group => group is not null && !group.Complete);
 }
 
 /// <summary>What happened to one group: records in one scope with the same resolved failure signature and the same working sequence.</summary>
@@ -246,10 +253,21 @@ public sealed record ExperienceConsolidationGroupResult(
     public string? Reason { get; init; }
 
     /// <summary>
-    /// Records of the group left for a later pass because the consolidated record would have listed more than
-    /// <see cref="ExperienceConsolidation.MaxSources"/> sources.
+    /// Records of the group left for a later pass: because the consolidated record would have listed more than
+    /// <see cref="ExperienceConsolidation.MaxSources"/> sources, or, with <see cref="ExperienceConsolidationGroupOutcome.Deferred"/>,
+    /// because the group could not be merged this pass.
     /// </summary>
     public int Deferred { get; init; }
+
+    /// <summary>
+    /// Whether the group is finished: its consolidated record exists and every record this pass tried to supersede by it
+    /// is superseded, and nothing was deferred. <see langword="false"/> means the consolidated record and some of its
+    /// sources coexist (both can be retrieved) until a later pass finishes, or the group was refused or deferred.
+    /// </summary>
+    public bool Complete =>
+        Outcome is ExperienceConsolidationGroupOutcome.Created or ExperienceConsolidationGroupOutcome.Existing
+        && Deferred == 0
+        && Sources.All(source => source is { Superseded: true });
 }
 
 /// <summary>How a group's consolidated record came to be used.</summary>
@@ -269,6 +287,25 @@ public enum ExperienceConsolidationGroupOutcome
     /// no longer eligible), so nothing was superseded. See <see cref="ExperienceConsolidationGroupResult.Reason"/>.
     /// </summary>
     Refused,
+
+    /// <summary>
+    /// The group was not merged this pass: its sources would exceed <see cref="ExperienceConsolidation.MaxSources"/>, or
+    /// its records kept changing while the pass read them. <see cref="ExperienceConsolidationGroupResult.Deferred"/> counts
+    /// the records left; <see cref="ExperienceConsolidationGroupResult.ConsolidatedExperienceId"/> is <see cref="Guid.Empty"/>.
+    /// </summary>
+    Deferred,
+}
+
+/// <summary>What <see cref="ExperienceConsolidationService.FindConsolidatedContainingAsync"/> found.</summary>
+/// <param name="Outcome">The store's outcome for the read: <see cref="ExperienceStoreOutcome.Found"/>, or why nothing was read.</param>
+/// <param name="ExperienceIds">The consolidated records that list the source, in ID order.</param>
+public sealed record ExperienceConsolidatedLookupResult(ExperienceStoreOutcome Outcome, IReadOnlyList<Guid> ExperienceIds)
+{
+    /// <summary>
+    /// Whether the scope holds more records than one store read answers, so a consolidated record off the source's
+    /// supersession chain and older than the most recent <see cref="ExperienceRecordQuery.MaxLimit"/> may have been missed.
+    /// </summary>
+    public bool MayHaveMore { get; init; }
 }
 
 /// <summary>One record a pass tried to supersede by a consolidated record.</summary>
