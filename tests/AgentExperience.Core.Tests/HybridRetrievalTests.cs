@@ -81,6 +81,30 @@ public class HybridRetrievalTests
         Assert.Equal(0.95, Relevance(vectorWins));
     }
 
+    // ---------------------------------------------------------------- story 28.5: each channel's own strength
+
+    [Fact]
+    public async Task Each_ranked_record_carries_its_text_coverage_and_vector_relevance_apart_from_the_merged_relevance()
+    {
+        var both = Record(Id(1));
+        var textOnly = Record(Id(2));
+        var vectorOnly = Record(Id(3));
+        var noCoverage = Record(Id(4));
+
+        var result = await Service(
+            text: [Candidate(both, 0.6) with { TermCoverage = 0.25 }, Candidate(textOnly, 0.9) with { TermCoverage = 0.5 }, Candidate(noCoverage, 0.4)],
+            vector: [Candidate(both, 0.9), Candidate(vectorOnly, 0.8)]).RetrieveAsync(Request());
+
+        RankedExperience Of(Guid id) => result.Records.Single(r => r.Record.ExperienceId == id);
+        Assert.Equal((0.25, 0.9), (Of(Id(1)).TextCoverage, Of(Id(1)).VectorRelevance));
+        Assert.Equal(0.9, Of(Id(1)).Components.Single(c => c.Kind == RankingComponentKind.Relevance).Value);
+        Assert.Equal((0.5, (double?)null), (Of(Id(2)).TextCoverage, Of(Id(2)).VectorRelevance));
+        Assert.Equal(((double?)null, 0.8), (Of(Id(3)).TextCoverage, Of(Id(3)).VectorRelevance));
+
+        // A text source that reports no coverage: its relevance stands in.
+        Assert.Equal(0.4, Of(Id(4)).TextCoverage);
+    }
+
     // ---------------------------------------------------------------- the vector relevance floor
 
     [Fact]

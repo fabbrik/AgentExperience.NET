@@ -170,6 +170,9 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
     private readonly RecipeRendering _recipe;
     private readonly CapabilityGate? _capabilityGate;
     private readonly bool _excludeModelAuthored;
+
+    /// <summary>The match-strength floor, or <see langword="null"/> when it is off.</summary>
+    private readonly ExperienceMatchFloor? _minimumMatch;
     private readonly string _stateKey;
     private readonly IReadOnlyList<string> _stateKeys;
 
@@ -217,6 +220,7 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
         _recipe = recipeExcerpts.IsEmpty ? RecipeRendering.None : new RecipeRendering(recipeExcerpts, retrieval.AreRecipeExcerptsConfirmed);
         _capabilityGate = capabilityGate;
         _excludeModelAuthored = options.ModelAuthoredLessons == ModelAuthoredLessonPolicy.Exclude;
+        _minimumMatch = options.MinimumMatch;
 
         // Snapshotted with the rest: the key this provider reads and writes never changes under it.
         _stateKey = options.SessionStateKey;
@@ -587,7 +591,7 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
         {
             try
             {
-                retrieved = await _retrieval.RetrieveAsync(GatedWindow(request, capabilityGate, _options.Limits.MaxRecords, _retrieval.Policy.CandidateLimit), cancellationToken).ConfigureAwait(false);
+                retrieved = await _retrieval.RetrieveAsync(GatedWindow(request, capabilityGate, _options.Limits.MaxRecords, _retrieval.Policy.CandidateLimit, _minimumMatch is not null), cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -1316,11 +1320,13 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
     /// by the retrieval policy's candidate limit, so records the gate keeps out can be backfilled from below. A request
     /// with no limit already gets the whole candidate window; one whose limit retrieval would refuse is left for
     /// retrieval to refuse; and a gate that can reject nothing widens nothing. What the host's own limit admits is still
-    /// all that can be injected (<see cref="Select"/>).
+    /// all that can be injected (<see cref="Select"/>). The match floor (<paramref name="floorActive"/>) widens the window
+    /// the same way, by <see cref="FloorWindowMultiplier"/>, or by the gate's multiplier when that is larger.
     /// </summary>
-    internal static RetrieveExperienceRequest GatedWindow(RetrieveExperienceRequest request, CapabilityGate? gate, int maxRecords, int candidateLimit)
+    internal static RetrieveExperienceRequest GatedWindow(RetrieveExperienceRequest request, CapabilityGate? gate, int maxRecords, int candidateLimit, bool floorActive = false)
     {
-        if (gate is not { CanReject: true } || request.Limit is not { } limit)
+        var multiplier = Math.Max(gate is { CanReject: true } ? gate.WindowMultiplier : 0, floorActive ? FloorWindowMultiplier : 0);
+        if (multiplier == 0 || request.Limit is not { } limit)
         {
             return request;
         }
@@ -1332,9 +1338,12 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
 
         var window = (int)Math.Min(
             candidateLimit,
-            Math.Max(limit, (long)maxRecords * gate.WindowMultiplier));
+            Math.Max(limit, (long)maxRecords * multiplier));
         return window == limit ? request : request with { Limit = window };
     }
+
+    /// <summary>How much wider than the record limit the match floor asks retrieval to look, when the request names a limit: the capability gate's default.</summary>
+    internal const int FloorWindowMultiplier = 4;
 
     /// <summary>The omission detail of a lesson measured as hurting.</summary>
     internal const string MeasuredHarmfulDetail = "The injection holdout measured this lesson as hurting: runs given it verified less often than runs it was withheld from.";
@@ -1429,7 +1438,7 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
     /// and <see cref="GatedWindow"/> under <see cref="GateFor"/>. For contract 1.13's <c>inject-options</c> fixtures.
     /// </summary>
     internal RetrieveExperienceRequest RetrievalRequest(RetrieveExperienceRequest request, IEnumerable<AITool>? runTools) =>
-        GatedWindow(WithModelAuthoredExclusion(request), GateFor(runTools), _options.Limits.MaxRecords, _retrieval.Policy.CandidateLimit);
+        GatedWindow(WithModelAuthoredExclusion(request), GateFor(runTools), _options.Limits.MaxRecords, _retrieval.Policy.CandidateLimit, _minimumMatch is not null);
 
     /// <summary>
     /// Takes the top <see cref="ExperienceInjectionLimits.MaxRecords"/> in rank order and records the
@@ -1494,6 +1503,17 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
                 && delivered.Revision >= candidate.Record.Revision)
             {
                 omittedHere.Add(new OmittedExperience(candidate.Record.ExperienceId, InjectionOmissionReason.AlreadyDelivered, AlreadyDeliveredDetail));
+                continue;
+            }
+
+            // The match floor (story 28.5), before the limit: a weak match takes no slot, so a stronger one ranked below it
+            // fills it. Never re-checked on the re-read record: how well a record matched the request does not change.
+            if (_minimumMatch is { } floor && !floor.Passes(candidate, _retrieval.Policy.MinimumVectorRelevance))
+            {
+                omittedHere.Add(new OmittedExperience(
+                    candidate.Record.ExperienceId,
+                    InjectionOmissionReason.WeakMatch,
+                    floor.Detail(candidate, _retrieval.Policy.MinimumVectorRelevance)));
                 continue;
             }
 
@@ -2394,6 +2414,12 @@ public sealed partial class ExperienceContextProvider : AIContextProvider
     private void Report(InjectionTrace trace, ExperienceInjectionResult result)
     {
         InjectionDiagnostics.Tag(trace, InjectionDiagnostics.OmittedCountAttribute, result.Omitted.Count);
+        if (result.Outcome == InjectionOutcome.NothingToInject
+            && result.Omitted.Any(omission => omission.Reason == InjectionOmissionReason.WeakMatch))
+        {
+            InjectionDiagnostics.Tag(trace, InjectionDiagnostics.NothingReasonAttribute, InjectionDiagnostics.WeakMatchReason);
+        }
+
         if (result.RetractedExperienceIds.Count > 0)
         {
             InjectionDiagnostics.Tag(trace, InjectionDiagnostics.RetractedCountAttribute, result.RetractedExperienceIds.Count);

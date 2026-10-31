@@ -235,7 +235,8 @@ public sealed partial class ExperienceContextProvider
         var omitted = new List<OmittedExperience>();
         var candidates = new List<ExperienceSignatureCandidate>();
         var seen = new HashSet<Guid>();
-        foreach (var match in recall.AllowCoarseMatch ? ExactThenCoarse : ExactOnly)
+        // Under the match floor only an exact signature match is strong enough, so a coarse one is never asked for.
+        foreach (var match in recall.AllowCoarseMatch && _minimumMatch is null ? ExactThenCoarse : ExactOnly)
         {
             var read = await ReadWithinAsync(
                     token => lookup.FindAsync(

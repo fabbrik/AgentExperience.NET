@@ -400,6 +400,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions Holdout { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Limits { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceMessageRole MessageRole { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceMatchFloor? MinimumMatch { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ModelAuthoredLessonPolicy ModelAuthoredLessons { get; set; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOptions? Recall { get; set; }
@@ -453,6 +454,13 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public bool RecordsExhausted { get; }
         public int RecordsUsed { get; init; }
         public int TrackedRecords { get; init; }
+    }
+    public sealed class ExperienceMatchFloor : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceMatchFloor>
+    {
+        public const double Tolerance = 1E-06D;
+        public ExperienceMatchFloor() { }
+        public double? MinimumSemanticSimilarity { get; init; }
+        public required double MinimumTextCoverage { get; init; }
     }
     public sealed class ExperienceRecallOptions : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOptions>
     {
@@ -602,6 +610,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         ModelAuthored = 9,
         UnconfirmedContent = 10,
         MeasuredHarmful = 11,
+        WeakMatch = 12,
     }
     public enum InjectionOutcome
     {

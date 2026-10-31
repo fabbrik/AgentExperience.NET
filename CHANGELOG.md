@@ -316,17 +316,6 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   others `AlreadyRecorded`, a changed resubmission `Conflict` from all three), all three read the same history and
   confidence, and each agent alone leaves the same ledger, evidence, event and record rows in its own database.
 
-## 0.1.0-preview.17
-
-This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of
-runs and records both arms; `AgentExperienceBenefit.EstimateAsync` compares the arms' verified outcomes, overall, per
-lesson and optionally per model; the injection provider can act on the measured benefit; the same holdout measures any
-other MAF memory provider; and lessons measured as helping can be exported to other memory stores. PostgreSQL gains
-migrations `0027` to `0029` (re-run `ApplyApplicationRolePrivilegesAsync` after migrating). The Python and Go ports
-take part in the holdout through contract 1.8 (add-only). Every new option is off by default, and the public API
-changes are additions. The same tag releases the six NuGet packages, the Python distribution `agenticexperience` and
-the six Go modules at one version.
-
 ### A scoped supersession lock and ranking to the bit: contract 1.18 (story 28.1)
 
 - **A supersession locks only rows in the caller's scope.** The PostgreSQL store locked the record and its proposed
@@ -486,6 +475,40 @@ the six Go modules at one version.
 - **Not provided**: sharing grants and the access log, encryption and crypto-shredding, row-level security and database
   roles, vectors, retention sweeps. Internally, the PostgreSQL payload's attempt, outcome, environment and provenance
   mappings are each one method now, shared with the SQLite store; nothing stored changes.
+
+### Precision before recall: an injection-time match floor (story 28.5)
+
+- **`ExperienceInjectionOptions.MinimumMatch`** (type `ExperienceMatchFloor`, off by default): a record is injected only
+  when it has an exact failure-signature match on the current run (a recall hint), text coverage at least
+  `MinimumTextCoverage` (the share of the request's distinct terms it contains, relative to the store's terms; required,
+  no default), or semantic similarity at least `MinimumSemanticSimilarity` (by default the retrieval policy's
+  `MinimumVectorRelevance`; with neither set the semantic leg is off). A weaker record is omitted as the new
+  `InjectionOmissionReason.WeakMatch`, with a content-free detail, before the capability gate and the record limit, so
+  it takes no slot and a stronger one backfills; a host-limited request is widened like the capability gate's. A block
+  that injects nothing with a `WeakMatch` omission ends `NothingToInject`, and its `inject` span carries
+  `agentexperience.nothing_reason = weak_match`. The holdout splits after the floor. Under a floor, recall never asks
+  for a coarse signature match. Which candidates retrieval returns is unchanged, and with the floor off everything is
+  byte for byte what it was.
+- **Each channel's strength travels with the record.** `ExperienceCandidate.TermCoverage` (the in-memory, PostgreSQL and
+  SQLite text sources set it), `RankedExperience.TextCoverage` and `RankedExperience.VectorRelevance` (set by
+  retrieval). Ranking is unchanged.
+- **Chosen by a rule fixed before measuring, and the rule said off.** The retrieval benchmark's goldens gain an
+  `INJECTION FLOOR` sweep (0 to 0.6). No floor kept unexpected records at or below 0.15 in the first 8 on both stores, and
+  none removed the distractor-overlap noise (distractors containing every word of a short query), while every floor
+  cost long, realistic requests their lesson; so the floor stays off and has no recommended value
+  ([the table](docs/benchmarks.md#the-injection-floor-story-285)).
+- The Python and Go ports and the contract are unchanged; the ports do not apply a floor yet.
+
+## 0.1.0-preview.17
+
+This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of
+runs and records both arms; `AgentExperienceBenefit.EstimateAsync` compares the arms' verified outcomes, overall, per
+lesson and optionally per model; the injection provider can act on the measured benefit; the same holdout measures any
+other MAF memory provider; and lessons measured as helping can be exported to other memory stores. PostgreSQL gains
+migrations `0027` to `0029` (re-run `ApplyApplicationRolePrivilegesAsync` after migrating). The Python and Go ports
+take part in the holdout through contract 1.8 (add-only). Every new option is off by default, and the public API
+changes are additions. The same tag releases the six NuGet packages, the Python distribution `agenticexperience` and
+the six Go modules at one version.
 
 ### The holdout in Python and Go: contract 1.8 (story 25.6)
 

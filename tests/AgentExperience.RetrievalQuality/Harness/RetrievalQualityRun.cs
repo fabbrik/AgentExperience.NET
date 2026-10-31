@@ -5,7 +5,11 @@ namespace AgentExperience.RetrievalQuality.Harness;
 /// <summary>What one query's search returned, by corpus record ID, strongest match first.</summary>
 /// <param name="Query">The query.</param>
 /// <param name="Returned">The corpus IDs of the candidates, in the order the source returned them.</param>
-internal sealed record QueryOutcome(CorpusQuery Query, IReadOnlyList<string> Returned);
+/// <param name="Coverage">
+/// Story 28.5: each candidate's <see cref="ExperienceCandidate.TermCoverage"/>, parallel to <paramref name="Returned"/>, for a
+/// text query; <see langword="null"/> for a signature lookup.
+/// </param>
+internal sealed record QueryOutcome(CorpusQuery Query, IReadOnlyList<string> Returned, IReadOnlyList<double>? Coverage = null);
 
 /// <summary>Story 28.2: what one signature query's two lookups returned, by corpus record ID, in the source's order.</summary>
 /// <param name="Query">The signature query.</param>
@@ -69,7 +73,9 @@ internal static class RetrievalQualityRun
                 query,
                 [.. result.Candidates.Select(c => byExperienceId.TryGetValue(c.Record.ExperienceId, out var id)
                     ? id
-                    : throw new InvalidOperationException($"Query {query.Id} returned {c.Record.ExperienceId}, which is not a corpus record."))]));
+                    : throw new InvalidOperationException($"Query {query.Id} returned {c.Record.ExperienceId}, which is not a corpus record."))],
+                [.. result.Candidates.Select(c => c.TermCoverage
+                    ?? throw new InvalidOperationException($"Query {query.Id}'s candidate {c.Record.ExperienceId} carries no term coverage."))]));
         }
 
         return new RetrievalQualityResult(

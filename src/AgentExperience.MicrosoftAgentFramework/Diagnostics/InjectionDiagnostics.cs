@@ -90,6 +90,15 @@ internal static class InjectionDiagnostics
     internal const string HistoryReadAttribute = "agentexperience.history_read";
 
     /// <summary>
+    /// Why an injection that ran every step injected nothing, when the match floor (<c>ExperienceInjectionOptions.MinimumMatch</c>)
+    /// kept at least one record out of it: <see cref="WeakMatchReason"/>. Set only then, on a <c>NothingToInject</c> outcome.
+    /// </summary>
+    internal const string NothingReasonAttribute = "agentexperience.nothing_reason";
+
+    /// <summary>The <see cref="NothingReasonAttribute"/> value for a block the match floor emptied.</summary>
+    internal const string WeakMatchReason = "weak_match";
+
+    /// <summary>
     /// The operation recall at the moment of failure emits, once per failed tool call it looks at
     /// (<c>ExperienceRecallOptions</c>): a span like <see cref="Inject"/>'s, with one of the
     /// <c>ExperienceRecallOutcome</c> member names as its outcome.

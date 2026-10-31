@@ -602,6 +602,9 @@ public sealed class PostgresGrantTests
         // in the same owner scope is not reachable at all.
         Assert.Equal([shared], result.Candidates.Select(candidate => candidate.Record.ExperienceId));
         Assert.True(Assert.Single(result.Candidates).SharedByGrant);
+
+        // Story 28.5: a borrowed candidate reports its term coverage like an owned one.
+        Assert.Equal(1d, Assert.Single(result.Candidates).TermCoverage);
         Assert.DoesNotContain(ineligible, result.Candidates.Select(candidate => candidate.Record.ExperienceId));
         Assert.DoesNotContain(ungranted, result.Candidates.Select(candidate => candidate.Record.ExperienceId));
 

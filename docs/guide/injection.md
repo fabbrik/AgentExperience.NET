@@ -165,6 +165,7 @@ it through its own redaction first. It recognises no language: no stemming, no s
 | `MessageRole` | `User` | The chat role the block is sent in: `User` or `System`. Some chat APIs reject, move or merge a system message that is not first, so test `System` with your provider. See [The payload](#the-payload). |
 | `DecideInjection` | none (permit) | Per-candidate host risk decision, asked after the final eligibility check. Fail-closed: a callback that throws or returns `null` denies. Synchronous on purpose: with session tracking on it runs while the session's lock is held. Per-candidate I/O has no async hook: prefetch what it needs, keyed by scope, in `ResolveRequestAsync`, or decide offline. |
 | `ReceivingAgent` | none (off) | The receiving agent's tools (declared, or the run's own with `UseRunTools`) and maximum risk class. A record whose verified approach it cannot, or must not, carry out is not injected and takes no record slot. See [Gating on the receiving agent's capabilities](#gating-on-the-receiving-agents-capabilities). |
+| `MinimumMatch` | `null` (off) | The match-strength floor: a record is injected only when its match is strong enough (an exact failure-signature match, enough of the request's terms, or enough semantic similarity); weaker ones are omitted as `WeakMatch` and take no slot. See [Keeping weak matches out](#keeping-weak-matches-out). |
 | `ModelAuthoredLessons` (since `0.1.0-preview.5`) | `Include` | Whether records whose free text a model wrote are injected (labelled) or omitted. `Exclude` asks retrieval to leave them out before its limit (since `0.1.0-preview.6`); the provider still drops any that arrive. See [Model-authored lessons](#model-authored-lessons). |
 | `OnContextInjected` | none | Receives the content-free account of every attempt, including every omission and its reason. Exceptions it throws are swallowed. No result is emitted when the caller cancels the invocation: the cancellation propagates instead. |
 | `TimeProvider` | `TimeProvider.System` | The clock the final eligibility check measures record expiry and its own timeout with. |
@@ -195,7 +196,7 @@ agent-framework does not hand them to a context provider, so only the agent's ow
 added count. In Go a zero window multiplier means 4, and `Deny("")` reports the default detail. Still .NET-only: session
 tracking, withdrawal and the final re-read (`SessionLimits`, `SessionStateKey`, `Limits.EligibilityCheckTimeout`,
 `Limits.MaxAbandonedReads`), unconfirmed content, the decision context's grant fields and required environment
-attributes.
+attributes, and the match floor (`MinimumMatch`): the ports do not apply a floor yet.
 
 ## What the agent sees
 
@@ -736,6 +737,61 @@ new ExperienceInjectionOptions
   it is built, so a later edit changes nothing, and refuses a null, empty or whitespace tool name in either
   collection, or an undefined `ToolRiskClass`, with `ArgumentException`. With `ReceivingAgent` unset, the block, the omissions and the outcomes are byte for byte what
   they are without it. `CapabilityGateTests` pins each case.
+
+## Keeping weak matches out
+
+Retrieval's channel floors decide which records are *candidates*: by default, a text candidate needs any three of the
+request's terms (see [How the text channel matches](retrieval.md#how-the-text-channel-matches)), which finds long,
+paraphrased requests at the price of some records that share only a few words. Without a floor, every candidate that
+survives the checks below is injected however weakly it matched. The real-task experiment found that a wrong or
+empty lesson costs the agent: its mismatched-cluster control did worse than no memory.
+
+`MinimumMatch` is a second, separate gate, applied at injection time. A record is injected only if **at least one** of
+these holds:
+
+| Leg | Passes when | Read from |
+| --- | --- | --- |
+| Failure signature | an exact signature match on the current run, which only a [recall hint](#recall-at-the-moment-of-failure) has; the before-run block has none | the recall lookup |
+| Text | the record contains at least `MinimumTextCoverage` (required, no default) of the request's distinct terms | `RankedExperience.TextCoverage` |
+| Semantic | its vector relevance is at least `MinimumSemanticSimilarity`, or, when that is `null`, the retrieval policy's `MinimumVectorRelevance`; with neither set this leg is **off** | `RankedExperience.VectorRelevance` |
+
+```csharp
+options.MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 };
+```
+
+A record below it is omitted as `WeakMatch`, with a content-free detail naming its strengths and the floor. It is
+checked on the ranked candidate after `AlreadyDelivered` and before the capability gate and the record limit, so a weak
+match takes no slot and a stronger record ranked below it fills it; like the capability gate, a request that names
+its own `Limit` asks retrieval for a window four times `MaxRecords` to backfill from (a weak match fetched only as
+backfill, past the host's own limit, is not reported). When nothing is injected and at least one record was omitted as
+`WeakMatch`, the outcome is `NothingToInject` and the `inject` span carries `agentexperience.nothing_reason =
+weak_match`, even if other reasons (a capability gate, an ineligible re-read) kept other records out too: the attribute
+says the floor contributed, and the result's `Omitted` list says what kept each record out. The holdout splits its arms
+after the floor, so both arms are judged on the same eligible set. A recall hint is a signature match only, so under a
+floor only an exact match counts and recall never asks for a coarse one, whatever `AllowCoarseMatch` says.
+
+Things to know:
+
+- **It is off by default, on evidence, and has no recommended value.** On the
+  [retrieval benchmark](../benchmarks.md#the-injection-floor-story-285), no floor met the precision target fixed before
+  measuring (at most 0.15 unexpected records in the first 8 on both stores, and none on the distractor-overlap queries),
+  so `MinimumTextCoverage` has no default: choose it for your requests and measure. The noise a coverage floor cannot remove is distractors that contain
+  *every* word of a short request; what it removes first is the right lesson for a long, realistic one. Turn it on
+  where your requests are short and your lessons varied, and measure with the holdout.
+- **Coverage is a share, not a count.** A twelve-term request matched on three terms covers 0.25, which a floor of 0.3
+  keeps out. That is the trade: the channel floor is a count precisely so long requests find something.
+- **Coverage is relative to the store.** A term is what the text source counts: whole, unstemmed words in memory
+  ("invoices" and "invoice" are two); stemmed lexemes on PostgreSQL, less stopwords, with a hyphenated compound counted
+  once; Porter-stemmed words on SQLite. The same request can have a different number of terms, and a record a
+  different coverage, on each store, so a floor tuned on one is not tuned on another.
+- **The semantic leg fails closed.** With neither `MinimumSemanticSimilarity` nor the policy's `MinimumVectorRelevance`
+  set, it is off: a record only the vector channel found is a weak match however close. Setting
+  `MinimumSemanticSimilarity` below the policy's floor does nothing, because retrieval never returns a vector candidate
+  below the policy's floor.
+- **Comparisons allow 1e-6**, so a coverage PostgreSQL computes in single precision (3 of 10 terms as 0.3000000119) is not
+  lost at a floor of 0.3.
+- The lessons view sets the task aside and runs no retrieval, so it shows no floor.
+- The Python and Go ports do not apply a floor yet.
 
 ## Model-authored lessons
 

@@ -163,6 +163,9 @@ public sealed class PostgresTextSearchRowLevelSecurityTests(PostgresFixture fixt
         Assert.Contains(startup.ToString(), off[12], StringComparison.Ordinal);
         Assert.Contains(docker.ToString(), off[16], StringComparison.Ordinal);
 
+        // Story 28.5: every candidate carries its term coverage, equal to its relevance, through either route.
+        Assert.All(off[0].Split('\n'), line => Assert.Equal(line.Split(' ')[1], line.Split(' ')[2]));
+
         await world.ApplyAsync(enable: true);
         Assert.True(await world.RoutesThroughFunctionAsync(tenant));
         for (var i = 0; i < requests.Count; i++)
@@ -698,7 +701,7 @@ public sealed class PostgresTextSearchRowLevelSecurityTests(PostgresFixture fixt
             Assert.Equal(ExperienceStoreOutcome.Found, result.Outcome);
 
             var lines = result.Candidates
-                .Select(c => $"{c.Record.ExperienceId} {c.Relevance:R} {c.SharedByGrant} {c.PermittingGrantId} {c.GrantDisclosure}")
+                .Select(c => $"{c.Record.ExperienceId} {c.Relevance:R} {c.TermCoverage:R} {c.SharedByGrant} {c.PermittingGrantId} {c.GrantDisclosure}")
                 .ToList();
 
             await using var command = Owner.CreateCommand(

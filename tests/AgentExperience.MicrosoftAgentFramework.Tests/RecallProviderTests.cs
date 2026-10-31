@@ -335,6 +335,70 @@ public sealed class RecallProviderTests
         Assert.Single(assignments.Select(a => a.RunId).Distinct());
     }
 
+    [Fact]
+    public async Task Under_the_match_floor_an_exact_signature_match_still_gives_a_hint()
+    {
+        var h = new Harness { MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 1d } };
+        h.Publish(Lesson(1));
+
+        await h.RunAsync("run_tests");
+
+        var recall = Assert.Single(h.Recalls);
+        Assert.Equal(ExperienceRecallOutcome.Hinted, recall.Outcome);
+        Assert.Equal([InjectionRecords.Id(1)], recall.ExperienceIds);
+        Assert.NotNull(h.Hint);
+    }
+
+    [Fact]
+    public async Task Under_the_match_floor_recall_never_asks_for_a_coarse_match()
+    {
+        var h = new Harness
+        {
+            Recall = new ExperienceRecallOptions { AllowCoarseMatch = true },
+            MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 },
+        };
+        var lesson = Lesson(1);
+        h.World.Store(lesson);
+        h.Source.Add(lesson, match: ExperienceSignatureMatch.Coarse);
+
+        await h.RunAsync("run_tests");
+
+        var recall = Assert.Single(h.Recalls);
+        Assert.Equal(ExperienceRecallOutcome.NoMatch, recall.Outcome);
+        Assert.Equal([ExperienceSignatureMatch.Exact], h.Source.Queries.Select(q => q.Match));
+        Assert.Null(h.Hint);
+    }
+
+    [Fact]
+    public async Task The_match_floor_runs_before_the_holdout_split_so_a_held_out_block_withholds_only_what_passed()
+    {
+        var assignments = new List<HoldoutAssignment>();
+        var h = new Harness { Holdout = new ExperienceHoldoutOptions { Rate = 1 }, MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 } };
+        h.World.Publish(Lesson(1, "deploy"), relevance: 1d);
+        h.World.Publish(Lesson(2, "deploy"), relevance: 0.1d);
+        h.World.TracksHoldout = true;
+        h.World.OnRecordHoldout = (_, _, assignment, _) =>
+        {
+            lock (assignments)
+            {
+                assignments.Add(assignment);
+            }
+
+            return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Committed, []));
+        };
+
+        await h.RunAsync();
+        await h.Provider.InjectionRecordsSettledAsync();
+
+        var injection = Assert.Single(h.Injections);
+        Assert.Equal(InjectionOutcome.Withheld, injection.Outcome);
+        Assert.Equal([InjectionRecords.Id(1)], injection.WithheldExperienceIds);
+        Assert.Equal(new OmittedExperience(InjectionRecords.Id(2), InjectionOmissionReason.WeakMatch, injection.Omitted[0].Detail), Assert.Single(injection.Omitted));
+        var assignment = Assert.Single(assignments);
+        Assert.Equal(HoldoutArm.Holdout, assignment.Arm);
+        Assert.Equal([InjectionRecords.Id(1)], assignment.Records.Select(r => r.ExperienceId));
+    }
+
     /// <summary>A scripted signature source: candidates by tool and match kind; it records every query.</summary>
     private sealed class ScriptedSignatureSource : IExperienceSignatureSource
     {
@@ -453,6 +517,8 @@ public sealed class RecallProviderTests
 
         public ExperienceHoldoutOptions Holdout { get; init; } = ExperienceHoldoutOptions.Off;
 
+        public ExperienceMatchFloor? MinimumMatch { get; init; }
+
         public string? Instructions { get; init; } = "Base instructions.";
 
         public bool Concurrent { get; init; }
@@ -474,6 +540,7 @@ public sealed class RecallProviderTests
                 Benefit = Benefit,
                 SessionLimits = SessionLimits,
                 Holdout = Holdout,
+                MinimumMatch = MinimumMatch,
                 OnContextInjected = Injections.Add,
                 Recall = Recall with
                 {
