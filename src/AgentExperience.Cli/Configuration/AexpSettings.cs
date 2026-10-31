@@ -30,6 +30,7 @@ internal sealed record RecipeSetting(string Tool, IReadOnlyList<string> Argument
 /// </summary>
 internal sealed record AexpSettings(
     string ConfigPath,
+    string ConfigSha256,
     string ProjectRoot,
     StoreSetting Store,
     Scope Scope,
@@ -83,7 +84,8 @@ internal static class AexpConfigLoader
 
     /// <summary>
     /// The config path: <paramref name="explicitPath"/> (<c>--config</c>), else <see cref="EnvironmentVariable"/>, else the
-    /// nearest <c>.aexp/config.json</c> in <paramref name="workingDirectory"/> or a directory above it.
+    /// nearest <c>.aexp/config.json</c> in <paramref name="workingDirectory"/> or a directory above it, looking no further
+    /// than the repository root (the directory holding <c>.git</c>) or the home directory, whichever comes first.
     /// </summary>
     public static string Locate(string? explicitPath, string workingDirectory, Func<string, string?> environment)
     {
@@ -94,6 +96,8 @@ internal static class AexpConfigLoader
             return File.Exists(full) ? full : throw new AexpConfigException($"The config file '{full}' does not exist.");
         }
 
+        var home = environment(OperatingSystem.IsWindows() ? "USERPROFILE" : "HOME");
+        home = string.IsNullOrWhiteSpace(home) ? null : Path.TrimEndingDirectorySeparator(Path.GetFullPath(home));
         for (var directory = new DirectoryInfo(Path.GetFullPath(workingDirectory)); directory is not null; directory = directory.Parent)
         {
             var candidate = Path.Combine(directory.FullName, DefaultRelativePath);
@@ -101,20 +105,39 @@ internal static class AexpConfigLoader
             {
                 return candidate;
             }
+
+            var here = Path.TrimEndingDirectorySeparator(directory.FullName);
+            if (Directory.Exists(Path.Combine(here, ".git")) || File.Exists(Path.Combine(here, ".git"))
+                || (home is not null && string.Equals(here, home, OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)))
+            {
+                break;
+            }
         }
 
         throw new AexpConfigException(
-            $"No {DefaultRelativePath} was found in '{workingDirectory}' or above it. Create one (see docs/guide/cli-and-mcp.md), "
-            + $"or name one with --config or {EnvironmentVariable}.");
+            $"No {DefaultRelativePath} was found in '{workingDirectory}' or above it, up to the repository root or the home "
+            + $"directory. Create one (see docs/guide/cli-and-mcp.md), or name one with --config or {EnvironmentVariable}.");
     }
 
     public static AexpSettings Load(string? explicitPath, string workingDirectory, Func<string, string?> environment)
     {
         var path = Locate(explicitPath, workingDirectory, environment);
+
+        // A config directory another user owns could hold anything this user's tool would then run.
+        foreach (var owned in new[] { Path.GetDirectoryName(path)!, path })
+        {
+            if (FileOwnership.OwnedByCurrentUser(owned) == false)
+            {
+                throw new AexpConfigException($"'{owned}' is not owned by the current user; aexp refuses a config another user controls.");
+            }
+        }
+
+        // The bytes parsed are the bytes hashed for trust: nothing can change between the two.
+        var bytes = File.ReadAllBytes(path);
         AexpConfigFile file;
         try
         {
-            file = JsonSerializer.Deserialize<AexpConfigFile>(File.ReadAllText(path), AexpConfigFile.Json)
+            file = JsonSerializer.Deserialize<AexpConfigFile>(bytes, AexpConfigFile.Json)
                 ?? throw new AexpConfigException($"The config file '{path}' is empty.");
         }
         catch (JsonException ex)
@@ -122,7 +145,17 @@ internal static class AexpConfigLoader
             throw new AexpConfigException($"The config file '{path}' is not valid: {ex.Message}");
         }
 
-        return Validate(file, path);
+        return Validate(file, path) with { ConfigSha256 = ConfigTrust.Hash(bytes) };
+    }
+
+    /// <summary>Whether <paramref name="path"/> is <paramref name="root"/> or lies inside it, after resolving both.</summary>
+    internal static bool IsInside(string root, string path)
+    {
+        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var full = Path.GetFullPath(path);
+        var comparison = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        return string.Equals(Path.TrimEndingDirectorySeparator(full), fullRoot, comparison)
+            || full.StartsWith(fullRoot + Path.DirectorySeparatorChar, comparison);
     }
 
     /// <summary>The project root: the directory holding <c>.aexp/</c> when the config sits in one, else the config's own directory.</summary>
@@ -193,6 +226,10 @@ internal static class AexpConfigLoader
             : DefaultVerifierTimeout;
         var checkId = string.IsNullOrWhiteSpace(verify.CheckId) ? "verify" : verify.CheckId.Trim();
         var workingDirectory = Path.GetFullPath(verify.WorkingDirectory ?? ".", root);
+        if (!IsInside(root, workingDirectory))
+        {
+            throw new AexpConfigException("verify.workingDirectory must lie inside the project root.");
+        }
         var revision = string.IsNullOrWhiteSpace(verify.Revision) ? "workspace" : verify.Revision.Trim();
 
         var recipes = new List<RecipeSetting>();
@@ -220,6 +257,7 @@ internal static class AexpConfigLoader
 
         return new AexpSettings(
             ConfigPath: configPath,
+            ConfigSha256: string.Empty,
             ProjectRoot: root,
             Store: store,
             Scope: scope,

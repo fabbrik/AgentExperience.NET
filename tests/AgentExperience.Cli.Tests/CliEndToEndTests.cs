@@ -105,6 +105,7 @@ public sealed class CliEndToEndTests
             RedirectStandardError = true,
             UseShellExecute = false,
         };
+        start.Environment["XDG_CONFIG_HOME"] = project.UserConfig;
         foreach (var arg in new[] { tool, "finalize", "--run", run })
         {
             start.ArgumentList.Add(arg);
@@ -247,7 +248,7 @@ public sealed class CliEndToEndTests
     [InlineData("""{"identity":{"tenant":"t","application":"a","project":"p"},"verify":{"command":["true"],"comand":["x"]}}""", "not valid")]
     public async Task A_config_the_tool_cannot_trust_stops_it_before_anything_runs(string config, string reason)
     {
-        using var project = new TempProject();
+        using var project = new TempProject(trusted: false);
         await File.WriteAllTextAsync(project.ConfigPath, config);
         var result = await project.RunAsync("run", "start", "--task", Task);
         Assert.Equal(AexpCli.ConfigError, result.Exit);
@@ -279,7 +280,7 @@ public sealed class CliEndToEndTests
         using var project = new TempProject();
         var elsewhere = Path.GetTempPath();
         var byOption = new StringWriter();
-        Assert.Equal(0, await AexpCli.RunAsync(["lessons", "--config", project.ConfigPath], new AexpConsole(byOption, new StringWriter(), elsewhere, static _ => null, TimeProvider.System)));
+        Assert.Equal(0, await AexpCli.RunAsync(["lessons", "--config", project.ConfigPath], new AexpConsole(byOption, new StringWriter(), elsewhere, project.Environment, TimeProvider.System)));
         var byVariable = new StringWriter();
         Assert.Equal(0, await AexpCli.RunAsync(["lessons"], new AexpConsole(byVariable, new StringWriter(), elsewhere, name => name == "AEXP_CONFIG" ? project.ConfigPath : null, TimeProvider.System)));
         Assert.Contains("No lessons yet.", byOption.ToString());

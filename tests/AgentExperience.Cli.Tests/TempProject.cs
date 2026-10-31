@@ -9,10 +9,12 @@ namespace AgentExperience.Cli.Tests;
 /// </summary>
 public sealed class TempProject : IDisposable
 {
-    public TempProject(Action<JsonObject>? configure = null)
+    public TempProject(Action<JsonObject>? configure = null, bool trusted = true)
     {
         Root = Path.Combine(Path.GetTempPath(), $"aexp-cli-{Guid.NewGuid():N}");
         Directory.CreateDirectory(Path.Combine(Root, ".aexp"));
+        UserConfig = Path.Combine(Path.GetTempPath(), $"aexp-user-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(UserConfig);
         var config = new JsonObject
         {
             ["identity"] = new JsonObject { ["tenant"] = "local", ["application"] = "cli-tests", ["project"] = "repo" },
@@ -27,6 +29,24 @@ public sealed class TempProject : IDisposable
         };
         configure?.Invoke(config);
         WriteConfig(config);
+        if (trusted)
+        {
+            Trust();
+        }
+    }
+
+    /// <summary>This test's own user config directory (XDG_CONFIG_HOME): where its trust file lives.</summary>
+    public string UserConfig { get; }
+
+    /// <summary>The environment the tool sees: the real one, but this test's own user config directory.</summary>
+    public string? Environment(string name) =>
+        name == "XDG_CONFIG_HOME" ? UserConfig : System.Environment.GetEnvironmentVariable(name);
+
+    /// <summary>Approves the current config, as a person would with 'aexp trust'.</summary>
+    public void Trust()
+    {
+        var result = RunAsync("trust").GetAwaiter().GetResult();
+        Assert.True(result.Exit == 0, result.Error);
     }
 
     /// <summary>A verifier that exits 0 when the file <c>fixed</c> exists in the working directory, 1 otherwise.</summary>
@@ -53,7 +73,7 @@ public sealed class TempProject : IDisposable
         var error = new StringWriter();
         var exit = await AexpCli.RunAsync(
             args,
-            new AexpConsole(output, error, Root, static _ => null, TimeProvider.System));
+            new AexpConsole(output, error, Root, Environment, TimeProvider.System));
         return new CliResult(exit, output.ToString(), error.ToString());
     }
 
@@ -100,6 +120,7 @@ public sealed class TempProject : IDisposable
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             Directory.Delete(Root, recursive: true);
+            Directory.Delete(UserConfig, recursive: true);
         }
         catch (IOException)
         {

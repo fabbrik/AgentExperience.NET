@@ -51,11 +51,22 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
     public async Task<Guid> StartRunAsync(string task, string? taskId, CancellationToken cancellationToken)
     {
         task = RequireTask(task);
+        var resolvedTaskId = string.IsNullOrWhiteSpace(taskId) ? Settings.TaskId : RequireIdentifier(taskId, "task ID");
+
+        // The task text is kept with the run and becomes its description, so it passes the same text rules a tool result
+        // does (secret redaction, the length bound) before it is written down.
+        string sanitizedTask;
+        await using (var services = await BuildAsync(null, cancellationToken).ConfigureAwait(false))
+        {
+            sanitizedTask = (await SanitizeAsync(services, "aexp.task", [], task, null, cancellationToken).ConfigureAwait(false)).Result
+                ?? throw new AexpUsageException("The task text was refused by the sanitization rules.");
+        }
+
         var journal = new RunJournal
         {
             RunId = Guid.NewGuid(),
-            TaskId = string.IsNullOrWhiteSpace(taskId) ? Settings.TaskId : RequireIdentifier(taskId, "task ID"),
-            Task = task,
+            TaskId = resolvedTaskId,
+            Task = sanitizedTask,
             Scope = Settings.Scope,
             StartedAt = clock.GetUtcNow(),
         };
@@ -218,7 +229,7 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
                 cancellationToken).ConfigureAwait(false);
             if (appended.Outcome is not (AppendAttemptOutcome.Recorded or AppendAttemptOutcome.DuplicateNoOp))
             {
-                throw new AexpUsageException($"Capture refused the run's calls ({appended.Outcome}{(appended.Reason is null ? string.Empty : ": " + appended.Reason)}).");
+                throw new AexpUsageException($"Capture refused the run's calls ({appended.Outcome}).", appended.Reason);
             }
 
             var completed = await capture.CompleteRunAsync(runId, DeterministicId(runId, "completion"), status, now, cancellationToken).ConfigureAwait(false);
@@ -229,7 +240,7 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
 
             if (completed.RunStoreFailure is { } failure)
             {
-                throw new AexpUsageException($"The run could not be stored for finalization: {failure}");
+                throw new AexpUsageException("The run could not be stored for finalization.", failure);
             }
 
             return 0;
@@ -244,7 +255,7 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
     /// </summary>
     public async Task<FinalizeSummary> FinalizeAsync(Guid runId, int? reportedExitCode, CancellationToken cancellationToken)
     {
-        if (File.Exists(_journals.PathOf(runId)))
+        if (_journals.Exists(runId))
         {
             throw new AexpUsageException($"Run {runId:D} is still open: end it first with 'aexp run end'.");
         }
@@ -255,9 +266,24 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
                 "This project's config does not accept a reported exit code (verify.acceptExitCode is false): aexp runs the verifier itself.");
         }
 
-        var verdict = reportedExitCode is { } code
-            ? new VerifierResult(code, TimedOut: false)
-            : await VerifierRunner.RunAsync(Settings.Verifier, cancellationToken).ConfigureAwait(false);
+        // The config names what runs (and whether a reported verdict counts): only a config a person approved may.
+        RequireTrusted();
+
+        // The run is checked before anything is spawned: it exists in this scope, it ended, and it is not finalized yet.
+        await using var services = await BuildAsync(null, cancellationToken).ConfigureAwait(false);
+        await RequireEndedRunAsync(services, runId, cancellationToken).ConfigureAwait(false);
+
+        VerifierResult verdict;
+        if (reportedExitCode is { } code)
+        {
+            verdict = new VerifierResult(code, TimedOut: false);
+        }
+        else
+        {
+            var program = VerifierRunner.ResolveProgram(Settings.Verifier, Settings.ProjectRoot, environment);
+            verdict = await VerifierRunner.RunAsync(Settings.Verifier, program, cancellationToken).ConfigureAwait(false);
+        }
+
         if (verdict.TimedOut)
         {
             throw new AexpUsageException(
@@ -265,7 +291,6 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
         }
 
         var passed = verdict.ExitCode == 0;
-        await using var services = await BuildAsync(null, cancellationToken).ConfigureAwait(false);
         var now = clock.GetUtcNow();
         var roundId = Guid.NewGuid();
         var revision = Settings.Verifier.Revision;
@@ -300,6 +325,58 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
             result.ExperienceId,
             result.Status,
             result.Reason ?? result.RunStoreFailure);
+    }
+
+    /// <summary>Deletes open runs started more than <paramref name="age"/> ago that no command is using.</summary>
+    public Task<int> PruneRunsAsync(TimeSpan age, CancellationToken cancellationToken) =>
+        _journals.PruneAsync(clock.GetUtcNow() - age, cancellationToken);
+
+    /// <summary>Whether a person approved this config's exact bytes with <c>aexp trust</c>.</summary>
+    public bool IsTrusted() => ConfigTrust.ForUser(environment).IsTrusted(Settings.ConfigPath, Settings.ConfigSha256);
+
+    /// <summary>Records this config's path and hash as approved by the person running <c>aexp trust</c>.</summary>
+    public void Trust() => ConfigTrust.ForUser(environment).Approve(Settings.ConfigPath, Settings.ConfigSha256, clock.GetUtcNow());
+
+    /// <summary>The verifier's program as it would be run: resolved, or why it cannot be.</summary>
+    public string DescribeVerifierProgram()
+    {
+        try
+        {
+            return VerifierRunner.ResolveProgram(Settings.Verifier, Settings.ProjectRoot, environment);
+        }
+        catch (AexpUsageException ex)
+        {
+            return "(cannot run: " + ex.Message + ")";
+        }
+    }
+
+    private void RequireTrusted()
+    {
+        if (!IsTrusted())
+        {
+            throw new AexpUntrustedConfigException();
+        }
+    }
+
+    private async Task RequireEndedRunAsync(IServiceProvider services, Guid runId, CancellationToken cancellationToken)
+    {
+        var store = services.GetService<IExperienceRunStore>()
+            ?? throw new AexpUsageException("The configured store keeps no runs, so a run cannot be finalized.");
+        var read = await store.GetAsync(Settings.Authorization(clock.GetUtcNow()), runId, cancellationToken).ConfigureAwait(false);
+        if (read.Outcome != ExperienceRunStoreOutcome.Found || read.Run is not { } stored || stored.Run.Scope != Settings.Scope)
+        {
+            throw new AexpUsageException($"No ended run {runId:D} is in this project's store; nothing was run.");
+        }
+
+        if (stored.Run.ExecutionStatus is null || stored.Run.EndedAt is null)
+        {
+            throw new AexpUsageException($"Run {runId:D} has not ended; nothing was run.");
+        }
+
+        if (stored.FinalizedAt is not null)
+        {
+            throw new AexpUsageException($"Run {runId:D} is already finalized; nothing was run.");
+        }
     }
 
     /// <summary>The lessons in this project's scope, as the library's lessons view lists them.</summary>
@@ -365,7 +442,7 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
             cancellationToken).ConfigureAwait(false);
         if (appended.Outcome != AppendAttemptOutcome.Recorded || !scratch.TryGetRun(scratchRun, out var run))
         {
-            throw new AexpUsageException($"Capture refused the call ({appended.Outcome}{(appended.Reason is null ? string.Empty : ": " + appended.Reason)}); nothing was recorded.");
+            throw new AexpUsageException($"Capture refused the call ({appended.Outcome}); nothing was recorded.", appended.Reason);
         }
 
         var stored = run.Attempts[0].ToolCalls[0];
@@ -478,7 +555,7 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
         }
         catch (JsonException ex)
         {
-            throw new AexpUsageException($"--args is not JSON: {ex.Message}");
+            throw new AexpUsageException("--args is not JSON.", ex.Message);
         }
 
         return node is JsonObject obj
@@ -528,3 +605,11 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
             ["ProcessArchitecture"] = RuntimeInformation.ProcessArchitecture.ToString(),
         });
 }
+
+/// <summary>
+/// The config is not one a person approved (or it changed since): it may not drive the verifier. The message is fixed, so
+/// it is safe to show a model, and tells the person what to do.
+/// </summary>
+internal sealed class AexpUntrustedConfigException() : Exception(
+    "This project's .aexp config is not trusted, or it changed since it was trusted. It names the command aexp runs, so "
+    + "a person must review it and approve it with 'aexp trust' (an edit, by anyone, revokes the approval). Nothing was run.");

@@ -126,12 +126,15 @@ public sealed class McpServerTests
 
         public McpClient Client { get; private set; } = null!;
 
+        /// <summary>What the server wrote for its operator.</summary>
+        public StringWriter Log { get; } = new();
+
         public static async Task<McpSession> StartAsync(TempProject project)
         {
             var session = new McpSession();
-            var settings = AexpConfigLoader.Load(null, project.Root, static _ => null);
-            var engine = new AexpEngine(settings, TimeProvider.System, static _ => null);
-            session._server = AexpMcpServer.RunAsync(engine, session._toServer.Reader.AsStream(), session._toClient.Writer.AsStream(), session._stop.Token);
+            var settings = AexpConfigLoader.Load(null, project.Root, project.Environment);
+            var engine = new AexpEngine(settings, TimeProvider.System, project.Environment);
+            session._server = AexpMcpServer.RunAsync(engine, session._toServer.Reader.AsStream(), session._toClient.Writer.AsStream(), session.Log, session._stop.Token);
             session.Client = await McpClient.CreateAsync(
                 new StreamClientTransport(session._toServer.Writer.AsStream(), session._toClient.Reader.AsStream()));
             return session;
