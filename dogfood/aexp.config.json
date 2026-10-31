@@ -1,0 +1,33 @@
+// The dogfood config: the Claude Code recipe on this repository. Copy it to .aexp/config.json (gitignored) before
+// 'aexp setup claude-code', which keeps an existing config. Read dogfood/README.md first. Changing a copied config
+// revokes 'aexp trust'; changing this file after dogfooding started changes the pre-registered design
+// (dogfood/preregistration.json): record it there as an amendment.
+{
+  // The store, open runs, sessions and the hook log stay in .aexp/, which .gitignore excludes.
+  "store": "sqlite:.aexp/experience.db",
+  "identity": {
+    "tenant": "fabbrik",
+    "application": "agentexperience-net",
+    "project": "dev",
+    "agent": "claude-code"
+  },
+  "verify": {
+    // The Docker-free test set as one script: build, then every project CONTRIBUTING.md runs without Docker.
+    // Resolved against the project root (the directory holding .aexp/), never through PATH, never through a shell.
+    "command": ["dogfood/verify.sh"],
+    // Under the Stop hook's 600 s, so the hook can still finalize. A slower run is stored; 'aexp finalize' finishes it.
+    "timeoutSeconds": 540,
+    "checkId": "docker-free-tests"
+  },
+  // Only file paths are kept from tool calls. A Bash command line is not: it can carry a token or a password.
+  "sanitization": { "allowArguments": ["file_path"] },
+  // No recipe consents. A consent would keep a tool's result text (file contents, command output) as an excerpt of what
+  // worked, and command output can carry secrets (environment dumps, connection strings, tokens in URLs). The lessons
+  // still name the tools, the failure class and the file paths.
+  "recipes": [],
+  // Half the sessions get no lessons: the arm is drawn once per Claude Code session, from its ID.
+  "injection": { "holdoutRate": 0.5 },
+  "recall": { "enabled": true },
+  // Turns made only of these Bash commands count as reading: they do not run the test suite when they stop.
+  "claudeCode": { "readOnlyBashPrefixes": ["git status", "ls"] }
+}

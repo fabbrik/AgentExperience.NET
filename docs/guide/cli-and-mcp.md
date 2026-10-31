@@ -134,7 +134,7 @@ aexp finalize --run "$run"                                 # runs the verifier; 
 | `aexp lessons [--all] [--html <file>]` | A table of the lessons (`--all` adds the ones retrieval would not use), or the [HTML view](deployment.md#seeing-what-it-learned). |
 | `aexp export --markdown <file>` | Exports the lessons the holdout measured as helping (the [measured export](injection.md)). |
 | `aexp export --claude-md [file]` / `--agents-md [file]` | Writes the same lessons into a managed section of `CLAUDE.md` / `AGENTS.md` (the project root's when no file is named), leaving the rest of the file byte for byte ([Claude Code](claude-code.md#lessons-in-claudemd-or-agentsmd)). |
-| `aexp benefit` | The holdout's estimate: runs given lessons against runs they were withheld from. |
+| `aexp benefit [--markdown <file>]` | The holdout's estimate: runs given lessons against runs they were withheld from. With `--markdown`, writes it as a results page instead: counts and rates per arm, the difference with its 95% interval, the verdict, the runs left out, the reading rules and what it can and cannot say (no path or run ID, so it can be committed). |
 | `aexp mcp` | Serves the MCP tools over stdin and stdout. |
 | `aexp trust` | Prints what the config would run, and approves the config (see above). |
 | `aexp runs prune --older-than <age>` | Deletes open runs (never ended) started longer ago than `7d`, `12h` or `30m`, unless a command is using them, and Claude Code session files not touched for as long. |
@@ -142,7 +142,7 @@ aexp finalize --run "$run"                                 # runs the verifier; 
 | `aexp hook <event> [--timeout <s>]` | A Claude Code hook: reads the event's JSON on standard input, prints the hook output; always exits 0 ([Claude Code](claude-code.md)). |
 
 Exit codes: 0 done, 1 failed, 2 a usage error (including a run that is not open), 3 a configuration the tool refuses
-(including an untrusted one). `lessons --html` and `export --markdown` write inside the project root only, never through
+(including an untrusted one). `lessons --html`, `export --markdown` and `benefit --markdown` write inside the project root only, never through
 a link.
 
 ## How it works

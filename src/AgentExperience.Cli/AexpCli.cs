@@ -46,7 +46,7 @@ internal static class AexpCli
           aexp export [--markdown <file>] [--claude-md [file]] [--agents-md [file]]
                                                                 Export lessons measured as helping (to a file, or
                                                                 the managed section of CLAUDE.md / AGENTS.md).
-          aexp benefit                                         The holdout's estimate.
+          aexp benefit [--markdown <file>]                     The holdout's estimate (or a results page).
           aexp mcp                                             Serve the MCP tools over stdio.
           aexp trust                                           Show the config's verifier, and approve the config.
           aexp runs prune --older-than <age>                   Delete open runs older than e.g. 7d, 12h, 30m.
@@ -236,8 +236,23 @@ internal static class AexpCli
                 return Ok;
 
             case ["benefit"]:
-                args.Only();
-                await output.WriteAsync(Formatting.Benefit(await engine.BenefitAsync(cancellationToken).ConfigureAwait(false))).ConfigureAwait(false);
+                args.Only("markdown");
+                var estimate = await engine.BenefitAsync(cancellationToken).ConfigureAwait(false);
+                if (args.Value("markdown") is { } resultsPage)
+                {
+                    var target = InsideProject(engine, resultsPage, console);
+                    await File.WriteAllTextAsync(
+                        target,
+                        Formatting.BenefitMarkdown(estimate, engine.Settings, console.Clock.GetUtcNow()),
+                        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                        cancellationToken).ConfigureAwait(false);
+                    await output.WriteLineAsync($"Wrote the holdout's estimate ({estimate.Overall.Verdict}) to {resultsPage}.").ConfigureAwait(false);
+                }
+                else
+                {
+                    await output.WriteAsync(Formatting.Benefit(estimate)).ConfigureAwait(false);
+                }
+
                 return Ok;
 
             case ["mcp"]:
@@ -460,5 +475,75 @@ internal static class Formatting
 
         text.AppendLine(CultureInfo.InvariantCulture, $"Runs per arm needed for a verdict: {estimate.MinimumRunsPerArm}; not yet verified: {overall.Pending}");
         return text.ToString();
+    }
+
+    /// <summary>
+    /// The estimate as a results page: counts per arm, rates, the difference with its interval, the verdict, the runs left
+    /// out, the reading rules and what the page can and cannot say. No path, run ID or timestamp beyond the date, so the
+    /// page can be committed.
+    /// </summary>
+    public static string BenefitMarkdown(ExperienceBenefitEstimate estimate, AexpSettings settings, DateTimeOffset readOn)
+    {
+        static string Count(int value) => value.ToString(CultureInfo.InvariantCulture);
+        static string Signed(double value) => value.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture);
+        static string Arm(string name, ExperienceBenefitArm arm) =>
+            $"| {name} | {Count(arm.Runs)} | {Count(arm.Successes)} | "
+            + (arm.Rate is { } rate ? (rate * 100).ToString("0", CultureInfo.InvariantCulture) + "%" : "n/a") + " |\n";
+
+        var minimum = estimate.MinimumRunsPerArm;
+        var b = new StringBuilder();
+        b.Append("# Holdout results, ").Append(readOn.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)).Append("\n\n");
+        b.Append("- Scope: application `").Append(settings.Scope.ApplicationId).Append("`, project `").Append(settings.Scope.ProjectId).Append("`\n");
+        b.Append("- Holdout rate: ").Append(settings.HoldoutRate.ToString("0.0##", CultureInfo.InvariantCulture))
+            .Append(" (lessons withheld from that share of the runs that had one to give)\n");
+        b.Append("- Verifier: check `").Append(settings.Verifier.CheckId).Append("`, the configured command's exit code (0 = verified)\n");
+        b.Append("- Verified runs each arm needs for a verdict: ").Append(Count(minimum)).Append('\n');
+
+        b.Append("\n## The library's estimate\n\n");
+        if (estimate.Outcome != ExperienceStoreOutcome.Found)
+        {
+            b.Append("The store answered `").Append(estimate.Outcome.ToString()).Append("`, so nothing was read and there is no estimate.\n");
+        }
+        else if (!estimate.Tracked)
+        {
+            b.Append("This store does not track the holdout, so there is no estimate.\n");
+        }
+        else
+        {
+            var o = estimate.Overall;
+            b.Append("From `AgentExperienceBenefit.EstimateAsync` over the holdout's rows and each run's finalized outcome.\n\n");
+            b.Append("| Arm | Runs | Successes | Rate |\n| --- | ---: | ---: | ---: |\n");
+            b.Append(Arm("treatment", o.Treatment));
+            b.Append(Arm("holdout", o.Holdout));
+            b.Append("\n`treatment` runs were given the lessons (and hints) that matched; `holdout` runs had them withheld. Runs with nothing to give are in neither arm.\n");
+            b.Append("\n- Difference (treatment minus holdout): ").Append(o.Difference is { } d ? Signed(d) : "n/a")
+                .Append(", 95% interval ").Append(o.Lower is { } lower && o.Upper is { } upper ? Signed(lower) + " to " + Signed(upper) : "n/a").Append('\n');
+            b.Append("- Verdict: **").Append(o.Verdict.ToString()).Append("**\n");
+            b.Append("- Pending: ").Append(Count(o.Pending))
+                .Append(", Unverified: ").Append(Count(o.Unverified))
+                .Append(", Mixed arm: ").Append(Count(o.MixedArm)).Append("\n\n");
+
+            b.Append(o.Verdict switch
+            {
+                ExperienceBenefitVerdict.Helps => "The verdict is `Helps`: the 95% interval of the difference lies wholly above zero.",
+                ExperienceBenefitVerdict.Hurts => "The verdict is `Hurts`: the 95% interval of the difference lies wholly below zero.",
+                _ when o.Treatment.Runs < minimum || o.Holdout.Runs < minimum =>
+                    $"The verdict is `NoEvidence` for lack of runs: each arm needs at least {Count(minimum)} runs with a verified outcome, and this has {Count(o.Treatment.Runs)} treatment and {Count(o.Holdout.Runs)} holdout. It says nothing yet about whether the lessons help.",
+                _ => "The verdict is `NoEvidence`: the interval includes zero. That is not \"no effect\"; the data cannot support a claim either way.",
+            }).Append('\n');
+        }
+
+        b.Append("\n## Reading rules\n\n");
+        b.Append("- A run counts once the verifier decided it: exit 0 is a success, any other exit a failure. Pending runs (not finalized yet) and unverified runs (no verdict) are counted above and left out of the rates.\n");
+        b.Append("- `Helps` needs the 95% interval of the difference (Newcombe's hybrid score, from each arm's Wilson interval) wholly above zero, `Hurts` wholly below. Anything else, or fewer than ")
+            .Append(Count(minimum)).Append(" verified runs in an arm, is `NoEvidence`.\n");
+        b.Append("- Read it at the point fixed in advance. Reading again and again until the verdict looks good overstates it: each look is another test.\n");
+
+        b.Append("\n## What this can and cannot say\n\n");
+        b.Append("- A success means the verifier passed, nothing more. A run whose tests pass is a success even if the tests did not cover its change, and the agent can edit the code the verifier runs.\n");
+        b.Append("- The interval treats every run as independent. Under the Claude Code hooks the session is what is randomized and each turn that changed something is a run: the runs of one session share its arm and are correlated, so the interval is narrower than the evidence supports and a long session weighs as much as many short ones. The store does not record which session a run came from, so this page cannot count sessions.\n");
+        b.Append("- Arms are assigned only on runs that had a lesson or a hint to give, so the comparison is about runs where memory had something to say, not about every run.\n");
+        b.Append("- One lesson's own comparison is in `aexp lessons`; this page pools them all.\n");
+        return b.ToString();
     }
 }

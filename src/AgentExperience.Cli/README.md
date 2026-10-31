@@ -49,6 +49,7 @@ aexp run call --run "$run" --tool run_tests --result "all passed"
 aexp run end --run "$run"
 aexp finalize --run "$run"                                 # runs the configured check; may run in a later process
 aexp lessons
+aexp benefit --markdown results.md                         # the holdout's estimate, as a page to commit
 ```
 
 ## With Claude Code

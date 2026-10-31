@@ -47,3 +47,6 @@ artifacts/
 # The CI-triage tool (experiments/AgentExperience.CiTriage): fetched CI logs, and what --scripted writes
 experiments/AgentExperience.CiTriage/.cache/
 experiments/AgentExperience.CiTriage/results/scripted/
+
+# aexp: the local lesson store, open runs, sessions, hook log and the copied config (dogfood/README.md)
+.aexp/

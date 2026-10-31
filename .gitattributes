@@ -1,2 +1,3 @@
 *.sql text eol=lf
 contract/** text eol=lf
+dogfood/** text eol=lf

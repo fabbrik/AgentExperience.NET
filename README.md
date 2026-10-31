@@ -2,17 +2,41 @@
 
 [![CI](https://github.com/fabbrik/AgentExperience.NET/actions/workflows/ci.yml/badge.svg)](https://github.com/fabbrik/AgentExperience.NET/actions/workflows/ci.yml) [![NuGet](https://img.shields.io/nuget/vpre/AgentExperience.Core.svg?label=nuget%20(preview))](https://www.nuget.org/packages/AgentExperience.Core) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
-**Memory of what *worked*, verified by your own checks, for Microsoft Agent Framework agents.**
-
-When your own code says a run worked (a test run, an exit code, a person's sign-off; never the model's word), the
-library keeps what the agent tried as a lesson and hands it to the next run on a similar task. A preview, not
+**Memory of what verifiably worked, for AI agents, measured by its own holdout.** When your own check says a run worked
+(a test run, an exit code, a person's sign-off; never the model's word), the library keeps what the agent tried as a lesson
+for the next run on a similar task, and withholds it from a share of runs to measure whether it helps. A preview, not
 production ready. How it differs from MAF's own memory: [Compared with MAF memory](docs/compared-with-maf-memory.md).
+
+## What an agent sees
+
+Run 1 called `run_tests`: exit 3, then a pass, which your check verified. Run 2, on a similar ticket, starts with this
+block (shortened; [the whole block](#the-whole-block) is from another sample):
+
+```text
+=== BEGIN HISTORICAL REFERENCE (UNTRUSTED REFERENCE MATERIAL) ===
+…
+Lesson: Verified after 1 attempt. Worked: attempt 0. Checks: [run_tests].
+Tried:
+  - attempt 0: run_tests [failed: exit 3], run_tests [returned] → completed
+…
+=== END HISTORICAL REFERENCE ===
+```
+
+## Does it help?
+
+On one synthetic task, yes, for both models tried. On realistic tasks no overall benefit is shown yet, and wrong lessons did worse than none ([the evidence so far](#the-evidence-so-far)). Mean failed attempts per task in a [live experiment](experiments/AgentExperience.LiveReuse/README.md):
+
+| Model | No memory | Memory | Placebo | Stale |
+| --- | ---: | ---: | ---: | ---: |
+| Gemini `gemini-3.1-flash-lite` ([report](experiments/AgentExperience.LiveReuse/results/gemini-gemini-3.1-flash-lite-2026-09-27.md); pre-registered, confirmatory) | 2.17 | **0.00** | 2.42 | 2.75 |
+| Claude `claude-haiku-4-5` ([report](experiments/AgentExperience.LiveReuse/results/anthropic-claude-haiku-4-5-2026-09-28.md); exploratory replication) | 2.75 | **0.83** | 2.42 | 2.67 |
 
 ## Quick start
 
-Needs `0.1.0-preview.11` or later. Add `AgentExperience.MicrosoftAgentFramework`, `AgentExperience.Storage.InMemory`
-(`--prerelease`) and `Microsoft.Extensions.DependencyInjection`; bring `chatClient` (any `IChatClient`) and
-`RunTestsAsync` (your test run, returning text such as `exit=0`). Development and tests only: see [In production](#in-production).
+Three ways in: a **Microsoft Agent Framework** agent (below), **any agent** through the `aexp` CLI or MCP server
+([CLI and MCP](#any-agent-cli-and-mcp)), or **Claude Code** through hooks ([Claude Code](#claude-code)).
+
+For MAF (`0.1.0-preview.11` or later), add `AgentExperience.MicrosoftAgentFramework`, `AgentExperience.Storage.InMemory` (`--prerelease`) and `Microsoft.Extensions.DependencyInjection`; bring `chatClient` (any `IChatClient`) and `RunTestsAsync` (your test run, returning text such as `exit=0`). Development and tests only: see [In production](#in-production).
 
 ```csharp
 using AgentExperience.MicrosoftAgentFramework;
@@ -35,37 +59,34 @@ await agent.RunAsync("Ticket #4812: a refund is stuck on a lock. Triage it.");
 await agent.RunAsync("Ticket #4977: a refund is stuck on a lock again. Triage it.");  // gets the lesson
 ```
 
-## What an agent sees
+## Any agent: CLI and MCP
 
-The quick start's second run gets this block (shortened; [the whole block](#the-whole-block) is from another sample):
+Agents outside the Agent Framework (Claude Code, Codex, Cursor, a script) get the same loop through `aexp`, a .NET tool
+that is both a command line and an MCP stdio server, over a local SQLite file by default (published from the next
+preview, `0.1.0-preview.18`; until then, [build it from this repository](dogfood/README.md)):
 
-```text
-=== BEGIN HISTORICAL REFERENCE (UNTRUSTED REFERENCE MATERIAL) ===
-…
-Lesson: Verified after 1 attempt. Worked: attempt 0. Checks: [run_tests].
-Tried:
-  - attempt 0: run_tests [failed: exit 3], run_tests [returned] → completed
-…
-=== END HISTORICAL REFERENCE ===
+```bash
+dotnet tool install --global AgentExperience.Cli --prerelease
+claude mcp add aexp -- aexp mcp      # or any MCP client: the server is `aexp mcp`, run in the project
 ```
 
-## Does it help?
+A `.aexp/config.json` in the project names the scope and the one command `aexp` may run, the verifier
+(`"verify": { "command": ["dotnet", "test"] }`, exit code 0 = pass), which runs only once a person has reviewed the
+config and approved it with `aexp trust` (an edit revokes the approval). The MCP tools `experience_recall`,
+`experience_failure_hint`, `experience_record_call`, `experience_finish` and `experience_lessons` (or the commands
+`aexp run start|call|end`, `aexp recall`, `aexp finalize`, `aexp lessons`) capture a run, verify it with that command,
+and hand the next run the lesson and, after a failure, the hint, through the same writer, rules and holdout as the
+adapter. No tool takes identity, scope, a path or a command, and no model is called. See
+[CLI and MCP](docs/guide/cli-and-mcp.md).
 
-On one synthetic task, for the two models tried, yes. Mean failed attempts per task in a [live experiment](experiments/AgentExperience.LiveReuse/README.md):
+## Claude Code
 
-| Model | No memory | Memory | Placebo | Stale |
-| --- | ---: | ---: | ---: | ---: |
-| Gemini `gemini-3.1-flash-lite` ([report](experiments/AgentExperience.LiveReuse/results/gemini-gemini-3.1-flash-lite-2026-09-27.md); pre-registered, confirmatory) | 2.17 | **0.00** | 2.42 | 2.75 |
-| Claude `claude-haiku-4-5` ([report](experiments/AgentExperience.LiveReuse/results/anthropic-claude-haiku-4-5-2026-09-28.md); exploratory replication) | 2.75 | **0.83** | 2.42 | 2.67 |
+A recipe with no code: `aexp setup claude-code` adds hooks that record every tool call, check
+each turn that changed something with your tests when it stops, and hand the next session the lesson and the failure
+hint; `aexp export --claude-md` keeps the lessons measured as helping in a managed section of `CLAUDE.md`. See
+[Claude Code](docs/guide/claude-code.md).
 
-The experiment (opt-in, real models) gives the model a tool with one hidden working strategy, on 12 task instances, and
-compares memory against no memory, a placebo block with the strategy withheld, and stale experience.
-
-Read it with its limits: one run per model, one synthetic task family, 12 instances, and the working strategy reaches
-the block verbatim, so it shows that a model acts on an injected lesson, not that the library helps on real tasks in
-general. A harder experiment, where the lesson has to transfer to a different system through the library's own
-retrieval, is [in progress, no live results yet](experiments/AgentExperience.LiveReuse/README.md#transfer-experiment).
-The samples and the reuse baseline use scripted models: they show the loop works, not that it helps.
+This repository's own sessions are set up the same way, to judge the library on real work: see [Real work](#real-work).
 
 ## Try it in a minute
 
@@ -88,6 +109,49 @@ Run 2 (lesson injected): tried wait-for-lock ✓  (0 failed attempts)
 The stand-in is a script that tries first whatever strategy an injected block names, so this shows the loop working,
 not that it helps a real model ([Does it help?](#does-it-help) is about that). Set `OPENAI_API_KEY` to run it against
 one; see [the sample's README](samples/AgentExperience.Sample.QuickStart/README.md).
+
+## The evidence so far
+
+Each result links its report, which says whether it was pre-registered. None yet is from real work.
+
+### A synthetic task
+
+The experiment behind the table [above](#does-it-help) (opt-in, real models) gives the model a tool with one hidden
+working strategy, on 12 task instances, and compares memory against no memory, a placebo block with the strategy
+withheld, and stale experience.
+
+Read it with its limits: one run per model, one synthetic task family, 12 instances, and the working strategy reaches
+the block verbatim, so it shows that a model acts on an injected lesson, not that the library helps on real tasks in
+general. The samples and the reuse baseline use scripted models: they show the loop works, not that it helps.
+
+### Realistic tasks
+
+In the [real-task experiment](experiments/AgentExperience.LiveReuse/README.md#real-task-experiment) a model fixes small
+services broken by a dependency upgrade, and the lessons reach it through the library's own retrieval. The only run that
+could be evaluated (confirmatory; lessons learned by Claude Haiku 4.5, used by gpt-oss-120b, 11 services,
+[report](experiments/AgentExperience.LiveReuse/results/realtask-openrouter-anthropic-claude-haiku-4.5-to-openai-gpt-oss-120b-2026-10-27-run4.md))
+shows **no overall benefit**: against no memory, the lessons saved tool calls on 5 services and cost them on 4
+(p = 0.50). What a lesson says did matter: against a placebo block with the fix file withheld, the real lessons used
+fewer tool calls on 7 of the 8 services that differed (p = 0.035). Lessons from other breakages did worse than no
+memory (0.303 of trials verified, against 0.455). Wrong lessons cost more than none, which is what the holdout is there
+to catch. Every other real-task run was inconclusive (too many services excluded) or stopped early (by the provider or a budget cap).
+
+In the [transfer experiment](experiments/AgentExperience.LiveReuse/README.md#transfer-experiment) a lesson has to help
+on a different system that shares one trait. Its one evaluated run (Claude Haiku 4.5) shows no demonstrated benefit
+(p = 0.0625), and the placebo and mismatched blocks did about as well as the real one, so even the direction cannot be
+credited to what the lessons said.
+
+### CI triage
+
+[The library on this repository's failed CI runs](experiments/AgentExperience.CiTriage/README.md), with its holdout
+judging ([results](experiments/AgentExperience.CiTriage/results/ci-triage-2026-10-29.md)): 1 of 7 triaged correctly
+with lessons, 3 of 9 without. The verdict is `NoEvidence` for lack of runs: each arm needs 20.
+
+### Real work
+
+[`dogfood/`](dogfood/README.md) runs the Claude Code recipe on the sessions that build this repository, checked by its
+own Docker-free tests, with lessons withheld from half the sessions. It is pre-registered and not switched on yet, so
+there is **no result yet**. This section will state the result whichever way it comes out.
 
 ## The whole block
 
@@ -199,30 +263,6 @@ shows one; see [Recall at the moment of failure](docs/guide/injection.md#recall-
 working attempt also say what its call produced, as `[returned: "pinned lib to 2.4.1"]`: an excerpt you vouch for at
 capture, sanitized, bounded and signed, off by default (`--recipe` on the quick start shows one; see
 [Showing what worked](docs/guide/injection.md#showing-what-worked-the-recipe)).
-
-## Any agent: CLI and MCP
-
-Agents outside the Agent Framework (Claude Code, Codex, Cursor, a script) get the same loop through `aexp`, a .NET tool
-that is both a command line and an MCP stdio server, over a local SQLite file by default:
-
-```bash
-dotnet tool install --global AgentExperience.Cli --prerelease
-claude mcp add aexp -- aexp mcp      # or any MCP client: the server is `aexp mcp`, run in the project
-```
-
-A `.aexp/config.json` in the project names the scope and the one command `aexp` may run, the verifier
-(`"verify": { "command": ["dotnet", "test"] }`, exit code 0 = pass), which runs only once a person has reviewed the
-config and approved it with `aexp trust` (an edit revokes the approval). The MCP tools `experience_recall`,
-`experience_failure_hint`, `experience_record_call`, `experience_finish` and `experience_lessons` (or the commands
-`aexp run start|call|end`, `aexp recall`, `aexp finalize`, `aexp lessons`) capture a run, verify it with that command,
-and hand the next run the lesson and, after a failure, the hint, through the same writer, rules and holdout as the
-adapter. No tool takes identity, scope, a path or a command, and no model is called. See
-[CLI and MCP](docs/guide/cli-and-mcp.md).
-
-For Claude Code there is a recipe with no code: `aexp setup claude-code` adds hooks that record every tool call, check
-each turn that changed something with your tests when it stops, and hand the next session the lesson and the failure
-hint; `aexp export --claude-md` keeps the lessons measured as helping in a managed section of `CLAUDE.md`. See
-[Claude Code](docs/guide/claude-code.md).
 
 ## Seeing what it learned
 
