@@ -25,7 +25,7 @@ internal sealed record AexpConfigFile
     /// <summary>What capture keeps beyond the library's defaults.</summary>
     public SanitizationSection? Sanitization { get; init; }
 
-    /// <summary>The recipe consents (story 28.4), per tool.</summary>
+    /// <summary>The recipe consents, per tool.</summary>
     public IReadOnlyList<RecipeSection>? Recipes { get; init; }
 
     /// <summary>The block's limits and the holdout.</summary>

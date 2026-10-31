@@ -121,7 +121,7 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
     }
 
     /// <summary>
-    /// The failure hint for one failed call of an open run, by story 28.3's rules: a resolved signature only, the hint's
+    /// The failure hint for one failed call of an open run, by the library's recall rules: a resolved signature only, the hint's
     /// byte and record bounds, one answer per signature and at most the configured number per run, and the run's holdout
     /// arm. <see langword="null"/> when there is none to give.
     /// </summary>
@@ -312,7 +312,7 @@ internal sealed class AexpEngine(AexpSettings settings, TimeProvider clock, Func
             cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Exports the lessons the holdout measured as helping to a Markdown file (story 25.9).</summary>
+    /// <summary>Exports the lessons the holdout measured as helping to a Markdown file.</summary>
     public async Task<ExperienceLessonExportResult> ExportMarkdownAsync(string path, CancellationToken cancellationToken)
     {
         await using var services = await BuildAsync(null, cancellationToken).ConfigureAwait(false);

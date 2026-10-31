@@ -7,7 +7,7 @@
 //     dotnet run eng/verify-packages.cs -- artifacts/packages
 //
 // Exit code 0 when every check passes; 1 with every failure listed otherwise. It checks, per package:
-//   * exactly the seven expected package ids, each with one .nupkg and one .snupkg, all at one version
+//   * exactly the eight expected package ids, each with one .nupkg and one .snupkg, all at one version
 //   * the version is 0.1.0-preview.N -- never 1.0.0, never a bare 0.x (story 4.3, frozen rule 2)
 //   * license expression, readme (declared and present in the package), tags, project and repository URL,
 //     and the repository commit SourceLink stamped
@@ -18,7 +18,10 @@
 //     and nothing else; the same forbidden-dependency guard covers the development-only in-memory store
 //     (story 11.2), which must also never depend on Core
 //   * lib/ holds exactly the supported target frameworks (story 6.3), and each one below is checked on its own
-//   * all seven packages carry one repository commit, equal to `git rev-parse HEAD` when git is available
+//   * the aexp tool (story 28.8) is a DotnetTool package instead: no dependencies (a tool carries its own), its
+//     command name, tools/<framework>/any/ for exactly the supported frameworks, and the AgentExperience assemblies it
+//     bundles all at the version and commit being verified
+//   * all eight packages carry one repository commit, equal to `git rev-parse HEAD` when git is available
 //   * per framework, the .snupkg holds a portable PDB whose id matches the assembly's CodeView debug entry, every
 //     SourceLink target points at the repository, every document path is deterministic-mapped (/_/), and the assembly is marked
 //     reproducible (deterministic build)
@@ -100,6 +103,15 @@ var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
         "Microsoft.Data.Sqlite 10.0.12",
         "Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12",
     ],
+    // Story 28.8: the aexp .NET tool. A tool package declares no dependencies: it carries its whole graph, resolved at
+    // pack time, under tools/. What it bundles is checked below instead.
+    ["AgentExperience.Cli"] = [],
+};
+
+// The packages that are .NET tools, and the command each installs.
+var tools = new Dictionary<string, string>(StringComparer.Ordinal)
+{
+    ["AgentExperience.Cli"] = "aexp",
 };
 
 // Belt and braces for the adapter-independent packages (Abstractions, Core, and the in-memory store): even if
@@ -151,7 +163,7 @@ foreach (var nupkgPath in nupkgs)
 
     if (!expected.TryGetValue(id, out var expectedDependencies))
     {
-        Fail(id, "is not one of the seven packages this repository ships");
+        Fail(id, "is not one of the eight packages this repository ships");
         continue;
     }
 
@@ -223,7 +235,25 @@ foreach (var nupkgPath in nupkgs)
         Fail(id, "release notes do not say 'Preview'");
     }
 
+    var isTool = tools.TryGetValue(id, out var toolCommand);
+    var packageTypes = metadata.Element(ns + "packageTypes")?.Elements(ns + "packageType").Select(t => t.Attribute("name")?.Value).ToList() ?? [];
+    if (isTool != packageTypes.Contains("DotnetTool"))
+    {
+        Fail(id, isTool ? "is not packed as a DotnetTool" : "is packed as a DotnetTool, but it is a library");
+    }
+
     var dependencies = metadata.Element(ns + "dependencies");
+    if (isTool)
+    {
+        if (dependencies is not null)
+        {
+            Fail(id, "a tool declares no dependencies: it carries its own");
+        }
+
+        VerifyTool(id, version, toolCommand!, nupkg);
+        continue;
+    }
+
     var groups = dependencies?.Elements(ns + "group").ToList() ?? [];
     var groupFrameworks = groups.Select(g => g.Attribute("targetFramework")?.Value ?? "(none)").Order(StringComparer.Ordinal).ToList();
     if (!groupFrameworks.SequenceEqual(frameworks.Order(StringComparer.Ordinal), StringComparer.Ordinal))
@@ -321,18 +351,112 @@ foreach (var nupkgPath in nupkgs)
     }
 }
 
-// The assembly, its documentation, and its symbols, for one target framework of one package.
-void VerifyFramework(string id, string version, string framework, ZipArchive nupkg, ZipArchive? snupkg)
+// A .NET tool: its command, exactly the supported frameworks under tools/, the AgentExperience assemblies it bundles at
+// this version, and its own assembly and symbols like any package's.
+void VerifyTool(string id, string version, string command, ZipArchive nupkg)
+{
+    if (nupkg.Entries.Any(e => e.FullName.StartsWith("lib/", StringComparison.Ordinal)))
+    {
+        Fail(id, "a tool ships nothing under lib/");
+    }
+
+    var toolFrameworks = nupkg.Entries
+        .Where(e => e.FullName.StartsWith("tools/", StringComparison.Ordinal) && e.FullName.Count(c => c == '/') >= 3)
+        .Select(e => e.FullName.Split('/')[1])
+        .Distinct(StringComparer.Ordinal)
+        .Order(StringComparer.Ordinal)
+        .ToList();
+    if (!toolFrameworks.SequenceEqual(frameworks.Order(StringComparer.Ordinal), StringComparer.Ordinal))
+    {
+        Fail(id, $"ships tools/ folders for [{string.Join(", ", toolFrameworks)}], expected exactly [{string.Join(", ", frameworks)}]");
+    }
+
+    var snupkgPath = Path.Combine(directory, $"{id}.{version}.snupkg");
+    using var snupkg = File.Exists(snupkgPath) ? ZipFile.OpenRead(snupkgPath) : null;
+    if (snupkg is null)
+    {
+        Fail(id, "has no matching .snupkg at the same version");
+    }
+
+    foreach (var framework in frameworks)
+    {
+        var folder = $"tools/{framework}/any/";
+        var settings = nupkg.GetEntry(folder + "DotnetToolSettings.xml");
+        if (settings is null)
+        {
+            Fail(id, $"has no {folder}DotnetToolSettings.xml");
+        }
+        else
+        {
+            using var stream = settings.Open();
+            var commands = XDocument.Load(stream).Descendants("Command").ToList();
+            if (commands.Count != 1 || commands[0].Attribute("Name")?.Value != command || commands[0].Attribute("EntryPoint")?.Value != id + ".dll")
+            {
+                Fail(id, $"does not install exactly the command '{command}' running {id}.dll");
+            }
+        }
+
+        // The library assemblies inside the tool are this release's: the tool never runs another version of them.
+        foreach (var bundled in nupkg.Entries.Where(e => e.FullName.StartsWith(folder + "AgentExperience.", StringComparison.Ordinal)
+            && e.FullName.EndsWith(".dll", StringComparison.Ordinal)
+            && e.FullName.Count(c => c == '/') == 3))
+        {
+            var bundledId = Path.GetFileNameWithoutExtension(bundled.Name);
+            if (bundledId != id && !expected.ContainsKey(bundledId))
+            {
+                Fail(id, $"bundles {bundled.Name}, which is not one of this repository's packages");
+            }
+
+            if (bundledId != id && InformationalVersion(bundled) is var informational && (informational is null || !informational.StartsWith(version + "+", StringComparison.Ordinal)))
+            {
+                Fail(id, $"bundles {bundled.Name} at '{informational}', not '{version}+<commit>'");
+            }
+        }
+
+        VerifyFramework(id, version, framework, nupkg, snupkg, folder);
+    }
+}
+
+string? InformationalVersion(ZipArchiveEntry entry)
+{
+    using var bytes = new MemoryStream();
+    using (var s = entry.Open())
+    {
+        s.CopyTo(bytes);
+    }
+
+    bytes.Position = 0;
+    using var pe = new PEReader(bytes);
+    var reader = pe.GetMetadataReader();
+    return reader.GetAssemblyDefinition().GetCustomAttributes()
+        .Select(reader.GetCustomAttribute)
+        .Where(a => a.Constructor.Kind == HandleKind.MemberReference)
+        .Select(a => (Attribute: a, Type: reader.GetMemberReference((MemberReferenceHandle)a.Constructor).Parent))
+        .Where(t => t.Type.Kind == HandleKind.TypeReference
+            && reader.GetString(reader.GetTypeReference((TypeReferenceHandle)t.Type).Name) == "AssemblyInformationalVersionAttribute")
+        .Select(t => reader.GetBlobReader(t.Attribute.Value))
+        .Select(blob =>
+        {
+            blob.ReadUInt16(); // prolog
+            return blob.ReadSerializedString();
+        })
+        .SingleOrDefault();
+}
+
+// The assembly, its documentation, and its symbols, for one target framework of one package: under lib/<framework>/
+// for a library, under the tool's folder for a tool.
+void VerifyFramework(string id, string version, string framework, ZipArchive nupkg, ZipArchive? snupkg, string? folder = null)
 {
     var tag = $"{id} ({framework})";
-    var assemblyEntry = nupkg.GetEntry($"lib/{framework}/{id}.dll");
+    folder ??= $"lib/{framework}/";
+    var assemblyEntry = nupkg.GetEntry($"{folder}{id}.dll");
     if (assemblyEntry is null)
     {
-        Fail(tag, $"has no lib/{framework}/{id}.dll");
+        Fail(tag, $"has no {folder}{id}.dll");
         return;
     }
 
-    if (nupkg.GetEntry($"lib/{framework}/{id}.xml") is null)
+    if (nupkg.GetEntry($"{folder}{id}.xml") is null)
     {
         Fail(tag, "ships no XML documentation file");
     }
@@ -390,7 +514,7 @@ void VerifyFramework(string id, string version, string framework, ZipArchive nup
         return; // already reported; nothing to compare the assembly's CodeView entry against
     }
 
-    var pdbEntry = snupkg.GetEntry($"lib/{framework}/{id}.pdb");
+    var pdbEntry = snupkg.GetEntry($"{folder}{id}.pdb");
     if (pdbEntry is null)
     {
         Fail(tag, "symbol package has no portable PDB for the assembly");
@@ -457,7 +581,7 @@ foreach (var id in expected.Keys)
     }
 }
 
-// One commit for all seven packages, and -- when git is available -- the commit checked out here.
+// One commit for all eight packages, and -- when git is available -- the commit checked out here.
 if (commits.Count > 1)
 {
     failures.Add($"packages were built from different commits: {string.Join(", ", commits.Order(StringComparer.Ordinal))}");

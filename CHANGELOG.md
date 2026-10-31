@@ -499,6 +499,38 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   ([the table](docs/benchmarks.md#the-injection-floor-story-285)).
 - The Python and Go ports and the contract are unchanged; the ports do not apply a floor yet.
 
+### Any agent, through MCP and a CLI (story 28.8)
+
+- **New package `AgentExperience.Cli`**, a .NET tool installing the command `aexp`: verified-lesson memory for agents
+  outside the Agent Framework (coding agents, scripts, other frameworks), as a command line and as an MCP stdio server
+  (`aexp mcp`, on the official MCP C# SDK's `ModelContextProtocol.Core` 2.3.0), over a local SQLite file by default or
+  PostgreSQL (`postgres:<ENV_VAR>`, naming the variable that holds the connection string). It calls no model.
+- **Configuration from the project only**: `.aexp/config.json` (or `--config`, `AEXP_CONFIG`) sets the store, the
+  identity and scope, the verifier (an argument vector run without a shell, exit code 0 = pass, with a timeout and a
+  check ID), the argument allowlist, the recipe consents, the block's limits and the holdout rate, and recall. Identity,
+  scope, paths and commands are never taken from a command option or a tool argument, and the verifier is the only
+  command the tool runs; `finalize --exit-code` (a verdict the host obtained itself) is refused unless
+  `verify.acceptExitCode` is set. Unknown settings, a literal connection string, or a missing identity or verifier stop
+  the tool before anything runs.
+- **Commands**: `aexp run start|call|end`, `aexp finalize` (runs the verifier and finalizes; works in any later process,
+  from the run store), `aexp recall --task|--run` (the block), `aexp recall --run --failure --tool --error` (the hint),
+  `aexp lessons [--all] [--html]`, `aexp export --markdown`, `aexp benefit`. **MCP tools**: `experience_recall`,
+  `experience_failure_hint`, `experience_record_call`, `experience_finish` and `experience_lessons`, one open run per
+  session started lazily, outputs bounded to 16 KB, errors as MCP tool errors.
+- **The library's own answers**: the block and the hint come from a probe `ChatClientAgent` wired with
+  `UseAgentExperience` over a scripted stand-in model, so retrieval, eligibility, the writer, recall's rules and the
+  holdout are exactly the adapter's; with a run, the holdout arm and what was delivered are recorded against it. A call
+  passes the capture rules before it is written to the open run's owner-only file, and a failed call is kept as its
+  error class only, as the adapter records a classified failure. Capture and finalization drive Core directly.
+- **Library change**: none to any public API. The MAF adapter grants the tool access to its internals
+  (`InternalsVisibleTo`) to wait for its background injection records before a short-lived process exits and to note
+  what a run was already given before recall answers; the tool ships that exact assembly inside its own package.
+- **Release train**: eight packages. `AgentExperience.Cli` is a tool package (no declared dependencies, everything under
+  `tools/net10.0/any/`), checked by `eng/verify-packages.cs` for its command and for bundling this release's libraries;
+  its public API baseline is empty. Being a tool, its references are not library floors, and its tests run the graph it
+  ships, in which the MCP SDK lifts two library floors (DI abstractions 10.0.13, `Microsoft.Extensions.AI.Abstractions`
+  10.11.0) inside the tool only. Guide: [CLI and MCP](docs/guide/cli-and-mcp.md).
+
 ## 0.1.0-preview.17
 
 This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of

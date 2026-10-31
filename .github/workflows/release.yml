@@ -3,7 +3,7 @@ name: Release
 # The one workflow in this repository that may publish (RELEASING.md step 10). A maintainer starts it by pushing a
 # version tag, and nothing else can: no branch push, pull request, schedule or manual dispatch. One tag releases all
 # three languages at one version, from one verified commit. The verify job re-runs the release checks on the tagged
-# commit and uploads what it verified: the seven NuGet packages, and the Python sdist and wheel. After a reviewer
+# commit and uploads what it verified: the eight NuGet packages, and the Python sdist and wheel. After a reviewer
 # approves the `nuget-release` environment, the publish job pushes exactly those NuGet files to nuget.org, then tags
 # the six Go modules at the tagged commit and creates the GitHub release. After a reviewer approves the
 # `pypi-release` environment, the publish-pypi job uploads exactly the verified Python files to PyPI.
@@ -392,7 +392,7 @@ jobs:
           name: release-notes
           path: artifacts/release-notes
 
-      # Seven packages and seven symbol packages, all at the version the tag names, and nothing else.
+      # Eight packages and eight symbol packages, all at the version the tag names, and nothing else.
       - name: Check the packages are the tagged version
         env:
           VERSION: ${{ needs.verify.outputs.version }}
@@ -402,8 +402,8 @@ jobs:
           total="$(find artifacts/packages -type f | wc -l)"
           nupkg="$(find artifacts/packages -type f -name "*.$VERSION.nupkg" | wc -l)"
           snupkg="$(find artifacts/packages -type f -name "*.$VERSION.snupkg" | wc -l)"
-          if [ "$nupkg" -ne 7 ] || [ "$snupkg" -ne 7 ] || [ "$total" -ne 14 ]; then
-            echo "::error::Expected 7 .nupkg and 7 .snupkg at $VERSION and nothing else; found $nupkg, $snupkg, $total files"
+          if [ "$nupkg" -ne 8 ] || [ "$snupkg" -ne 8 ] || [ "$total" -ne 16 ]; then
+            echo "::error::Expected 8 .nupkg and 8 .snupkg at $VERSION and nothing else; found $nupkg, $snupkg, $total files"
             exit 1
           fi
 

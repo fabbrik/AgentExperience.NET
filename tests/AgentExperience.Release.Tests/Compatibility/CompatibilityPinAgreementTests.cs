@@ -59,6 +59,15 @@ public sealed class CompatibilityPinAgreementTests
     /// </summary>
     private const string DeliberatelyOldPins = "AgentExperience.Upgrade.Seeders";
 
+    /// <summary>
+    /// The aexp tool's tests (story 28.8). A .NET tool carries its whole dependency graph inside its package, resolved
+    /// once when it is packed, so what it runs is exactly its lock file, not a floor a host composes with its own graph;
+    /// its references are therefore not library floors (see <see cref="LibraryProjects"/>), and its tests run the
+    /// graph the tool ships, in which the official MCP SDK lifts two library floors (the DI abstractions to 10.0.13 and
+    /// Microsoft.Extensions.AI.Abstractions to 10.11.0). Every library is still tested at its floors by its own suites.
+    /// </summary>
+    private const string ToolGraphTests = "AgentExperience.Cli.Tests";
+
     private static readonly Regex BareVersion = new(@"^[0-9]+\.[0-9]+\.[0-9]+$", RegexOptions.CultureInvariant);
 
     /// <summary><c>[x.y.z, N.0.0)</c>: inclusive floor, exclusive upper bound at a major.</summary>
@@ -234,7 +243,7 @@ public sealed class CompatibilityPinAgreementTests
     [Fact]
     public void Every_test_and_sample_lock_file_resolves_each_floored_package_to_the_floor()
     {
-        var floors = ShippingProjects()
+        var floors = LibraryProjects()
             .SelectMany(project => DeclaredReferences(project))
             .Where(reference => BareVersion.IsMatch(reference.Value) || MajorBoundedRange.IsMatch(reference.Value))
             .GroupBy(reference => reference.Key, StringComparer.OrdinalIgnoreCase)
@@ -243,6 +252,7 @@ public sealed class CompatibilityPinAgreementTests
         var lockFiles = new[] { "tests", "samples", "experiments", "benchmarks" }
             .SelectMany(root => Directory.GetDirectories(Path.Combine(RepositoryRoot.Path, root)))
             .Where(directory => !string.Equals(Path.GetFileName(directory), DeliberatelyOldPins, StringComparison.Ordinal))
+            .Where(directory => !string.Equals(Path.GetFileName(directory), ToolGraphTests, StringComparison.Ordinal))
             .Select(directory => Path.Combine(directory, "packages.lock.json"))
             .Where(File.Exists)
             .Order(StringComparer.Ordinal)
@@ -451,6 +461,11 @@ public sealed class CompatibilityPinAgreementTests
             .Where(path => File.Exists(Path.Combine(path, Path.GetFileName(path) + ".csproj")))
             .Select(path => Path.GetFileName(path)!)
             .Order(StringComparer.Ordinal);
+
+    /// <summary>The shipping projects that are libraries: every one but a .NET tool (PackAsTool), whose graph is its own.</summary>
+    private static IEnumerable<string> LibraryProjects() =>
+        ShippingProjects().Where(project => !File.ReadAllText(Path.Combine(ProjectDirectory(project), project + ".csproj"))
+            .Contains("<PackAsTool>true</PackAsTool>", StringComparison.Ordinal));
 
     private static string ProjectDirectory(string project) =>
         project == ProofProject
