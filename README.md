@@ -226,7 +226,9 @@ stored (`ListAsync(identity)` with your own identity in production): status, con
 whether retrieval would use it and why not, and the block an agent there would be shown for it.
 `ExperienceLessonsHtml.Render(page)` turns that into one self-contained HTML page. The library maps no endpoint; serve
 it behind your own authorization, because it discloses the lessons. See
-[Seeing what it learned](docs/guide/deployment.md#seeing-what-it-learned).
+[Seeing what it learned](docs/guide/deployment.md#seeing-what-it-learned). When many runs learned the same thing,
+`ConsolidateAsync(identity)` on the same view merges them into one lesson that says how many runs confirmed it (see
+[Consolidating repeated lessons](docs/guide/lifecycle.md#consolidating-repeated-lessons)).
 
 ## Choosing a reflector
 

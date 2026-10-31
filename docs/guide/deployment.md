@@ -277,7 +277,10 @@ each lesson, newest first, it gives:
   page's `InjectionsTracked` is `true`); and not tracked (`InjectionsTracked` is `false`: a store that does not track
   injections, or a PostgreSQL schema whose application role has not been granted `0026`'s table yet), which the HTML
   shows as "not tracked" rather than "never". .NET, Python and Go agents all record their injections (the ports from
-  [contract 1.4](../../contract/README-1.4.md)), so in a mixed fleet "never" means no agent in the scope was shown it.
+  [contract 1.4](../../contract/README-1.4.md)), so in a mixed fleet "never" means no agent in the scope was shown it;
+- `ConsolidatedFrom`, for a lesson a consolidation pass merged (`ConsolidateAsync(identity)` on the same view): how
+  many source records it was merged from, each now superseded by it. See
+  [Consolidating repeated lessons](lifecycle.md#consolidating-repeated-lessons).
 
 `ExperienceLessonsQuery` narrows it: `Statuses`, `Limit` (the store's bounds, 1 to 500, default 50) and
 `IncludeIneligible` (default `true`). The page's `HasMore` says whether more lessons match than it shows (or may: the
