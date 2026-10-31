@@ -737,6 +737,64 @@ namespace AgentExperience.Core.Lifecycle
         Deleted = 8,
         Unverified = 9,
     }
+    public static class ExperienceConsolidation
+    {
+        public const int MaxLessonToolNames = 16;
+        public const int MaxPreconditions = 16;
+        public const int MaxSources = 256;
+        public const string Producer = "AgentExperience.Consolidation/1";
+        public const string ProvenanceSource = "AgentExperience.Consolidation";
+        public const string TemplateVersion = "1";
+        public static System.Guid ConsolidatedIdFor(AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IEnumerable<System.Guid> sourceIds) { }
+        public static bool IsConsolidated(AgentExperience.Abstractions.ExperienceRecord record) { }
+        public static System.Collections.Generic.IReadOnlyList<System.Guid> SourcesOf(AgentExperience.Abstractions.ExperienceRecord record) { }
+    }
+    public enum ExperienceConsolidationGroupOutcome
+    {
+        Created = 0,
+        Existing = 1,
+        Refused = 2,
+    }
+    public sealed class ExperienceConsolidationGroupResult : System.IEquatable<AgentExperience.Core.Lifecycle.ExperienceConsolidationGroupResult>
+    {
+        public ExperienceConsolidationGroupResult(System.Guid ConsolidatedExperienceId, AgentExperience.Core.Lifecycle.ExperienceConsolidationGroupOutcome Outcome, int IndependentRuns, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Lifecycle.ExperienceConsolidationSourceResult> Sources) { }
+        public System.Guid ConsolidatedExperienceId { get; init; }
+        public int Deferred { get; init; }
+        public int IndependentRuns { get; init; }
+        public AgentExperience.Core.Lifecycle.ExperienceConsolidationGroupOutcome Outcome { get; init; }
+        public string? Reason { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Lifecycle.ExperienceConsolidationSourceResult> Sources { get; init; }
+    }
+    public sealed class ExperienceConsolidationOptions : System.IEquatable<AgentExperience.Core.Lifecycle.ExperienceConsolidationOptions>
+    {
+        public const int DefaultMinimumSources = 3;
+        public ExperienceConsolidationOptions() { }
+        public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? ArgumentKeys { get; init; }
+        public int MinimumSources { get; init; }
+    }
+    public sealed class ExperienceConsolidationResult : System.IEquatable<AgentExperience.Core.Lifecycle.ExperienceConsolidationResult>
+    {
+        public ExperienceConsolidationResult(AgentExperience.Abstractions.Scope Scope, AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Lifecycle.ExperienceConsolidationGroupResult> Groups) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Lifecycle.ExperienceConsolidationGroupResult> Groups { get; init; }
+        public bool MayHaveMore { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public int RecordsRead { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+    }
+    public sealed class ExperienceConsolidationService
+    {
+        public ExperienceConsolidationService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycle, System.TimeProvider? clock = null) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ExperienceConsolidationResult> ConsolidateAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Core.Lifecycle.ExperienceConsolidationOptions options, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class ExperienceConsolidationSourceResult : System.IEquatable<AgentExperience.Core.Lifecycle.ExperienceConsolidationSourceResult>
+    {
+        public ExperienceConsolidationSourceResult(System.Guid ExperienceId, AgentExperience.Core.Lifecycle.LifecycleTransitionOutcome? Outcome) { }
+        public string? ExceptionType { get; init; }
+        public System.Guid ExperienceId { get; init; }
+        public AgentExperience.Core.Lifecycle.LifecycleTransitionOutcome? Outcome { get; init; }
+        public bool Superseded { get; }
+    }
     public sealed class ExperienceLifecycleService
     {
         public const AgentExperience.Abstractions.ExperienceStatus FirstEventStatus = 0;

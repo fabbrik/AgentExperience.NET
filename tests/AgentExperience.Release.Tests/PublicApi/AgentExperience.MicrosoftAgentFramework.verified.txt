@@ -24,6 +24,7 @@
     }
     public sealed class AgentExperienceLessons
     {
+        public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ExperienceConsolidationResult> ConsolidateAsync(AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, AgentExperience.Core.Lifecycle.ExperienceConsolidationOptions? options = null, System.Threading.CancellationToken cancellationToken = default) { }
         public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonExportResult> ExportMeasuredAsync(AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, AgentExperience.MicrosoftAgentFramework.Export.IExperienceLessonSink sink, AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null, System.Threading.CancellationToken cancellationToken = default) { }
         public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage> ListAsync(AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, AgentExperience.MicrosoftAgentFramework.ExperienceLessonsQuery? query = null, System.Threading.CancellationToken cancellationToken = default) { }
         public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage> ListForDevelopmentIdentityAsync(AgentExperience.MicrosoftAgentFramework.ExperienceLessonsQuery? query = null, System.Threading.CancellationToken cancellationToken = default) { }
@@ -125,6 +126,7 @@
         public string BlockText { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.ExperienceLessonCheck> Checks { get; init; }
         public double Confidence { get; init; }
+        public int? ConsolidatedFrom { get; init; }
         public System.DateTimeOffset CreatedAt { get; init; }
         public System.Guid ExperienceId { get; init; }
         public AgentExperience.MicrosoftAgentFramework.ExperienceLessonIneligibility? Ineligibility { get; init; }
