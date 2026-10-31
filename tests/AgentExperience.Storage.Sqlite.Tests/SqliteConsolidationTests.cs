@@ -20,4 +20,17 @@ public sealed class SqliteConsolidationTests : IDisposable
 
         ConsolidationScenario.Verify(outcome);
     }
+
+    [Fact]
+    public async Task An_erased_source_is_found_first_and_left_out_of_the_next_merge()
+    {
+        var scope = new Scope("consolidation-tenant", "app-1", $"project-{Guid.NewGuid():N}");
+        var authorization = new AuthorizationContext("consolidation-tenant", "host", ["experience:write"], ConsolidationScenario.Now);
+        var store = new SqliteExperienceRecordStore(_database.ConnectionString);
+
+        var outcome = await ConsolidationScenario.RunAsync(store, authorization, scope, async id =>
+            Assert.Equal(ExperienceStoreOutcome.Deleted, (await store.DeleteAsync(authorization, scope, id, CancellationToken.None)).Outcome));
+
+        ConsolidationScenario.Verify(outcome);
+    }
 }

@@ -19,4 +19,18 @@ public sealed class PostgresConsolidationTests(PostgresFixture fixture)
 
         ConsolidationScenario.Verify(outcome);
     }
+
+    [Fact]
+    public async Task An_erased_source_is_found_first_and_left_out_of_the_next_merge()
+    {
+        var tenant = TestRecords.NewTenant();
+        var scope = TestRecords.Scope(tenant, project: $"project-{Guid.NewGuid():N}");
+        var authorization = TestRecords.Authorize(tenant);
+        var store = new PostgresExperienceRecordStore(fixture.DataSource);
+
+        var outcome = await ConsolidationScenario.RunAsync(store, authorization, scope, async id =>
+            Assert.Equal(ExperienceStoreOutcome.Deleted, (await store.DeleteAsync(authorization, scope, id, CancellationToken.None)).Outcome));
+
+        ConsolidationScenario.Verify(outcome);
+    }
 }

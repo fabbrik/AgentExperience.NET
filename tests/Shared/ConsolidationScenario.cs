@@ -40,9 +40,17 @@ internal static class ConsolidationScenario
         ExperienceConsolidationResult Third,
         ExperienceRecord Folded,
         ExperienceRecord OldAfter,
-        IReadOnlyList<Guid> Live);
+        IReadOnlyList<Guid> Live)
+    {
+        /// <summary>What the lookup found for the erased source before it was erased; empty when nothing was erased.</summary>
+        public IReadOnlyList<Guid> FoundBeforeErasure { get; init; } = [];
 
-    internal static async Task<Outcome> RunAsync(IExperienceRecordStore store, AuthorizationContext authorization, Scope scope)
+        /// <summary>Whether the first source was erased before the fourth run.</summary>
+        public bool Erased { get; init; }
+    }
+
+    internal static async Task<Outcome> RunAsync(
+        IExperienceRecordStore store, AuthorizationContext authorization, Scope scope, Func<Guid, Task>? erase = null)
     {
         var capture = new InMemoryExperienceCaptureService(new DefaultSanitizer(Sanitization), new CaptureLimits(10, 10, 1_000, 1_000));
         var lifecycle = new ExperienceLifecycleService(store, indexingService: null, new ExperienceIndependenceOptions(), capture);
@@ -77,6 +85,14 @@ internal static class ConsolidationScenario
         }
 
         var again = await consolidation.ConsolidateAsync(authorization, scope, options, CancellationToken.None);
+        IReadOnlyList<Guid> foundBeforeErasure = [];
+        if (erase is not null)
+        {
+            // A host erasing a source first finds the consolidated records that copied it, and erases those too.
+            foundBeforeErasure = (await consolidation.FindConsolidatedContainingAsync(authorization, scope, sources[0].ExperienceId, CancellationToken.None)).ExperienceIds;
+            await erase(sources[0].ExperienceId);
+        }
+
         var later = await LessonAsync(Now.AddDays(10), []);
         var third2 = await consolidation.ConsolidateAsync(authorization, scope, options, CancellationToken.None);
         var folded = await ReadAsync(third2.Groups.Single().ConsolidatedExperienceId);
@@ -93,7 +109,11 @@ internal static class ConsolidationScenario
             third2,
             folded,
             await ReadAsync(id),
-            [.. live.Records.Select(record => record.ExperienceId)]);
+            [.. live.Records.Select(record => record.ExperienceId)])
+        {
+            FoundBeforeErasure = foundBeforeErasure,
+            Erased = erase is not null,
+        };
 
         async Task<ExperienceRecord> ReadAsync(Guid experienceId) =>
             (await store.GetAsync(authorization, scope, experienceId, CancellationToken.None)).Record
@@ -179,12 +199,23 @@ internal static class ConsolidationScenario
 
         var fold = Assert.Single(outcome.Third.Groups);
         Assert.Equal(ExperienceConsolidationGroupOutcome.Created, fold.Outcome);
-        Assert.Equal(4, fold.IndependentRuns);
+        Assert.True(fold.Complete);
         Assert.Equal(new[] { consolidated.ExperienceId, outcome.Later.ExperienceId }.Order(), fold.Sources.Select(source => source.ExperienceId));
         Assert.All(fold.Sources, source => Assert.True(source.Superseded));
-        Assert.Equal(4, ExperienceConsolidation.SourcesOf(outcome.Folded).Count);
-        Assert.Equal(4, outcome.Folded.SupportingValidations);
-        Assert.StartsWith("Verified in 4 independent runs (latest 2026-11-09).", outcome.Folded.Reflection!.Lesson, StringComparison.Ordinal);
+
+        // With the first source erased, the fold-in leaves it out: three runs, three sources. Its counted support of
+        // the first lesson (the later runs' reuse evidence) went with it, and their own validations still count.
+        var runs = outcome.Erased ? 3 : 4;
+        Assert.Equal(runs, fold.IndependentRuns);
+        Assert.Equal(runs, ExperienceConsolidation.SourcesOf(outcome.Folded).Count);
+        Assert.Equal(runs, outcome.Folded.SupportingValidations);
+        Assert.StartsWith($"Verified in {runs} independent runs (latest 2026-11-09).", outcome.Folded.Reflection!.Lesson, StringComparison.Ordinal);
+        if (outcome.Erased)
+        {
+            Assert.Equal([consolidated.ExperienceId], outcome.FoundBeforeErasure);
+            Assert.DoesNotContain(outcome.Sources[0].ExperienceId, ExperienceConsolidation.SourcesOf(outcome.Folded));
+        }
+
         Assert.Equal(ExperienceStatus.Superseded, outcome.OldAfter.Status);
         Assert.Equal([outcome.Folded.ExperienceId], outcome.Live);
     }
