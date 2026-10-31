@@ -77,7 +77,7 @@ public class MatchFloorTests
     [Fact]
     public async Task A_block_whose_every_record_is_weak_injects_nothing()
     {
-        var harness = new Harness { MinimumMatch = new ExperienceMatchFloor() };
+        var harness = new Harness { MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 } };
         harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope), relevance: 0.2d);
 
         await harness.Agent().RunAsync("refund ticket stuck on a lock");
@@ -137,6 +137,71 @@ public class MatchFloorTests
 
     // ---- The floor itself ----------------------------------------------------------------------------
 
+    [Fact]
+    public async Task A_weak_match_fetched_only_as_backfill_past_the_host_s_limit_is_not_reported()
+    {
+        // The host asks for one record; the floor widens retrieval to 32. The weak record ranked first is reported, the
+        // strong one backfills, and the weak one ranked third was never in the host's window, so it is not reported.
+        var harness = new Harness { MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 }, RequestLimit = 1 };
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope, status: ExperienceStatus.Reinforced, confidence: 1d), relevance: 0.45d);
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(2), TestScope, confidence: 0.6d), relevance: 0.5d);
+        harness.World.Publish(InjectionRecords.Record(InjectionRecords.Id(3), TestScope, confidence: 0.5d), relevance: 0.1d);
+
+        await harness.Agent().RunAsync("refund ticket stuck on a lock");
+
+        Assert.Equal([InjectionRecords.Id(2)], harness.Last.InjectedExperienceIds);
+        var omission = Assert.Single(harness.Last.Omitted);
+        Assert.Equal((InjectionRecords.Id(1), InjectionOmissionReason.WeakMatch), (omission.ExperienceId, omission.Reason));
+    }
+
+    // ---- The semantic leg, through a hybrid retrieval ---------------------------------------------------
+
+    [Fact]
+    public async Task A_vector_only_match_passes_on_a_semantic_floor_and_fails_closed_without_one()
+    {
+        var record = InjectionRecords.Record(InjectionRecords.Id(1), TestScope);
+        var withPolicyFloor = new Harness
+        {
+            MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 },
+            Policy = RetrievalPolicy.Default with { MinimumVectorRelevance = 0.75 },
+            Vectors = new ScriptedVectorIndex(new ExperienceCandidate(record, 0.8)),
+        };
+        var withOwnFloor = new Harness
+        {
+            MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5, MinimumSemanticSimilarity = 0.85 },
+            Policy = RetrievalPolicy.Default with { MinimumVectorRelevance = 0.75 },
+            Vectors = new ScriptedVectorIndex(new ExperienceCandidate(record, 0.8)),
+        };
+        var withNone = new Harness
+        {
+            MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 },
+            Vectors = new ScriptedVectorIndex(new ExperienceCandidate(record, 0.99)),
+        };
+        foreach (var harness in new[] { withPolicyFloor, withOwnFloor, withNone })
+        {
+            harness.World.Store(record);
+            await harness.Agent().RunAsync("refund ticket stuck on a lock");
+        }
+
+        Assert.Equal([InjectionRecords.Id(1)], withPolicyFloor.Last.InjectedExperienceIds);
+        Assert.Null(withPolicyFloor.Last.VectorFallback);
+
+        Assert.Equal(InjectionOutcome.NothingToInject, withOwnFloor.Last.Outcome);
+        Assert.Equal(
+            "Below the match floor: no text match, semantic similarity 0.8 is below 0.85, and no exact failure-signature match.",
+            Assert.Single(withOwnFloor.Last.Omitted).Detail);
+
+        // No semantic floor anywhere: the semantic leg is off, so a vector-only record fails however close it is.
+        Assert.Equal(InjectionOutcome.NothingToInject, withNone.Last.Outcome);
+        var omission = Assert.Single(withNone.Last.Omitted);
+        Assert.Equal(InjectionOmissionReason.WeakMatch, omission.Reason);
+        Assert.Equal(
+            "Below the match floor: no text match, no semantic floor is set, so a semantic match does not count, and no exact failure-signature match.",
+            omission.Detail);
+    }
+
+    // ---- The floor itself ----------------------------------------------------------------------------
+
     [Theory]
     [InlineData(-0.01)]
     [InlineData(1.01)]
@@ -144,17 +209,15 @@ public class MatchFloorTests
     public void A_floor_outside_zero_to_one_is_refused(double value)
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new ExperienceMatchFloor { MinimumTextCoverage = value });
-        Assert.Throws<ArgumentOutOfRangeException>(() => new ExperienceMatchFloor { MinimumSemanticSimilarity = value });
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ExperienceMatchFloor { MinimumTextCoverage = 0.5, MinimumSemanticSimilarity = value });
     }
 
     [Fact]
-    public void A_new_floor_starts_at_the_default_coverage_and_the_policy_s_semantic_floor()
+    public void The_coverage_has_no_default_and_the_semantic_floor_defaults_to_the_policy_s()
     {
-        var floor = new ExperienceMatchFloor();
-
-        Assert.Equal(ExperienceMatchFloor.DefaultMinimumTextCoverage, floor.MinimumTextCoverage);
-        Assert.Equal(0.3, ExperienceMatchFloor.DefaultMinimumTextCoverage);
-        Assert.Null(floor.MinimumSemanticSimilarity);
+        Assert.True(typeof(ExperienceMatchFloor).GetProperty(nameof(ExperienceMatchFloor.MinimumTextCoverage))!
+            .IsDefined(typeof(System.Runtime.CompilerServices.RequiredMemberAttribute), inherit: false));
+        Assert.Null(new ExperienceMatchFloor { MinimumTextCoverage = 0.5 }.MinimumSemanticSimilarity);
     }
 
     [Fact]
@@ -171,31 +234,19 @@ public class MatchFloorTests
     }
 
     [Fact]
-    public void The_semantic_leg_defaults_to_the_retrieval_policy_s_vector_floor_and_passes_any_vector_hit_without_one()
+    public void The_semantic_leg_defaults_to_the_retrieval_policy_s_vector_floor_and_is_off_without_one()
     {
         var floor = new ExperienceMatchFloor { MinimumTextCoverage = 1d };
         var hit = Ranked(text: null, vector: 0.7);
 
         Assert.False(floor.Passes(hit, policyVectorFloor: 0.75));
         Assert.True(floor.Passes(hit, policyVectorFloor: 0.7));
-        Assert.True(floor.Passes(hit, policyVectorFloor: null));
+        Assert.False(floor.Passes(Ranked(text: null, vector: 1d), policyVectorFloor: null));
         Assert.False((floor with { MinimumSemanticSimilarity = 0.71 }).Passes(hit, policyVectorFloor: 0.5));
+        Assert.True((floor with { MinimumSemanticSimilarity = 0.7 }).Passes(hit, policyVectorFloor: null));
         Assert.Equal(
             "Below the match floor: no text match, semantic similarity 0.7 is below 0.75, and no exact failure-signature match.",
             floor.Detail(hit, policyVectorFloor: 0.75));
-    }
-
-    [Fact]
-    public void A_match_on_either_channel_passes_on_semantic_similarity_above_the_policy_s_floor()
-    {
-        var policy = RetrievalPolicy.Default with { MinimumVectorRelevance = 0.75 };
-        var floor = new ExperienceMatchFloor { MinimumTextCoverage = 0.9 };
-        var strong = Ranked(text: null, vector: 0.8);
-        var weak = Ranked(text: 0.2, vector: 0.76);
-
-        Assert.True(floor.Passes(strong, policy.MinimumVectorRelevance));
-        Assert.True(floor.Passes(weak, policy.MinimumVectorRelevance));
-        Assert.False(floor.Passes(weak with { VectorRelevance = null }, policy.MinimumVectorRelevance));
     }
 
     private static RankedExperience Ranked(double? text, double? vector) =>
@@ -219,6 +270,12 @@ public class MatchFloorTests
 
         public string CorrelationId { get; init; } = "corr-floor";
 
+        public int? RequestLimit { get; init; }
+
+        public RetrievalPolicy Policy { get; init; } = RetrievalPolicy.Default;
+
+        public ScriptedVectorIndex? Vectors { get; init; }
+
         public ExperienceInjectionResult Last
         {
             get
@@ -240,11 +297,11 @@ public class MatchFloorTests
         {
             var clock = new FrozenTimeProvider(InjectionRecords.Now);
             return new(
-                new ExperienceRetrievalService(World, RetrievalPolicy.Default, RankingWeights.Default, clock),
+                new ExperienceRetrievalService(World, Policy, RankingWeights.Default, clock, Vectors, Vectors is null ? null : new ConstantGenerator()),
                 World,
                 new ExperienceInjectionOptions
                 {
-                    ResolveRequest = _ => new RetrieveExperienceRequest(Authorization, TestScope, "refund ticket stuck on a lock", CorrelationId: CorrelationId),
+                    ResolveRequest = _ => new RetrieveExperienceRequest(Authorization, TestScope, "refund ticket stuck on a lock", CorrelationId: CorrelationId, Limit: RequestLimit),
                     Limits = Limits,
                     TimeProvider = clock,
                     MinimumMatch = MinimumMatch,
@@ -257,6 +314,32 @@ public class MatchFloorTests
                     },
                 });
         }
+    }
+    /// <summary>An embedding index that answers every search with the same candidates and nothing else.</summary>
+    internal sealed class ScriptedVectorIndex(params ExperienceCandidate[] candidates) : IExperienceEmbeddingIndex
+    {
+        public Task<ExperienceIndexWriteResult> WriteAsync(AuthorizationContext authorization, ExperienceIndexWrite write, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExperienceIndexScanResult> ScanAsync(AuthorizationContext authorization, ExperienceIndexScan scan, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExperienceIndexRemoveResult> RemoveAsync(AuthorizationContext authorization, Scope scope, Guid experienceId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExperienceVectorSearchResult> SearchAsync(AuthorizationContext authorization, ExperienceVectorQuery query, CancellationToken cancellationToken) =>
+            Task.FromResult(new ExperienceVectorSearchResult(ExperienceVectorSearchOutcome.Found, candidates, []));
+    }
+
+    /// <summary>A two-dimensional generator whose vector never matters: the scripted index ignores it.</summary>
+    private sealed class ConstantGenerator : IExperienceEmbeddingGenerator
+    {
+        public string ModelId => "test-model";
+
+        public int Dimension => 2;
+
+        public Task<ReadOnlyMemory<float>> GenerateAsync(string text, CancellationToken cancellationToken) =>
+            Task.FromResult<ReadOnlyMemory<float>>(new float[] { 1f, 0f });
     }
 }
 
@@ -271,16 +354,16 @@ public class MatchFloorTelemetryTests
     {
         using var probe = TelemetryProbe.Start();
 
-        var emptied = new MatchFloorTests.Harness { MinimumMatch = new ExperienceMatchFloor(), CorrelationId = "corr-floor-emptied" };
+        var emptied = new MatchFloorTests.Harness { MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 }, CorrelationId = "corr-floor-emptied" };
         emptied.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope), relevance: 0.1d);
         await emptied.Agent().RunAsync("refund ticket stuck on a lock");
 
-        var injected = new MatchFloorTests.Harness { MinimumMatch = new ExperienceMatchFloor(), CorrelationId = "corr-floor-injected" };
+        var injected = new MatchFloorTests.Harness { MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 }, CorrelationId = "corr-floor-injected" };
         injected.World.Publish(InjectionRecords.Record(InjectionRecords.Id(1), TestScope), relevance: 1d);
         injected.World.Publish(InjectionRecords.Record(InjectionRecords.Id(2), TestScope), relevance: 0.1d);
         await injected.Agent().RunAsync("refund ticket stuck on a lock");
 
-        var empty = new MatchFloorTests.Harness { MinimumMatch = new ExperienceMatchFloor(), CorrelationId = "corr-floor-nothing" };
+        var empty = new MatchFloorTests.Harness { MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 }, CorrelationId = "corr-floor-nothing" };
         await empty.Agent().RunAsync("refund ticket stuck on a lock");
 
         var span = Assert.Single(InjectSpans(probe), activity => Equals(activity.GetTagItem(InjectionDiagnostics.CorrelationIdAttribute), "corr-floor-emptied"));

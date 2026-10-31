@@ -791,14 +791,18 @@ public sealed class ExperienceInjectionOptions
     /// and the <see cref="ExperienceInjectionLimits.MaxRecords"/> cut, so a weak match takes no slot and a lower-ranked,
     /// stronger one fills it; it is reported as <see cref="InjectionOmissionReason.WeakMatch"/>, with a content-free detail
     /// naming the strengths and the floor. As with the capability gate, a request that names its own
-    /// <see cref="RetrieveExperienceRequest.Limit"/> asks retrieval for a wider window to backfill from. A block emptied by
-    /// it ends as <see cref="InjectionOutcome.NothingToInject"/>, and its <c>inject</c> span carries
-    /// <c>agentexperience.nothing_reason = weak_match</c>.
+    /// <see cref="RetrieveExperienceRequest.Limit"/> asks retrieval for a wider window to backfill from; a weak match
+    /// fetched only as backfill, past the host's own limit, is not reported. A block that injects nothing with at least
+    /// one <see cref="InjectionOmissionReason.WeakMatch"/> ends as <see cref="InjectionOutcome.NothingToInject"/> and its
+    /// <c>inject</c> span carries <c>agentexperience.nothing_reason = weak_match</c>, even when other reasons kept other
+    /// records out too: the attribute says the floor contributed, the typed result says what each record was omitted for.
     /// </para>
     /// <para>
     /// The injection holdout splits its arms after the floor, so both arms are judged on the same eligible set. Recall
-    /// hints are checked too: an exact signature match passes, a coarse one is omitted as
-    /// <see cref="InjectionOmissionReason.WeakMatch"/>. The Python and Go ports do not apply a floor yet.
+    /// hints are checked too: only an exact signature match passes, so with a floor set recall never asks for a coarse
+    /// match, whatever <see cref="ExperienceRecallOptions.AllowCoarseMatch"/> says. There is no recommended coverage:
+    /// no value met the retrieval benchmark's pre-registered precision target. The Python and Go ports do not apply a
+    /// floor yet.
     /// </para>
     /// </remarks>
     public ExperienceMatchFloor? MinimumMatch { get; set; }

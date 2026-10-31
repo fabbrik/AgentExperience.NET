@@ -457,11 +457,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
     }
     public sealed class ExperienceMatchFloor : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceMatchFloor>
     {
-        public const double DefaultMinimumTextCoverage = 0.3D;
         public const double Tolerance = 1E-06D;
         public ExperienceMatchFloor() { }
         public double? MinimumSemanticSimilarity { get; init; }
-        public double MinimumTextCoverage { get; init; }
+        public required double MinimumTextCoverage { get; init; }
     }
     public sealed class ExperienceRecallOptions : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOptions>
     {

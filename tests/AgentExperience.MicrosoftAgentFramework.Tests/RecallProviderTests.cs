@@ -350,12 +350,12 @@ public sealed class RecallProviderTests
     }
 
     [Fact]
-    public async Task Under_the_match_floor_a_coarse_signature_match_is_a_weak_match()
+    public async Task Under_the_match_floor_recall_never_asks_for_a_coarse_match()
     {
         var h = new Harness
         {
             Recall = new ExperienceRecallOptions { AllowCoarseMatch = true },
-            MinimumMatch = new ExperienceMatchFloor(),
+            MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 },
         };
         var lesson = Lesson(1);
         h.World.Store(lesson);
@@ -365,9 +365,7 @@ public sealed class RecallProviderTests
 
         var recall = Assert.Single(h.Recalls);
         Assert.Equal(ExperienceRecallOutcome.NoMatch, recall.Outcome);
-        var omission = Assert.Single(recall.Omitted);
-        Assert.Equal(InjectionOmissionReason.WeakMatch, omission.Reason);
-        Assert.Equal(ExperienceMatchFloor.CoarseSignatureDetail, omission.Detail);
+        Assert.Equal([ExperienceSignatureMatch.Exact], h.Source.Queries.Select(q => q.Match));
         Assert.Null(h.Hint);
     }
 
@@ -375,7 +373,7 @@ public sealed class RecallProviderTests
     public async Task The_match_floor_runs_before_the_holdout_split_so_a_held_out_block_withholds_only_what_passed()
     {
         var assignments = new List<HoldoutAssignment>();
-        var h = new Harness { Holdout = new ExperienceHoldoutOptions { Rate = 1 }, MinimumMatch = new ExperienceMatchFloor() };
+        var h = new Harness { Holdout = new ExperienceHoldoutOptions { Rate = 1 }, MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 } };
         h.World.Publish(Lesson(1, "deploy"), relevance: 1d);
         h.World.Publish(Lesson(2, "deploy"), relevance: 0.1d);
         h.World.TracksHoldout = true;

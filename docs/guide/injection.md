@@ -752,8 +752,8 @@ these holds:
 | Leg | Passes when | Read from |
 | --- | --- | --- |
 | Failure signature | an exact signature match on the current run, which only a [recall hint](#recall-at-the-moment-of-failure) has; the before-run block has none | the recall lookup |
-| Text | the record contains at least `MinimumTextCoverage` (default 0.3) of the request's distinct terms | `RankedExperience.TextCoverage` |
-| Semantic | its vector relevance is at least `MinimumSemanticSimilarity`, or, when that is `null`, the retrieval policy's `MinimumVectorRelevance` | `RankedExperience.VectorRelevance` |
+| Text | the record contains at least `MinimumTextCoverage` (required, no default) of the request's distinct terms | `RankedExperience.TextCoverage` |
+| Semantic | its vector relevance is at least `MinimumSemanticSimilarity`, or, when that is `null`, the retrieval policy's `MinimumVectorRelevance`; with neither set this leg is **off** | `RankedExperience.VectorRelevance` |
 
 ```csharp
 options.MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 };
@@ -762,22 +762,32 @@ options.MinimumMatch = new ExperienceMatchFloor { MinimumTextCoverage = 0.5 };
 A record below it is omitted as `WeakMatch`, with a content-free detail naming its strengths and the floor. It is
 checked on the ranked candidate after `AlreadyDelivered` and before the capability gate and the record limit, so a weak
 match takes no slot and a stronger record ranked below it fills it; like the capability gate, a request that names
-its own `Limit` asks retrieval for a window four times `MaxRecords` to backfill from. When every record is weak, the
-outcome is `NothingToInject` and the `inject` span carries `agentexperience.nothing_reason = weak_match`. The holdout
-splits its arms after the floor, so both arms are judged on the same eligible set. A recall hint is a signature match
-only, so under a floor an exact match passes and a coarse one (`AllowCoarseMatch`) is omitted as `WeakMatch`.
+its own `Limit` asks retrieval for a window four times `MaxRecords` to backfill from (a weak match fetched only as
+backfill, past the host's own limit, is not reported). When nothing is injected and at least one record was omitted as
+`WeakMatch`, the outcome is `NothingToInject` and the `inject` span carries `agentexperience.nothing_reason =
+weak_match`, even if other reasons (a capability gate, an ineligible re-read) kept other records out too: the attribute
+says the floor contributed, and the result's `Omitted` list says what kept each record out. The holdout splits its arms
+after the floor, so both arms are judged on the same eligible set. A recall hint is a signature match only, so under a
+floor only an exact match counts and recall never asks for a coarse one, whatever `AllowCoarseMatch` says.
 
 Things to know:
 
-- **It is off by default, on evidence.** On the [retrieval benchmark](../benchmarks.md#the-injection-floor-story-285), no
-  floor met the precision target fixed before measuring (at most 0.15 unexpected records in the first 8 on both stores,
-  and none on the distractor-overlap queries). The noise a coverage floor cannot remove is distractors that contain
+- **It is off by default, on evidence, and has no recommended value.** On the
+  [retrieval benchmark](../benchmarks.md#the-injection-floor-story-285), no floor met the precision target fixed before
+  measuring (at most 0.15 unexpected records in the first 8 on both stores, and none on the distractor-overlap queries),
+  so `MinimumTextCoverage` has no default: choose it for your requests and measure. The noise a coverage floor cannot remove is distractors that contain
   *every* word of a short request; what it removes first is the right lesson for a long, realistic one. Turn it on
   where your requests are short and your lessons varied, and measure with the holdout.
 - **Coverage is a share, not a count.** A twelve-term request matched on three terms covers 0.25, which a floor of 0.3
   keeps out. That is the trade: the channel floor is a count precisely so long requests find something.
-- **Set a semantic floor when the vector channel is on.** With neither `MinimumSemanticSimilarity` nor the policy's
-  `MinimumVectorRelevance` set, any record the vector channel found passes the semantic leg.
+- **Coverage is relative to the store.** A term is what the text source counts: whole, unstemmed words in memory
+  ("invoices" and "invoice" are two); stemmed lexemes on PostgreSQL, less stopwords, with a hyphenated compound counted
+  once; Porter-stemmed words on SQLite. The same request can have a different number of terms, and a record a
+  different coverage, on each store, so a floor tuned on one is not tuned on another.
+- **The semantic leg fails closed.** With neither `MinimumSemanticSimilarity` nor the policy's `MinimumVectorRelevance`
+  set, it is off: a record only the vector channel found is a weak match however close. Setting
+  `MinimumSemanticSimilarity` below the policy's floor does nothing, because retrieval never returns a vector candidate
+  below the policy's floor.
 - **Comparisons allow 1e-6**, so a coverage PostgreSQL computes in single precision (3 of 10 terms as 0.3000000119) is not
   lost at a floor of 0.3.
 - The lessons view sets the task aside and runs no retrieval, so it shows no floor.

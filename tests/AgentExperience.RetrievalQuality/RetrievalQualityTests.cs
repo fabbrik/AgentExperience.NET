@@ -123,6 +123,27 @@ public abstract class RetrievalQualityTests
         Assert.Contains(result.Signatures, o => o.Exact.Returned.Count > 0);
     }
 
+    /// <summary>
+    /// Story 28.5: the injection floor's sweep at 0 is the block with no floor, so its row is the overall metrics' R@8
+    /// and FP@8, and the golden's sweep table says so.
+    /// </summary>
+    [Fact]
+    public async Task The_floor_sweep_at_zero_repeats_the_overall_recall_and_noise()
+    {
+        var result = await RunAsync(RetrievalCorpus.Load());
+
+        var overall = RetrievalMetrics.Of(result.Outcomes);
+        var unfloored = RetrievalMetrics.Of(InjectionFloorSweep.Apply(result, 0d));
+        Assert.Equal(overall.RecallAt8, unfloored.RecallAt8);
+        Assert.Equal(overall.FalsePositivesAt8, unfloored.FalsePositivesAt8);
+
+        var golden = GoldenFile.Read(GoldenFileName).Split('\n');
+        string Cells(string line) => string.Join(' ', line.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        var overallRow = Cells(golden.First(line => line.StartsWith("overall ", StringComparison.Ordinal))).Split(' ');
+        var zeroRow = Cells(golden.First(line => line.StartsWith("0.0 ", StringComparison.Ordinal))).Split(' ');
+        Assert.Equal((overallRow[5], overallRow[8]), (zeroRow[3], zeroRow[4]));
+    }
+
     private static string FirstDifference(string golden, string rendered)
     {
         var expected = golden.Split('\n');

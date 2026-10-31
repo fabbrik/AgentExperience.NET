@@ -25,6 +25,10 @@ namespace AgentExperience.Storage.Sqlite;
 /// first, then by ID, after the filters (exact scope, eligible status, minimum confidence, model authorship), and only
 /// then cut to the limit. Its values are not comparable with the PostgreSQL source's.
 /// </para>
+/// <para>
+/// <b>Term coverage</b> (<see cref="ExperienceCandidate.TermCoverage"/>) is the plain share of the query's terms the record
+/// holds in any field, as the in-memory source counts it, except that a term matches on its Porter stem.
+/// </para>
 /// <para>There are no grants here: a search returns only the requester's own records.</para>
 /// </remarks>
 public sealed class SqliteExperienceCandidateSource : IExperienceCandidateSource
@@ -143,14 +147,14 @@ public sealed class SqliteExperienceCandidateSource : IExperienceCandidateSource
 
         var ranked = hits
             .Where(hit => hit.Value.Count(fields => fields != 0) >= required)
-            .Select(hit => (Id: Guid.Parse(hit.Key), Relevance: Relevance(hit.Value)))
+            .Select(hit => (Id: Guid.Parse(hit.Key), Relevance: Relevance(hit.Value), Coverage: (double)hit.Value.Count(fields => fields != 0) / hit.Value.Length))
             .OrderByDescending(hit => hit.Relevance)
             .ThenBy(hit => hit.Id)
             .Take(query.Limit)
             .ToList();
 
         var candidates = new List<ExperienceCandidate>(ranked.Count);
-        foreach (var (id, relevance) in ranked)
+        foreach (var (id, relevance, coverage) in ranked)
         {
             using var command = Command(
                 connection,
@@ -160,7 +164,8 @@ public sealed class SqliteExperienceCandidateSource : IExperienceCandidateSource
             using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false) && SqliteExperienceRecordStore.ReadRecord(reader) is { } record)
             {
-                candidates.Add(new ExperienceCandidate(record, relevance));
+                // The plain share of the query's terms, before the field weighting, as the in-memory source reports it.
+                candidates.Add(new ExperienceCandidate(record, relevance) { TermCoverage = coverage });
             }
         }
 

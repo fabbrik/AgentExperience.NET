@@ -291,12 +291,14 @@ compound cannot meet the minimum alone. **Today's numbers** (recorded 2026-10-10
 ### The injection floor (story 28.5)
 
 Story 28.5 added an injection-time match floor (`ExperienceInjectionOptions.MinimumMatch`, see
-[Keeping weak matches out](guide/injection.md#keeping-weak-matches-out)) and extended both goldens with an
+[Keeping weak matches out](guide/injection.md#keeping-weak-matches-out)) and extended the goldens with an
 `INJECTION FLOOR` section: what would reach an 8-record block if only candidates covering at least a share `f` of the
-query's distinct terms were injected (the candidates in the source's order, cut to 8; text only). The rule was fixed
-before any run: sweep `f` over 0, 0.3, 0.4, 0.5 and 0.6, keep the floors whose FP@8 is at most 0.15 on both adapters and
-whose `distractor-overlap` queries inject nothing unexpected, and take the one with the highest PostgreSQL R@8 (ties to
-the higher floor); if one is chosen it becomes the default, otherwise the floor stays off.
+query's distinct terms were injected. It takes the candidates in the source's relevance order (not Core's composite
+score, which also weighs confidence, recency, status and environment), cut to 8, text only; a test checks that its
+`f = 0` row equals each golden's overall R@8 and FP@8. The rule was fixed before any run: sweep `f` over 0, 0.3, 0.4,
+0.5 and 0.6, keep the floors whose FP@8 is at most 0.15 on both adapters (in-memory and PostgreSQL) and whose
+`distractor-overlap` queries inject nothing unexpected, and take the one with the highest PostgreSQL R@8 (ties to the
+higher floor); if one is chosen it becomes the default, otherwise the floor stays off.
 
 | Floor | In-memory R@8 | In-memory FP@8 | In-memory distractor FP@8 | PostgreSQL R@8 | PostgreSQL FP@8 | PostgreSQL distractor FP@8 |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -306,12 +308,13 @@ the higher floor); if one is chosen it becomes the default, otherwise the floor 
 | 0.5 | 0.533 | 0.250 | 0.667 | 0.622 | 0.313 | 0.667 |
 | 0.6 | 0.467 | 0.250 | 0.667 | 0.578 | 0.313 | 0.667 |
 
-**No floor qualifies, so the default stays off.** A floor of 0.3 removes about two in five unexpected records, and above
-it the noise does not move at all: what is left are distractors that contain *every* word of a short query
-(`distractor-03`'s "reduce image size" and `dis-07`), which no coverage floor can tell from the right lesson. What a floor
-removes first is the right lesson for long, realistic requests, where three matched words are a small share of the
-request: at 0.3, 5 realistic queries lose their record on PostgreSQL and 4 in memory. `ExperienceMatchFloor`'s
-`DefaultMinimumTextCoverage` is 0.3, the lowest floor at which the noise stops falling, for hosts that turn it on.
+**No floor qualifies, so the floor stays off and has no default value.** Above 0.3 the noise does not move: what is left
+are distractors that contain *every* word of a short query (`distractor-03`'s "reduce image size" and `dis-07`), which no
+coverage floor can tell from the right lesson. What a floor removes first is the right lesson for long, realistic
+requests, where three matched words are a small share of the request: at 0.3, 5 realistic queries lose their record on
+PostgreSQL and 4 in memory. The SQLite golden (added after the rule was fixed, so not part of it) has the same shape:
+FP@8 0.625 at 0, 0.354 at 0.3 and 0.313 at 0.6, with distractor FP@8 0.667 throughout. Coverage is relative to each
+store's terms (unstemmed words in memory, stemmed lexemes on PostgreSQL, Porter stems on SQLite).
 
 The hybrid column needs a real embedding provider, so the sweep was not run with vectors; its harness counts a record
 the vector channel found above the policy's floor as passing (the semantic leg). The real-task question, whether

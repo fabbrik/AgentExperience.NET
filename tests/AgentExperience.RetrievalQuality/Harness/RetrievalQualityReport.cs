@@ -159,7 +159,8 @@ internal static class RetrievalQualityReport
         line("What it measures: what would reach the injected block at MaxRecords = 8 under ExperienceInjectionOptions.MinimumMatch");
         line("with MinimumTextCoverage f and no vector channel: the text candidates above, in order, whose share of the query's");
         line("distinct terms is at least f, cut to 8. f = 0 is the block with no floor, so its row repeats the overall metrics.");
-        line("dFP@8: FP@8 over the distractor-overlap queries only. R@8, FP@8 and zero as above.");
+        line("dFP@8: FP@8 over the distractor-overlap queries only. R@8, FP@8 and zero as above. The order is the source's");
+        line("relevance, not Core's composite score, which also weighs confidence, recency, status and environment.");
         line(string.Empty);
         line(Row("floor", "n", "lab", "R@8", "FP@8", "dFP@8", "zero"));
         var unfloored = InjectionFloorSweep.Apply(result, 0d);
