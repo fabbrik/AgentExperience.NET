@@ -61,7 +61,11 @@ internal sealed class RunJournalStore(string directory)
     /// How long a command waits for another process holding the same run. A hang guard, not a schedule: a holder may be
     /// asking the library for a block or a hint, which reads the store.
     /// </summary>
-    internal static TimeSpan LockWait { get; set; } = TimeSpan.FromMinutes(5);
+    internal static TimeSpan LockWait
+    {
+        get => FileLock.Wait;
+        set => FileLock.Wait = value;
+    }
 
     public string Directory { get; } = directory;
 
@@ -103,7 +107,7 @@ internal sealed class RunJournalStore(string directory)
             throw new AexpUsageException($"No open run {runId:D}: start one with 'aexp run start', or it has already ended.");
         }
 
-        await using var held = await LockAsync(runId, cancellationToken).ConfigureAwait(false);
+        await using var held = await FileLock.AcquireAsync(LockOf(runId), $"Run {runId:D}", cancellationToken).ConfigureAwait(false);
         var journal = Peek(runId)
             ?? throw new AexpUsageException($"No open run {runId:D}: it has already ended, or its file cannot be read.");
         var result = await update(journal).ConfigureAwait(false);
@@ -155,9 +159,9 @@ internal sealed class RunJournalStore(string directory)
             FileStream? held;
             try
             {
-                held = OpenLock(LockOf(runId));
+                held = FileLock.Open(LockOf(runId));
             }
-            catch (IOException ex) when (IsSharingViolation(ex))
+            catch (IOException ex) when (FileLock.IsSharingViolation(ex))
             {
                 continue; // In use right now: not stale.
             }
@@ -181,28 +185,54 @@ internal sealed class RunJournalStore(string directory)
         return removed;
     }
 
-    private async Task<FileStream> LockAsync(Guid runId, CancellationToken cancellationToken)
+    private void EnsureDirectory()
     {
-        var deadline = DateTime.UtcNow + LockWait;
+        if (OperatingSystem.IsWindows())
+        {
+            System.IO.Directory.CreateDirectory(Directory);
+        }
+        else
+        {
+            System.IO.Directory.CreateDirectory(Directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+}
+
+/// <summary>
+/// An exclusive lock between aexp processes: a lock file opened with <see cref="FileShare.None"/>, held for one
+/// read-modify-write. Run journals and Claude Code session files use it.
+/// </summary>
+internal static class FileLock
+{
+    /// <summary>
+    /// How long a command waits for another process holding the same lock. A hang guard, not a schedule: a holder may be
+    /// asking the library for a block or a hint, which reads the store.
+    /// </summary>
+    internal static TimeSpan Wait { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Takes the lock at <paramref name="path"/>, waiting while another process holds it.</summary>
+    public static async Task<FileStream> AcquireAsync(string path, string what, CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + Wait;
         while (true)
         {
             try
             {
-                return OpenLock(LockOf(runId));
+                return Open(path);
             }
             catch (IOException ex) when (IsSharingViolation(ex) && DateTime.UtcNow < deadline)
             {
-                // Another aexp process holds this run; wait for it. Any other I/O failure is not waited out.
+                // Another aexp process holds it; wait for it. Any other I/O failure is not waited out.
                 await Task.Delay(50, cancellationToken).ConfigureAwait(false);
             }
             catch (IOException ex) when (IsSharingViolation(ex))
             {
-                throw new AexpUsageException($"Run {runId:D} stayed busy with another aexp command for {LockWait}; try again.");
+                throw new AexpUsageException($"{what} stayed busy with another aexp command for {Wait}; try again.");
             }
         }
     }
 
-    private static FileStream OpenLock(string path)
+    public static FileStream Open(string path)
     {
         var options = new FileStreamOptions { Mode = FileMode.OpenOrCreate, Access = FileAccess.ReadWrite, Share = FileShare.None };
         if (!OperatingSystem.IsWindows())
@@ -223,18 +253,6 @@ internal sealed class RunJournalStore(string directory)
         && (OperatingSystem.IsWindows()
             ? (exception.HResult & 0xFFFF) is 32 or 33
             : exception.HResult == (OperatingSystem.IsLinux() ? 11 : 35));
-
-    private void EnsureDirectory()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            System.IO.Directory.CreateDirectory(Directory);
-        }
-        else
-        {
-            System.IO.Directory.CreateDirectory(Directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-    }
 }
 
 /// <summary>
@@ -242,7 +260,10 @@ internal sealed class RunJournalStore(string directory)
 /// is written by this tool and safe to show a model; <see cref="Detail"/> (a path, a parser's or the operating system's
 /// words) goes to the operator's standard error only.
 /// </summary>
-internal sealed class AexpUsageException(string message, string? detail = null) : Exception(message)
+internal class AexpUsageException(string message, string? detail = null) : Exception(message)
 {
     public string? Detail { get; } = detail;
 }
+
+/// <summary>The verifier did not finish within its bound: nothing was finalized, and the run can be finalized again.</summary>
+internal sealed class AexpVerifierTimedOutException(string message) : AexpUsageException(message);

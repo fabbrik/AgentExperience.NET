@@ -1,0 +1,8 @@
+{
+  "session_id": "{{session}}",
+  "transcript_path": "/home/user/.claude/projects/example/{{session}}.jsonl",
+  "cwd": "/home/user/my-project",
+  "hook_event_name": "SessionStart",
+  "source": "startup",
+  "model": "claude-opus-5"
+}

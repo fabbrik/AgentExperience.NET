@@ -34,6 +34,9 @@ internal sealed record AexpConfigFile
     /// <summary>Recall at the moment of failure.</summary>
     public RecallSection? Recall { get; init; }
 
+    /// <summary>The Claude Code hooks: which calls count as only reading (a turn of nothing else is not verified).</summary>
+    public ClaudeCodeSection? ClaudeCode { get; init; }
+
     internal sealed record IdentitySection
     {
         public string? Tenant { get; init; }
@@ -105,6 +108,15 @@ internal sealed record AexpConfigFile
         public bool? AllowCoarseMatch { get; init; }
 
         public int? LookupTimeoutMs { get; init; }
+    }
+
+    internal sealed record ClaudeCodeSection
+    {
+        /// <summary>Tool names that only read; replaces the default list when set.</summary>
+        public IReadOnlyList<string>? ReadOnlyTools { get; init; }
+
+        /// <summary>Bash command prefixes that only read (<c>git status</c>, <c>ls</c>); none by default.</summary>
+        public IReadOnlyList<string>? ReadOnlyBashPrefixes { get; init; }
     }
 
     internal static readonly JsonSerializerOptions Json = new()

@@ -1,0 +1,16 @@
+{
+  "session_id": "{{session}}",
+  "transcript_path": "/home/user/.claude/projects/example/{{session}}.jsonl",
+  "cwd": "/home/user/my-project",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/home/user/my-project/README.md"
+  },
+  "tool_response": {
+    "type": "text",
+    "file": { "filePath": "/home/user/my-project/README.md", "content": "# My project", "numLines": 1, "startLine": 1, "totalLines": 1 }
+  },
+  "tool_use_id": "toolu_01ABC126"
+}

@@ -85,6 +85,39 @@ public sealed class TempProject : IDisposable
         return new CliResult(exit, output.ToString(), error.ToString());
     }
 
+    /// <summary>
+    /// Runs <c>aexp hook &lt;event&gt;</c> with a recorded hook input from <c>HookFixtures</c> on standard input, its
+    /// <c>{{name}}</c> placeholders replaced (JSON-escaped). Claude Code's project variable names this project, as Claude
+    /// Code sets it for its hooks.
+    /// </summary>
+    public async Task<CliResult> HookAsync(string fixture, IReadOnlyDictionary<string, string> values, params string[] extra)
+    {
+        var json = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "HookFixtures", fixture + ".json"));
+        foreach (var (name, value) in values)
+        {
+            json = json.Replace("{{" + name + "}}", JsonSerializer.Serialize(value)[1..^1], StringComparison.Ordinal);
+        }
+
+        var hookEvent = fixture.Split('.')[0];
+        return await HookRawAsync(hookEvent, System.Text.Encoding.UTF8.GetBytes(json), extra);
+    }
+
+    /// <summary>Runs <c>aexp hook &lt;event&gt;</c> with <paramref name="input"/> as its standard input.</summary>
+    public async Task<CliResult> HookRawAsync(string hookEvent, byte[] input, params string[] extra)
+    {
+        Overrides.TryAdd("CLAUDE_PROJECT_DIR", Root);
+        var output = new StringWriter();
+        var error = new StringWriter();
+        using var stdin = new MemoryStream(input);
+        var exit = await AexpCli.RunAsync(
+            ["hook", hookEvent, .. extra],
+            new AexpConsole(output, error, Root, Environment, Clock, StandardInput: stdin));
+        return new CliResult(exit, output.ToString(), error.ToString());
+    }
+
+    /// <summary>The hooks' log, or empty when nothing was logged.</summary>
+    public string HookLog => File.Exists(Path.Combine(Root, ".aexp", "hook.log")) ? File.ReadAllText(Path.Combine(Root, ".aexp", "hook.log")) : string.Empty;
+
     /// <summary>Runs a command that must succeed, and returns its output.</summary>
     public async Task<string> OkAsync(params string[] args)
     {
