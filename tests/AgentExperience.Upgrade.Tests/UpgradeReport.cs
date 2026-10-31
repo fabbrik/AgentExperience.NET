@@ -45,7 +45,14 @@ internal sealed class UpgradeReport(string subject, int major)
         ["recipeExcerpts"] = "ExperienceGrant, unreleased (story 28.4, 0031): null when absent",
         ["grantRecipeExcerpts"] = "ExperienceRecordGetResult, unreleased (story 28.4, 0031): null when absent",
         ["injections"] = "ExperienceRecordQueryResult, unreleased (story 21.8, 0026): QueryWithInjectionsAsync's summaries; null from QueryAsync",
+        ["termCoverage"] = "ExperienceCandidate, unreleased (story 28.5): computed by each search, never stored",
     };
+
+    /// <summary>
+    /// The members of <see cref="NewByDesign"/> that a search computes rather than reads from a row: a preview never
+    /// returned them, so the value it would have had is unknowable, and only their presence is checked, not their value.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ComputedByDesign = new HashSet<string>(StringComparer.Ordinal) { "termCoverage" };
 
     private const int MaxDifferencesPerItem = 5;
     private const int MaxShownLength = 160;
@@ -110,6 +117,11 @@ internal sealed class UpgradeReport(string subject, int major)
                     if (inExpected != inActual)
                     {
                         differences.Add($"{path}.{name}: {(inExpected ? "missing after the upgrade" : "not in the preview's type")}");
+                        continue;
+                    }
+
+                    if (ev is null && ComputedByDesign.Contains(name))
+                    {
                         continue;
                     }
 

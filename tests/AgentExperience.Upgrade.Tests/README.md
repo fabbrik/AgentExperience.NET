@@ -129,7 +129,7 @@ the documented behaviour instead:
 The comparison enforces the same list from the other side: a member today's API returns that the preview's did not
 fails unless it is one of these, new by design, each listed with its reason in `UpgradeReport.NewByDesign`:
 `closedRoundId`, `origin`, `exposedTo`, `provenanceSignature`, `authorship`, `assessmentId`, `admission`,
-`disclosure`, `approachArguments`, `grantDisclosure`, `grantApproachArguments`, `recipeExcerpts`, `grantRecipeExcerpts` and `injections`. Everything else must read back
+`disclosure`, `approachArguments`, `grantDisclosure`, `grantApproachArguments`, `recipeExcerpts`, `grantRecipeExcerpts`, `injections` and `termCoverage` (computed by each search, so only its presence is checked). Everything else must read back
 identical.
 
 ## Running it
