@@ -30,6 +30,11 @@
     <InternalsVisibleTo Include="AgentExperience.Storage.Postgres.Tests" />
     <!-- Story 25.6: contract 1.8's holdout-assign fixtures are generated from the assignment function. -->
     <InternalsVisibleTo Include="AgentExperience.Contract.Tests" />
+    <!-- Story 28.8: the aexp tool asks this adapter questions through a probe agent and, as a short-lived process, waits
+         for the background injection records and notes what a run was already given before recall answers. The tool
+         ships this exact assembly inside its own package (a .NET tool carries its dependencies), so the coupling never
+         spans two versions, and no public API had to grow for it. -->
+    <InternalsVisibleTo Include="AgentExperience.Cli" />
   </ItemGroup>
 
   <ItemGroup>

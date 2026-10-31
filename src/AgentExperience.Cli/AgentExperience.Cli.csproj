@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Preview, not production ready. The aexp command (story 28.8): verified-lesson memory for any agent, not only Microsoft Agent Framework ones. One .NET tool that is both a CLI (aexp run start/call/end, finalize, recall, lessons, export, benefit) and an MCP stdio server (aexp mcp), over a local SQLite file by default or PostgreSQL. It drives the same library the MAF adapter uses: capture with sanitization, finalization against a verifier command the project's own config names, the Historical Reference block, recall by failure signature, the injection holdout, the lessons view and the measured export. It calls no model, never takes identity or scope from its arguments, and runs no command but the configured verifier. Install with dotnet tool install AgentExperience.Cli.</Description>
+    <OutputType>Exe</OutputType>
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>aexp</ToolCommandName>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>$(PackageTags);mcp;cli;dotnet-tool;coding-agents</PackageTags>
+    <RootNamespace>AgentExperience.Cli</RootNamespace>
+    <!-- A new package ID: nuget.org has no published version to validate against until its first release
+         (RELEASING.md, "First publish of a new package ID"). Remove this after that release. The tool has no public
+         API either: every type is internal, so its approval baseline is empty and stays so. -->
+    <DisablePackageBaselineValidation>true</DisablePackageBaselineValidation>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The official MCP C# SDK's core package only (stdio and stream transports, the low-level server and client): no
+         hosting stack. A tool ships its own dependency graph, resolved once at pack time, so this floor is exactly what
+         every installed copy runs. -->
+    <PackageReference Include="ModelContextProtocol.Core" Version="2.3.0" />
+    <!-- The container the tool builds the library in, once per command. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AgentExperience.MicrosoftAgentFramework\AgentExperience.MicrosoftAgentFramework.csproj" />
+    <ProjectReference Include="..\AgentExperience.Storage.Sqlite\AgentExperience.Storage.Sqlite.csproj" />
+    <ProjectReference Include="..\AgentExperience.Storage.Postgres\AgentExperience.Storage.Postgres.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentExperience.Cli.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
