@@ -77,9 +77,27 @@ public sealed class PublicApiTests
         VerifyApi(typeof(AgentExperience.Storage.Sqlite.SqliteExperienceRecordStore).Assembly);
 
     [Fact]
+    public Task AgentExperience_Cli() =>
+        VerifyApi(Assembly.LoadFrom(CliAssemblyPath()));
+
+    /// <summary>
+    /// The aexp tool's assembly as its own build wrote it. The tool has no public type to name (every type is internal,
+    /// and its baseline holds it so), and this project references it for build order only: referencing its assembly would
+    /// bring the tool's dependency graph, which its MCP SDK lifts above two library floors, into this project's lock file.
+    /// </summary>
+    private static string CliAssemblyPath()
+    {
+        // This assembly's own output is bin/<configuration>/<framework>/; the tool's is the same under its project.
+        var output = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar));
+        var path = Path.Combine(RepositoryRoot.Path, "src", "AgentExperience.Cli", "bin", output.Parent!.Name, output.Name, "AgentExperience.Cli.dll");
+        Assert.True(File.Exists(path), $"The aexp tool is not built at {path}.");
+        return path;
+    }
+
+    [Fact]
     public void Every_shipping_assembly_has_a_baseline_and_no_baseline_is_orphaned()
     {
-        // An eighth package, or a renamed one, must not slip past the gate by simply having no test.
+        // A ninth package, or a renamed one, must not slip past the gate by simply having no test.
         var baselines = Directory.GetFiles(BaselineDirectory(), "*.verified.txt")
             .Select(path => Path.GetFileName(path)!)
             .Order(StringComparer.Ordinal)
@@ -88,6 +106,7 @@ public sealed class PublicApiTests
         Assert.Equal(
             [
                 "AgentExperience.Abstractions.verified.txt",
+                "AgentExperience.Cli.verified.txt",
                 "AgentExperience.Core.verified.txt",
                 "AgentExperience.MicrosoftAgentFramework.verified.txt",
                 "AgentExperience.Storage.InMemory.verified.txt",

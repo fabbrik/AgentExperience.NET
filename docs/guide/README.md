@@ -37,6 +37,7 @@ And around the loop:
 | Making erasure reach backups, replicas and WAL | [Crypto-shredding](crypto-shredding.md) |
 | Why a lesson you expected never reached the agent | [Troubleshooting](troubleshooting.md) |
 | Wiring the services, the two database roles, and the trust boundary | [Deployment](deployment.md) |
+| Using the loop from any agent (a shell, or an MCP client) with the `aexp` tool | [CLI and MCP](cli-and-mcp.md) |
 | The PostgreSQL schema, script by script, and how it is applied | [PostgreSQL schema](postgres-schema.md) |
 | What a Python or Go port must match to share lessons: the record format, the block, the task text and the search, with conformance fixtures | [The language-neutral contract](../../contract/README.md) |
 | Spans and metrics | [Telemetry contract](../telemetry.md) |

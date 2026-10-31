@@ -200,6 +200,25 @@ working attempt also say what its call produced, as `[returned: "pinned lib to 2
 capture, sanitized, bounded and signed, off by default (`--recipe` on the quick start shows one; see
 [Showing what worked](docs/guide/injection.md#showing-what-worked-the-recipe)).
 
+## Any agent: CLI and MCP
+
+Agents outside the Agent Framework (Claude Code, Codex, Cursor, a script) get the same loop through `aexp`, a .NET tool
+that is both a command line and an MCP stdio server, over a local SQLite file by default:
+
+```bash
+dotnet tool install --global AgentExperience.Cli --prerelease
+claude mcp add aexp -- aexp mcp      # or any MCP client: the server is `aexp mcp`, run in the project
+```
+
+A `.aexp/config.json` in the project names the scope and the one command `aexp` may run, the verifier
+(`"verify": { "command": ["dotnet", "test"] }`, exit code 0 = pass), which runs only once a person has reviewed the
+config and approved it with `aexp trust` (an edit revokes the approval). The MCP tools `experience_recall`,
+`experience_failure_hint`, `experience_record_call`, `experience_finish` and `experience_lessons` (or the commands
+`aexp run start|call|end`, `aexp recall`, `aexp finalize`, `aexp lessons`) capture a run, verify it with that command,
+and hand the next run the lesson and, after a failure, the hint, through the same writer, rules and holdout as the
+adapter. No tool takes identity, scope, a path or a command, and no model is called. See
+[CLI and MCP](docs/guide/cli-and-mcp.md).
+
 ## Seeing what it learned
 
 After the quick start, `provider.GetAgentExperienceLessons().ListForDevelopmentIdentityAsync()` lists the lessons it
@@ -287,6 +306,7 @@ cd go/maf && go run ./examples/quickstart
 | [Guide overview and glossary](docs/guide/README.md) | Every page, and the terms used throughout |
 | [Compared with MAF memory](docs/compared-with-maf-memory.md) | MAF's memory providers and this library: what each stores and trusts, and when to use which |
 | [Deployment](docs/guide/deployment.md) | The one-call setup, explicit wiring, the two database roles, the trust boundary |
+| [CLI and MCP](docs/guide/cli-and-mcp.md) | `aexp`: the loop for any agent, from a shell or over MCP; config reference and trust model |
 | [Capture](docs/guide/capture.md) · [Finalization](docs/guide/finalization.md) · [Lifecycle](docs/guide/lifecycle.md) · [Confidence](docs/guide/confidence.md) | The learning loop, step by step |
 | [Retrieval](docs/guide/retrieval.md) · [Indexing](docs/guide/indexing.md) · [Injection](docs/guide/injection.md) · [Reuse feedback](docs/guide/reuse-feedback.md) | Finding, ranking, delivering and scoring lessons |
 | [Sharing](docs/guide/sharing.md) · [Deletion and retention](docs/guide/deletion-and-retention.md) · [Crypto-shredding](docs/guide/crypto-shredding.md) · [PostgreSQL schema](docs/guide/postgres-schema.md) | Operating it |
@@ -301,6 +321,7 @@ cd go/maf && go run ./examples/quickstart
 | [`AgentExperience.Storage.Postgres.Vectors`](src/AgentExperience.Storage.Postgres.Vectors/README.md) | Optional pgvector search by meaning |
 | [`AgentExperience.Storage.Sqlite`](src/AgentExperience.Storage.Sqlite/README.md) | One local SQLite file: durable storage and full-text search for a single agent on one machine |
 | [`AgentExperience.Storage.InMemory`](src/AgentExperience.Storage.InMemory/README.md) | **Development and tests only**; refuses other environments unless overridden |
+| [`AgentExperience.Cli`](src/AgentExperience.Cli/README.md) | The `aexp` .NET tool: a CLI and an MCP server, for agents outside the Agent Framework |
 
 ## Build and test
 
