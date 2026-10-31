@@ -28,6 +28,7 @@
     <!-- Waits until a statement is really parked on a lock, instead of sleeping (story 19.3). -->
     <Compile Include="..\Shared\PostgresLockWait.cs" Link="Shared\PostgresLockWait.cs" />
     <Compile Include="..\Shared\DurableCaptureScenario.cs" Link="Shared\DurableCaptureScenario.cs" />
+    <Compile Include="..\Shared\ConsolidationScenario.cs" Link="Shared\ConsolidationScenario.cs" />
   </ItemGroup>
 
   <ItemGroup>

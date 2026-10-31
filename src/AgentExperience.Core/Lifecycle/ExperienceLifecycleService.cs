@@ -1294,15 +1294,29 @@ public sealed class ExperienceLifecycleService
         var initialContradicting = Math.Max(0, record.Contradictions - verifiedContradicting - trustedContradicting - unrecordedContradicting);
         // With provenance signing configured, a record marked finalized counts as finalized here only when its
         // signature verifies (or it is unsigned and listed in the cutover set), exactly as it must to vouch for a run.
-        var initialUnverified = record.Origin != ExperienceRecordOrigin.Finalized
-            || _independence.Signer?.Verify(record) is ProvenanceSignatureCheck.Missing or ProvenanceSignatureCheck.UnknownKey or ProvenanceSignatureCheck.Invalid;
+        // A consolidated record counts its initial counters as verified only when signing is configured and its signature,
+        // which covers the consolidation producer and the source list, verifies: consolidation builds them from verified
+        // evidence alone. Unsigned, it is a hand-written record like any other.
+        var vouchedConsolidated = _independence.Signer is { } consolidationSigner
+            && ExperienceConsolidation.IsConsolidated(record)
+            && string.Equals(record.Reflection?.Producer, ExperienceConsolidation.Producer, StringComparison.Ordinal)
+            && consolidationSigner.Verify(record) == ProvenanceSignatureCheck.Valid;
+        var initialUnverified = !vouchedConsolidated
+            && (record.Origin != ExperienceRecordOrigin.Finalized
+                || _independence.Signer?.Verify(record) is ProvenanceSignatureCheck.Missing or ProvenanceSignatureCheck.UnknownKey or ProvenanceSignatureCheck.Invalid);
 
         // What is excluded of the initial counters under VerifiedOnly. The counters are not signed claims, so with
         // signing configured a vouched-for record's verified share is capped at what finalization itself sets (one
-        // supporting validation, no contradiction); anything above that is its writer's statement.
+        // supporting validation, no contradiction); anything above that is its writer's statement. A vouched consolidated
+        // record's is capped at one per source its signed list names.
         int unverifiedInitialSupporting;
         int unverifiedInitialContradicting;
-        if (initialUnverified)
+        if (vouchedConsolidated)
+        {
+            unverifiedInitialSupporting = Math.Max(0, initialSupporting - ExperienceConsolidation.SourcesOf(record).Count);
+            unverifiedInitialContradicting = initialContradicting;
+        }
+        else if (initialUnverified)
         {
             (unverifiedInitialSupporting, unverifiedInitialContradicting) = (initialSupporting, initialContradicting);
         }

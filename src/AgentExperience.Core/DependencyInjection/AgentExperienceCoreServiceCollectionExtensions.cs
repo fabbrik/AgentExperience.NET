@@ -24,7 +24,8 @@ public static class AgentExperienceCoreServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the sanitizer, the in-memory capture service, the default reflector, the lifecycle
-    /// service, and the finalization service as singletons.
+    /// service, the finalization service and the consolidation service (it runs only when the host
+    /// calls it) as singletons.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -159,6 +160,12 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             provider.GetRequiredService<ISanitizer>(),
             provider.GetService<ExperienceFinalizationOptions>(),
             provider.GetService<IExperienceRunStore>()));
+
+        // Story 28.6: on demand only; nothing resolves or runs it unless the host does.
+        services.TryAddSingleton(provider => new ExperienceConsolidationService(
+            provider.GetRequiredService<IExperienceRecordStore>(),
+            provider.GetRequiredService<ExperienceLifecycleService>(),
+            provider.GetService<TimeProvider>()));
 
         return services;
     }

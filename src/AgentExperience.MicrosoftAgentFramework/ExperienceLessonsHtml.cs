@@ -120,6 +120,11 @@ public static class ExperienceLessonsHtml
             html.Append("<span class=\"badge ineligible\">not eligible for retrieval: ").Append(Encode(lesson.IneligibleReason ?? "not eligible")).Append("</span>");
         }
 
+        if (lesson.ConsolidatedFrom is { } sources)
+        {
+            html.Append("<span class=\"badge\">consolidated from ").Append(sources.ToString(CultureInfo.InvariantCulture)).Append("</span>");
+        }
+
         html.Append("</div>\n<div class=\"meta muted\">")
             .Append("<span>confidence ").Append(Encode(Number(lesson.Confidence))).Append("</span>")
             .Append("<span>stored ").Append(Encode(Time(lesson.CreatedAt))).Append("</span>")
