@@ -6,6 +6,19 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.18
+
+This preview takes the library beyond one agent framework and one database. A SQLite store and the `aexp` CLI and MCP
+server let any agent capture and recall lessons from one local file (`AgentExperience.Storage.Sqlite` and
+`AgentExperience.Cli`, the two new packages); a Claude Code recipe turns coding sessions into verified lessons; lessons
+can be found by how a tool failed, recalled at the moment of failure, and consolidated into one living lesson per
+situation; and an opt-in match floor trades recall for precision at injection time. The Python and Go ports gain the
+benefit estimate, the benefit policy, provider measurement, the retrieval policy, export, the confidence engine, the
+lifecycle and reuse feedback, through contracts 1.9 to 1.18 (all add-only). The same tag releases the eight NuGet
+packages, the Python distribution `agenticexperience` and the six Go modules at one version.
+
 ### MAF 1.28.0 compatibility probe
 
 - The MAF probe's latest leg now floats the compatibility proof's `Microsoft.Extensions.*` floors, so a MAF release that raises one (1.28.0 asks for `Microsoft.Extensions.AI.Evaluation` 10.11.0) no longer fails on the proof's own pin. The adapter itself passes against 1.28.0.
