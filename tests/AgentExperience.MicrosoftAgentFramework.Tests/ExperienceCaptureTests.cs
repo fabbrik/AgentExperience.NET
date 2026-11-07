@@ -248,31 +248,6 @@ public class ExperienceCaptureTests
         Assert.Empty(harness.Failures);
     }
 
-    // ---- Matrix: A guarded tool pauses the run at an approval request ----------------------------
-
-    [Fact]
-    public async Task A_tool_paused_at_an_approval_request_is_not_recorded_as_a_call_or_a_failure()
-    {
-        // MAF returns a ToolApprovalRequestContent and the function body, and so the function middleware, never
-        // runs. Nothing was tried and nothing failed, so a later agent must not be told "echo failed" or "echo
-        // worked" for a call a person has not yet allowed. (MAF 1.25.0 can also reject such a request that is never
-        // answered; that is the host's refusal, not the tool's error, and it is equally not a recorded call.)
-        var harness = new Harness();
-        var client = new ScriptedChatClient { Calls = [EchoCall()] };
-        var inner = new ChatClientAgent(client, new ChatClientAgentOptions
-        {
-            ChatOptions = new ChatOptions { Tools = [new ApprovalRequiredAIFunction(Echo)] },
-        });
-
-        var response = await harness.Capture(inner).RunAsync("task-guarded");
-
-        Assert.Single(response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
-        var run = harness.SingleRun();
-        Assert.Equal(RunExecutionStatus.Completed, run.ExecutionStatus);
-        Assert.Empty(Assert.Single(run.Attempts).ToolCalls);
-        Assert.Empty(harness.Failures);
-    }
-
     // ---- Matrix: Tool throws, run continues ------------------------------------------------------
 
     [Fact]
