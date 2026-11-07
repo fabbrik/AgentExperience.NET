@@ -10,6 +10,7 @@ from typing import Any
 
 from agentexperience import (
     SUPPORTED_CONTRACT_VERSIONS,
+    CapturedRun,
     ClosedVerificationRound,
     EnvironmentFingerprint,
     FinalizedExperience,
@@ -30,7 +31,8 @@ from agentexperience.records import Evidence
 REPOSITORY = Path(__file__).resolve().parents[2]
 CONTRACT = REPOSITORY / "contract"
 FIXTURES = CONTRACT / "fixtures"
-SCHEMA = CONTRACT / "schema" / "experience-record.v1.json"
+# Contract 1.19: the 1.0 schema with a tool call's optional recipeExcerpt, which a 1.19 port validates against.
+SCHEMA = CONTRACT / "schema" / "experience-record.v1-1.19.json"
 MIGRATIONS = REPOSITORY / "src" / "AgentExperience.Storage.Postgres" / "Migrations"
 
 
@@ -116,6 +118,12 @@ def evidence_of(value: dict[str, Any]) -> Evidence:
 def run_finalize_case(case: dict[str, Any]) -> tuple[FinalizedExperience, dict[str, Any]]:
     """Runs a finalize case's ``input.json`` through capture and finalization; returns the result and what capture
     answered (``expected-capture.json``'s form)."""
+    captured, answers = capture_finalize_case(case)
+    return finalize(captured, **finalize_arguments(case)), answers
+
+
+def capture_finalize_case(case: dict[str, Any]) -> tuple[CapturedRun, dict[str, Any]]:
+    """Captures a finalize case's run; returns the finished run and what capture answered."""
     run = case["run"]
     environment = run["environment"]
     provenance = run["provenance"]
@@ -175,20 +183,21 @@ def run_finalize_case(case: dict[str, Any]) -> tuple[FinalizedExperience, dict[s
             )
         )
     answers["attempts"] = outcomes
-    captured = capture.complete(run["executionStatus"], Instant.parse(run["endedAt"]))
+    return capture.complete(run["executionStatus"], Instant.parse(run["endedAt"])), answers
 
+
+def finalize_arguments(case: dict[str, Any]) -> dict[str, Any]:
+    """The verification of a finalize case's ``input.json``, as keyword arguments of ``finalize``."""
     verification = case["verification"]
     closed = verification.get("closedRound")
-    finalized = finalize(
-        captured,
-        closed_round=None
+    return {
+        "closed_round": None
         if closed is None
         else ClosedVerificationRound(uuid.UUID(closed["roundId"]), closed["artifactRevision"]),
-        required_checks=[
+        "required_checks": [
             RequiredCheck(check["checkId"], check["expectedKind"]) for check in verification["requiredChecks"]
         ],
-        evidence=[evidence_of(item) for item in verification["evidence"]],
-        current_artifact_revision=verification["currentArtifactRevision"],
-        finalized_at=Instant.parse(verification["finalizedAt"]),
-    )
-    return finalized, answers
+        "evidence": [evidence_of(item) for item in verification["evidence"]],
+        "current_artifact_revision": verification["currentArtifactRevision"],
+        "finalized_at": Instant.parse(verification["finalizedAt"]),
+    }

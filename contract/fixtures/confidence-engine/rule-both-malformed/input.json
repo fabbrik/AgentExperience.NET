@@ -1,0 +1,9 @@
+{
+  "description": "Both malformed: the RuleId is checked first.",
+  "operation": "rule",
+  "engine": {
+    "ruleId": "",
+    "ruleVersion": "",
+    "score": "bayes"
+  }
+}

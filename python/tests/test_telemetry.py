@@ -21,24 +21,29 @@ pytest.importorskip("opentelemetry.sdk")
 
 from _maf import NEXT_TICKET, TICKET, ScriptedClient
 from _sync import run
-from agent_framework import Agent, tool
+from agent_framework import Agent, ContextProvider, tool
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from agentexperience import Instant, observer, telemetry
+from agentexperience import BenefitPolicy, Instant, observer, telemetry
 from agentexperience.capture import RunCapture
 from agentexperience.finalize import finalize
 from agentexperience.inmemory import InMemoryExperienceStore
 from agentexperience.maf import (
     ExperienceContextProvider,
+    ExperienceHoldoutContextProvider,
+    HoldoutOptions,
+    HoldoutRecordResult,
     InjectionRecordResult,
+    ProviderHoldoutRecordResult,
     development_identity,
     exit_code,
     tool_succeeded,
     use_agent_experience,
+    use_measured_memory,
 )
 from agentexperience.records import EnvironmentFingerprint, Provenance, Scope
 
@@ -135,6 +140,16 @@ def learning_agent(store: Any, recorded: list[InjectionRecordResult] | None = No
     )
 
 
+class Memory(ContextProvider):
+    """Another memory provider (contract 1.11): adds one instruction, which the task text never reads."""
+
+    def __init__(self) -> None:
+        super().__init__("telemetry-memory")
+
+    async def before_run(self, *, agent: Any, session: Any, context: Any, state: dict[str, Any]) -> None:
+        context.extend_instructions(self.source_id, "Remember: the lock is held by the nightly job.")
+
+
 def drive(agent: Agent, first: str = TICKET, second: str = NEXT_TICKET) -> None:
     async def both() -> None:
         await agent.run(first)
@@ -142,6 +157,10 @@ def drive(agent: Agent, first: str = TICKET, second: str = NEXT_TICKET) -> None:
         (provider,) = [item for item in agent.context_providers if isinstance(item, ExperienceContextProvider)]
         await provider.wait_for_injection_records()
         await provider.wait_for_index_writes()
+        await provider.wait_for_benefit_refreshes()
+        for item in agent.context_providers:
+            if isinstance(item, ExperienceHoldoutContextProvider):
+                await item.wait_for_records()
 
     run(both())
 
@@ -177,9 +196,6 @@ def test_the_port_reports_no_operation_it_does_not_perform() -> None:
         "grant.access.purge",
         "record.seal",
         "record.authorship.backfill",
-        "lifecycle.commit",
-        "confidence.apply",
-        "reuse_feedback",
         "deindex",
         "reindex",
     }
@@ -193,8 +209,14 @@ def test_the_port_reports_no_operation_it_does_not_perform() -> None:
         "finalize",
         "retrieve",
         "index",
+        "lifecycle.commit",
+        "confidence.apply",
+        "reuse_feedback",
         "inject",
         "record_injection",
+        "record_holdout",
+        "record_provider_holdout",
+        "benefit_refresh",
     }
 
 
@@ -220,8 +242,27 @@ def test_neither_the_core_nor_the_agent_integration_imports_opentelemetry() -> N
 def test_an_agent_that_injects_captures_and_records_an_injection_emits_exactly_the_pinned_names() -> None:
     sink = Telemetry()
     recorded: list[InjectionRecordResult] = []
-    drive(learning_agent(InMemoryExperienceStore(), recorded, embedder=Embedder()), TICKET, NEXT_TICKET)
+    held: list[HoldoutRecordResult] = []
+    counter = iter(range(1, 1000))
+    agent = learning_agent(
+        InMemoryExperienceStore(),
+        recorded,
+        embedder=Embedder(),
+        # Sequential IDs: the second run is 00000000-0000-4000-8000-000000000007, in the treatment arm at 0.25.
+        new_id=lambda: uuid.UUID(f"00000000-0000-4000-8000-{next(counter):012d}"),
+        holdout=HoldoutOptions(rate=0.25),
+        on_holdout_recorded=held.append,
+        # Contract 1.10: the benefit policy on, so its background refresh reports benefit_refresh (with no evidence it
+        # changes nothing).
+        benefit=BenefitPolicy(enabled=True),
+    )
+    # Contract 1.11: another memory provider measured too, so record_provider_holdout is reported.
+    measured: list[ProviderHoldoutRecordResult] = []
+    use_measured_memory(agent, Memory(), "stub-memory", on_recorded=measured.append)
+    drive(agent, TICKET, NEXT_TICKET)
     assert [item.outcome for item in recorded] == ["Recorded"]
+    assert [(item.outcome, item.assignment.arm) for item in held] == [("Recorded", "Treatment")]
+    assert [item.outcome for item in measured] == ["Recorded", "Recorded"]
 
     spans = sink.finished()
     names = {span.name for span in spans}
@@ -261,7 +302,9 @@ def test_an_agent_that_injects_captures_and_records_an_injection_emits_exactly_t
         assert attributes["outcome"] in OPERATIONS[operation]["outcomes"]
         assert isinstance(attributes["nested"], bool)
         seen.add(operation)
-    assert seen == set(observer.OPERATIONS)
+    # An agent never moves a stored lesson's lifecycle (contract 1.16) or records reuse feedback (1.17): the host calls
+    # those services.
+    assert seen == set(observer.OPERATIONS) - {"lifecycle.commit", "confidence.apply", "reuse_feedback"}
     assert {name for _, name, _, _, _ in points} == {
         "agentexperience.operation.count",
         "agentexperience.operation.duration",
@@ -270,6 +313,9 @@ def test_an_agent_that_injects_captures_and_records_an_injection_emits_exactly_t
     # The retrieval inside an injection is the Core source's, not nested; verify and reflect inside finalize are.
     nested = {(attributes["operation"], attributes["nested"]) for _, _, _, attributes, _ in points}
     assert ("retrieve", False) in nested and ("inject", False) in nested and ("record_injection", False) in nested
+    assert ("record_holdout", False) in nested
+    assert ("record_provider_holdout", False) in nested
+    assert ("benefit_refresh", False) in nested
     assert ("verify", True) in nested and ("reflect", True) in nested and ("finalize", False) in nested
     assert ("capture.append_attempt", False) in nested
 
@@ -446,3 +492,26 @@ def test_a_cancelled_operation_is_faulted_and_cancelled() -> None:
         run(cancelled())
     (failure,) = [p for p in sink.points() if p[1] == "agentexperience.operation.failures"]
     assert dict(failure[3]) == {"operation": "inject", "error.class": "Cancelled", "nested": False}
+
+
+def test_a_screening_refusal_is_on_the_finalize_span_without_the_text() -> None:
+    # Contract 1.14: a model-authored reflection screening refuses names its code on the span, never its text.
+    from _contract import FIXTURES, capture_finalize_case, finalize_arguments, read_json
+
+    from agentexperience.reflector import DeterministicReflector, ReflectionRequest
+
+    class ModelReflector:
+        def reflect(self, request: ReflectionRequest) -> Any:
+            from dataclasses import replace
+
+            reflection = DeterministicReflector().reflect(request)
+            return replace(reflection, authorship="Model", lesson=f"See https://{MARKER}.example/now")
+
+    sink = Telemetry()
+    case = read_json(FIXTURES / "finalize" / "verified-after-one-failed-attempt" / "input.json")
+    finalized = finalize(capture_finalize_case(case)[0], **finalize_arguments(case), reflector=ModelReflector())
+    assert finalized.screening_refusal_code == "UnsafeContent"
+    (span,) = [item for item in sink.finished() if item.name == "agentexperience.finalize"]
+    assert attrs(span)["agentexperience.reflection.screening_refusal"] == "UnsafeContent"
+    assert attrs(span)["agentexperience.outcome"] == "Quarantined"
+    assert all(MARKER.lower() not in str(value).lower() for value in attrs(span).values())

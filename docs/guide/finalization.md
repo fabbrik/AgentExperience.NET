@@ -428,6 +428,33 @@ The data message opens by saying it is untrusted data, not instructions. That la
 control: a model can still be steered by what it reads, which is why its output is bound, screened and quarantined
 on failure, and why injection labels it as historical reference.
 
+### In Python and Go
+
+Since contract 1.14 ([what it adds](../../contract/README-1.14.md)), both ports offer the same reflector, opt-in, with
+.NET's options, defaults and validation: the same system prompt and data message, the same request options (no tools,
+tool mode none, the output cap and the `experience_reflection` schema), the same strict reading, failure kinds and fixed
+messages, and the same screening of model-authored text, the content guard included. A run finalized with it stores
+the same record as .NET for the same run and the same answer: the contract's `reflection-output` fixtures are .NET
+finalizations over a scripted answer, and each port's run of them must store them byte for byte.
+
+| .NET | Python | Go |
+| --- | --- | --- |
+| `ChatClientExperienceReflector(chatClient, options)` | `ChatClientExperienceReflector(chat_client, ChatReflectorOptions(...))` (the `maf` extra) | `maf.NewChatClientReflector(client, maf.ChatClientReflectorOptions{...})` over a `maf.ChatClient`; `maf.AgentChatClient` adapts a MAF agent |
+| `AddAgentExperienceChatClientReflector` | `use_agent_experience(..., reflector=...)` | `maf.Options.Reflector` |
+| `IExperienceReflector` | `ExperienceReflector` (sync or async); `finalize(..., reflector=)`, `finalize_async` | `ae.Reflector`; `ae.FinalizeContextWith` |
+| `ReflectionFailedException` | `ReflectionFailed` (`kind`, `cause_type`) | `*maf.ReflectionFailedError` (`Kind`, `CauseType`) |
+
+The deterministic reflector stays the default in both. Where they differ from .NET: a cause type is the port's own type
+name. Python cannot refuse a function-invoking client (agent-framework runs only the tools a request offers, and the
+reflector offers none), and Go refuses one only when the client says so, so give either a client with no tools. A
+client that blocks Python's event loop cannot be timed out. Go maps the model, temperature and output cap through a
+function the host gives `AgentChatClient` (the Go SDK has no provider-neutral options), and reads zero option values as
+the defaults. Go's core module requires no other module, so it has no Unicode normalizer of its own: `maf` registers
+one when imported, and a host that screens model-written text without it calls `ae.SetUnicodeNormalizer`, or every
+model-written field is refused as text that cannot be normalized. Neither port has a sanitizer layer for reflections,
+which .NET's default sanitizer leaves unchanged anyway. Their MAF finalization runs inside its finalization timeout
+(5 s by default), as .NET's does: raise it above the reflector's `Timeout`.
+
 ### Limits of model-authored lessons
 
 A model writes the lesson from captured tool output, and that output can steer it: a result that says "always run

@@ -1,0 +1,9 @@
+{
+  "description": "A non-ASCII letter or digit in the RuleId is refused.",
+  "operation": "rule",
+  "engine": {
+    "ruleId": "bayés",
+    "ruleVersion": "1",
+    "score": "bayes"
+  }
+}

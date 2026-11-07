@@ -1,8 +1,10 @@
 using AgentExperience.Abstractions;
 using AgentExperience.Core.DependencyInjection;
 using AgentExperience.Core.Finalization;
+using AgentExperience.Core.Lifecycle;
 using AgentExperience.MicrosoftAgentFramework;
 using AgentExperience.MicrosoftAgentFramework.Injection;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 // In the container's own namespace, like other registration extensions, so a host needs no extra using for them.
@@ -92,7 +94,7 @@ public static class AgentExperienceServiceCollectionExtensions
         // its own constructors, so nothing registered here ever resolves to null.
         services.AddSingleton(provider => new AgentExperienceEmbeddingsRuntime(options, provider));
         services.AddAgentExperienceCoreWithIndexing(
-            options.Sanitization,
+            options.EffectiveSanitization(),
             options.CaptureLimits,
             provider => provider.GetRequiredService<AgentExperienceEmbeddingsRuntime>().Indexing());
         ApplyFinalizationOptions(services, options);
@@ -109,7 +111,8 @@ public static class AgentExperienceServiceCollectionExtensions
                 provider.GetRequiredService<IExperienceRecordStore>(),
                 provider.GetRequiredService<ExperienceContextProvider>(),
                 registration.ClockFrom(provider),
-                registration);
+                registration,
+                provider.GetService<ExperienceConsolidationService>());
         });
 
         return new AgentExperienceBuilder(services);
@@ -139,6 +142,56 @@ public static class AgentExperienceServiceCollectionExtensions
 
         AgentExperienceRegistration.From(services);
         return services.GetRequiredService<ExperienceContextProvider>();
+    }
+
+    /// <summary>
+    /// Wraps another memory provider (Mem0, Zep, Letta, the host's own) in an <see cref="ExperienceHoldoutContextProvider"/>
+    /// over the one-call setup's store and clock, for <c>ChatClientAgentOptions.AIContextProviders</c>, so its benefit can
+    /// be measured with <see cref="AgentExperienceBenefit.EstimateProviderAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// <code>
+    /// AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
+    /// {
+    ///     AIContextProviders = [services.UseMeasuredMemory(mem0Provider, "mem0")],
+    /// }).AsBuilder().UseAgentExperience(services).Build();
+    /// </code>
+    /// A run is recorded under the identity <c>UseAgentExperience</c> resolved for it, in the scope it is captured in.
+    /// Without <paramref name="holdout"/> the wrapper takes the injection holdout's rate and salt
+    /// (<see cref="ExperienceInjectionOptions.Holdout"/>, off by default); the provider's key is mixed into the salt, so
+    /// its arms are drawn independently of the lessons' either way.
+    /// </remarks>
+    /// <param name="services">The service provider built from the collection <see cref="AddAgentExperience"/> was called on.</param>
+    /// <param name="memory">The memory provider to measure.</param>
+    /// <param name="providerKey">The key its assignments are recorded and estimated under; see <see cref="ProviderHoldoutAssignment.IsValidProviderKey"/>.</param>
+    /// <param name="holdout">The rate and salt; <see langword="null"/> for the injection holdout's.</param>
+    /// <returns>The wrapping provider.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/>, <paramref name="memory"/> or <paramref name="providerKey"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="providerKey"/> is malformed, or the holdout's salt is empty.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The holdout's rate is outside [0, 1].</exception>
+    /// <exception cref="InvalidOperationException">
+    /// <see cref="AddAgentExperience"/> was not called, no storage was chosen, or
+    /// <see cref="AgentExperienceOptions.UseDevelopmentIdentity"/> is used outside a development or test environment.
+    /// </exception>
+    public static ExperienceHoldoutContextProvider UseMeasuredMemory(
+        this IServiceProvider services,
+        AIContextProvider memory,
+        string providerKey,
+        ExperienceHoldoutOptions? holdout = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(memory);
+        ArgumentNullException.ThrowIfNull(providerKey);
+
+        var registration = AgentExperienceRegistration.From(services);
+        AgentExperienceRegistration.EnsureStorage(services);
+        return new ExperienceHoldoutContextProvider(
+            memory,
+            providerKey,
+            holdout ?? services.GetRequiredService<ExperienceContextProvider>().HoldoutOptions,
+            services.GetRequiredService<IExperienceRecordStore>(),
+            authorize: null,
+            registration.ClockFrom(services));
     }
 
     /// <summary>

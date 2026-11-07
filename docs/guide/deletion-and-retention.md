@@ -13,6 +13,12 @@ the KL-2 boundary in [Known limits and documented boundaries](../known-limits.md
 
 ## Deleting a record
 
+> **Consolidated lessons copy content.** A [consolidated lesson](lifecycle.md#consolidating-repeated-lessons) carries a
+> copy of its most recent source's task, attempts, outcome and reflection, and lists every source's ID. Erasing a
+> source does **not** reach a consolidated record made from it. Before erasing a record, call
+> `FindConsolidatedContainingAsync` (on `ExperienceConsolidationService`, or `GetAgentExperienceLessons()` with the
+> identity) and erase the records it returns too; the next consolidation pass leaves the erased source out.
+
 ```csharp
 var store = new PostgresExperienceRecordStore(dataSource);
 
@@ -81,7 +87,7 @@ One transaction, this order, all inside `0010`'s `agent_experience.purge_experie
 | 6 | `experience_grants` | Purged with the record, because `experience_grants` has no foreign key to it and a re-appearing ID would otherwise re-apply them |
 | 7 | `lifecycle_events` | The record's own history |
 | 8 | `experience_embeddings` | Guarded by `to_regclass`: the table belongs to the vectors package, and a text-only deployment simply skips the step |
-| 9 | `experience_records` | The tombstone, last, so every scope-dependent sweep above still had its scope. `0026`'s trigger deletes the record's `experience_injections` row in the same statement |
+| 9 | `experience_records` | The tombstone, last, so every scope-dependent sweep above still had its scope. `0026`'s trigger deletes the record's `experience_injections` row in the same statement, and `0027`'s deletes every `experience_holdout_assignments` row naming the record, and, when it was its run's last live record in the tenant, `0027`'s and `0029`'s delete that run's `experience_holdout_assignments` and `experience_provider_holdout_assignments` rows; `0030`'s deletes the record's `experience_failure_signatures` rows |
 
 **`experience_grant_access` rows are deliberately kept.** They name a grant and a principal, carry no record
 payload, and are the answer to "who read this before it was deleted" — which is exactly the question a deletion
@@ -353,6 +359,9 @@ below shrink to the derived search data, and that page says exactly what remains
 - **Exported telemetry.** Spans and metrics this library emitted carry record IDs; erasing a record does not
   retract them. The erasure's own telemetry adds nothing that was erased (see [below](#telemetry)).
 - **External artifacts a record merely named.** Tickets, logs, commits: the library never held them.
+- **Consolidated records made from the erased one.** A consolidated record copies its latest source's content and
+  lists every source's ID; erase it too (`FindConsolidatedContainingAsync` finds it, see
+  [above](#deleting-a-record)).
 - **The dead heap tuple — until `VACUUM`, the erased text is still in this database.** The tombstone is written
   with an `UPDATE`, and an `UPDATE` in PostgreSQL writes a new row version and leaves the old one in the heap.
   Until `VACUUM` reclaims it, the previous version of the record row still carries the task summary, the lesson,

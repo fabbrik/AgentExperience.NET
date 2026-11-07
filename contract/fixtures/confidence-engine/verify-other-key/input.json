@@ -1,0 +1,22 @@
+{
+  "description": "Minted under another key.",
+  "operation": "verify",
+  "options": {
+    "verification": "Verified",
+    "assessmentTokenKey": "f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f",
+    "assessmentTokenLifetimeTicks": 864000000000,
+    "nowUnixMs": 1772442000000
+  },
+  "token": "aexat1.AQAAAPYAAEAAgAAAAAAABAAAAAGcrcaagAAAAZyy7PaAAAEAAAD2AABAAIAAAAAAAAABP51EfD9xCcoUeOGkWpb7nOuocEuHurGPUQXLLYFpPJM",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "runId": "000000f6-0000-4000-8000-000000000100",
+  "reviewer": "reviewer-1",
+  "kind": "Supporting"
+}

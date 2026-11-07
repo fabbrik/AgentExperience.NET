@@ -169,8 +169,9 @@ func index(record ae.ExperienceRecord) *indexed {
 // Store holds records in memory, for development and tests. It is safe for concurrent use. The zero value is not
 // usable: make one with New.
 type Store struct {
-	// Clock is the store's own clock, which an injection's instant is clamped to, as PostgreSQL clamps it to its own;
-	// nil reads agentexperience.Now. Set it before the store is used.
+	// Clock is the store's own clock, which an injection's instant is clamped to, as PostgreSQL clamps it to its own,
+	// and which a lifecycle commit stamps (contract 1.16); nil reads agentexperience.Now. Set it before the store is
+	// used, or with SetClock.
 	Clock func() ae.Instant
 
 	mu         sync.RWMutex
@@ -179,6 +180,13 @@ type Store struct {
 	events     map[ae.UUID]Event
 	injections map[ae.UUID]Injection
 	embeddings map[ae.UUID]Embedding
+	// Contract 1.8's holdout assignments, by run and record, and the records erased (Erase).
+	holdout    map[holdoutKey]HoldoutRow
+	tombstones map[ae.UUID]tombstone
+	// Contract 1.11's provider holdout assignments, by tenant, run and provider key.
+	providerHoldout map[providerHoldoutKey]ProviderHoldoutRow
+	// Contract 1.16's event log, evidence ledger and key sets.
+	lifecycle lifecycleState
 }
 
 // Embedding is a record's stored embedding (contract 1.6): the model, the dimension, the content hash of the summary
@@ -200,7 +208,8 @@ type Injection struct {
 // New is a store holding records (each experience ID once).
 func New(records ...ae.ExperienceRecord) (*Store, error) {
 	s := &Store{records: map[ae.UUID]*indexed{}, events: map[ae.UUID]Event{}, injections: map[ae.UUID]Injection{},
-		embeddings: map[ae.UUID]Embedding{}}
+		embeddings: map[ae.UUID]Embedding{}, holdout: map[holdoutKey]HoldoutRow{}, tombstones: map[ae.UUID]tombstone{},
+		providerHoldout: map[providerHoldoutKey]ProviderHoldoutRow{}, lifecycle: newLifecycleState()}
 	for _, record := range records {
 		if _, held := s.records[record.ExperienceID]; held {
 			return nil, errors.New("two records share one experience ID")
@@ -249,9 +258,10 @@ func (s *Store) Event(id ae.UUID) (Event, bool) {
 	return held, ok
 }
 
-// InsertFinalized writes a copy of a finalized record and its initial lifecycle event. It refuses a done context, a
-// blank actor, an event that
-// is not the record's own, a record outside the bounds (ErrAuthorizationDenied) and a record already stored.
+// InsertFinalized writes a copy of a finalized record and its initial lifecycle event, which is then the first event
+// of its history (applied revision 1), recorded at recordedAt (nil: the store's clock). It refuses a done context, a
+// blank actor, an event that is not the record's own, a record outside the bounds (ErrAuthorizationDenied) and a
+// record already stored.
 func (s *Store) InsertFinalized(ctx context.Context, bounds ae.AuthorizationBounds, finalized *ae.FinalizedExperience,
 	actor string, recordedAt *time.Time) error {
 	if err := ctx.Err(); err != nil {
@@ -272,9 +282,15 @@ func (s *Store) InsertFinalized(ctx context.Context, bounds ae.AuthorizationBoun
 	if !Permits(bounds, record.Scope) {
 		return ErrAuthorizationDenied
 	}
-	at := time.Now().UTC()
+	var at ae.Instant
 	if recordedAt != nil {
-		at = *recordedAt
+		converted, err := ae.InstantFromTime(*recordedAt)
+		if err != nil {
+			return err
+		}
+		at = converted.TruncateToMicroseconds()
+	} else {
+		at = s.now()
 	}
 	record, err := clone(record)
 	if err != nil {
@@ -282,11 +298,23 @@ func (s *Store) InsertFinalized(ctx context.Context, bounds ae.AuthorizationBoun
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, held := s.records[record.ExperienceID]; held {
+	if _, held := s.records[record.ExperienceID]; held || s.erased(record.ExperienceID) {
 		return errors.New("a record with this experience ID is already stored")
 	}
+	if _, taken := s.lifecycle.eventsByID[initial.EventID]; taken {
+		return errors.New("a lifecycle event with this event ID is already stored")
+	}
 	s.add(record)
-	s.events[record.ExperienceID] = Event{initial, actor, at}
+	s.events[record.ExperienceID] = Event{initial, actor, at.Time()}
+	prior := initial.PriorStatus
+	stored := &storedEvent{
+		event: ae.LifecycleEvent{EventID: initial.EventID, ExperienceRecordID: initial.ExperienceID,
+			PriorStatus: &prior, CurrentStatus: initial.CurrentStatus, Reason: initial.Reason,
+			Producer: initial.Producer, OccurredAt: initial.OccurredAt.TruncateToMicroseconds(),
+			ExpectedRevision: initial.ExpectedRevision},
+		scope: record.Scope, appliedRevision: initial.AppliedRevision, recordedAt: at, actor: &actor}
+	s.lifecycle.eventsByID[initial.EventID] = stored
+	s.lifecycle.history[record.ExperienceID] = []*storedEvent{stored}
 	return nil
 }
 
@@ -307,7 +335,7 @@ func (s *Store) InsertRecord(ctx context.Context, bounds ae.AuthorizationBounds,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, held := s.records[record.ExperienceID]; held {
+	if _, held := s.records[record.ExperienceID]; held || s.erased(record.ExperienceID) {
 		return errors.New("a record with this experience ID is already stored")
 	}
 	s.add(copied)
@@ -407,8 +435,12 @@ func (s *Store) Search(ctx context.Context, bounds ae.AuthorizationBounds, param
 		}
 		return rows[i].Record.ExperienceID.String() < rows[j].Record.ExperienceID.String()
 	})
-	if len(rows) > ae.StatementLimit {
-		rows = rows[:ae.StatementLimit]
+	limit := parameters.Limit
+	if limit == 0 {
+		limit = ae.StatementLimit
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
 	}
 	return rows, nil
 }
@@ -430,11 +462,7 @@ func (s *Store) RecordInjection(ctx context.Context, bounds ae.AuthorizationBoun
 	if !Permits(bounds, scope) {
 		return ErrAuthorizationDenied
 	}
-	clock := s.Clock
-	if clock == nil {
-		clock = ae.Now
-	}
-	at, now := injectedAt.TruncateToMicroseconds(), clock().TruncateToMicroseconds()
+	at, now := injectedAt.TruncateToMicroseconds(), s.now()
 	if now.Before(at) {
 		at = now
 	}

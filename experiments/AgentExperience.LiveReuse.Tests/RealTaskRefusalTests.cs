@@ -8,9 +8,9 @@ namespace AgentExperience.LiveReuse.Tests;
 public sealed class RealTaskRefusalTests : IDisposable
 {
     /// <summary>The git blob id of <c>preregistration.realtask.json</c> as it stands; any change to the file fails until this and the amendment count are updated.</summary>
-    private const string RegisteredBlobId = "7e2177c91ed87aacdd69adc536ff45abbfc2167a";
+    private const string RegisteredBlobId = "3a582cfa7bfd3528ea2e66e5a286849fcdc42bdd";
 
-    private const int RegisteredAmendments = 4;
+    private const int RegisteredAmendments = 7;
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "realtask-refusal-" + Guid.NewGuid().ToString("N"));
 
@@ -65,6 +65,37 @@ public sealed class RealTaskRefusalTests : IDisposable
     }
 
     [Fact]
+    public void A_dropped_connection_is_retried_and_counts_as_a_refusal_but_a_timeout_does_not()
+    {
+        var design = RealTaskDesign.ReadEmbedded();
+        Assert.True(RealTaskExperiment.IsProviderRefusal(design, "ClientResultException"));
+        Assert.True(RealTaskExperiment.IsProviderRefusal(design, "HttpRequestException"));
+        Assert.True(RetryingChatClient.IsTransientClassification("ClientResultException"));
+        Assert.False(RealTaskExperiment.IsProviderRefusal(design, "model call timed out after 900 s"));
+        Assert.False(RetryingChatClient.IsTransientClassification("model call timed out after 900 s"));
+        Assert.False(RealTaskExperiment.IsProviderRefusal(design, "InvalidOperationException"));
+    }
+
+    [Fact]
+    public void A_reply_with_no_completion_is_retried_and_counts_as_a_refusal()
+    {
+        var design = RealTaskDesign.ReadEmbedded();
+        Assert.True(RealTaskExperiment.IsProviderRefusal(design, LiveReuseExperiment.EmptyCompletion));
+        Assert.True(RetryingChatClient.IsTransientClassification(LiveReuseExperiment.EmptyCompletion));
+        Assert.Equal(LiveReuseExperiment.EmptyCompletion, LiveReuseExperiment.Classify(new EmptyCompletionException(new ArgumentOutOfRangeException("index"))));
+        Assert.Equal("ArgumentOutOfRangeException", LiveReuseExperiment.Classify(new ArgumentOutOfRangeException("index")));
+    }
+
+    [Fact]
+    public async Task The_guard_turns_a_reply_with_no_choices_into_an_empty_completion()
+    {
+        using var guard = new EmptyCompletionGuard(new ThrowingChatClient(new ArgumentOutOfRangeException("index")));
+        await Assert.ThrowsAsync<EmptyCompletionException>(() => guard.GetResponseAsync([new ChatMessage(ChatRole.User, "x")]));
+        using var other = new EmptyCompletionGuard(new ThrowingChatClient(new ArgumentOutOfRangeException("count")));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => other.GetResponseAsync([new ChatMessage(ChatRole.User, "x")]));
+    }
+
+    [Fact]
     public async Task A_refusal_is_not_retried_but_a_503_is()
     {
         Assert.False(RetryingChatClient.IsTransient(new ClientResultException(new FakeResponse(400))));
@@ -90,6 +121,24 @@ public sealed class RealTaskRefusalTests : IDisposable
         Assert.Contains("stopped: provider refused", ledger[^1], StringComparison.Ordinal);
         Assert.Equal(0, new RunLedger(Path.Combine(_directory, "realtask-ledger.tsv")).CountCompleteFor("anthropic", "claude-haiku-4-5"));
         Assert.Equal(1, new RunLedger(Path.Combine(_directory, "realtask-ledger.tsv")).CountFor("anthropic", "claude-haiku-4-5"));
+    }
+
+    [Fact]
+    public async Task A_run_after_only_stopped_and_voided_runs_is_still_the_confirmatory_one()
+    {
+        var environment = new Dictionary<string, string?>
+        {
+            ["AGENTEXPERIENCE_LIVE_PROVIDER"] = "anthropic",
+            ["ANTHROPIC_API_KEY"] = "sk-test-0123456789-not-a-real-key",
+            ["AGENTEXPERIENCE_LIVE_RESULTS_DIR"] = _directory,
+        };
+
+        // A stopped run, then a second run refused the same way: neither is complete, so neither uses the slot.
+        await LiveReuseHost.RunAsync(["--experiment", "realtask"], environment.GetValueOrDefault, new StringWriter(), new StringWriter(), new SteppingClock(), _ => new RefusingClient(401));
+        await LiveReuseHost.RunAsync(["--experiment", "realtask"], environment.GetValueOrDefault, new StringWriter(), new StringWriter(), new SteppingClock(), _ => new RefusingClient(401));
+
+        var report = Directory.GetFiles(_directory, "realtask-anthropic-*.md").OrderBy(File.GetLastWriteTimeUtc).Last();
+        Assert.Contains("0 earlier complete run(s)", File.ReadAllText(report), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -158,5 +207,18 @@ public sealed class RealTaskRefusalTests : IDisposable
         public override void Dispose()
         {
         }
+    }
+}
+
+internal sealed class ThrowingChatClient(Exception exception) : IChatClient
+{
+    public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) => throw exception;
+
+    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) => throw exception;
+
+    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+    public void Dispose()
+    {
     }
 }

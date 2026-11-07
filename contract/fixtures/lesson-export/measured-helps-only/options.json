@@ -1,0 +1,22 @@
+{
+  "description": "Only lessons the holdout measured as helping (at a minimum of 3 runs per arm), eligible for retrieval, with a verified outcome and in exactly the scope are exported, sorted by experience ID: the lesson measured as hurting, the one no run was assigned, the one below the confidence floor, the Stale one, the one whose outcome did not verify and the other agent's are not. The model-authored lesson's text is fenced.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "authorizedScope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "now": "2026-03-03T09:00:00.1234567+00:00",
+  "minimumRunsPerArm": 3,
+  "hasPreviousFile": false
+}

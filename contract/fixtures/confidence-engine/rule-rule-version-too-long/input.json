@@ -1,0 +1,9 @@
+{
+  "description": "A RuleVersion of 65 characters is refused.",
+  "operation": "rule",
+  "engine": {
+    "ruleId": "bayes",
+    "ruleVersion": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
+    "score": "bayes"
+  }
+}

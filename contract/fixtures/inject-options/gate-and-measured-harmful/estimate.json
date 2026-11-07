@@ -1,0 +1,71 @@
+{
+  "minimumRunsPerArm": 2,
+  "overall": {
+    "treatment": {
+      "runs": 6,
+      "successes": 3,
+      "rate": 0.5
+    },
+    "holdout": {
+      "runs": 6,
+      "successes": 3,
+      "rate": 0.5
+    },
+    "difference": 0,
+    "lower": -0.4417772560364358,
+    "upper": 0.4417772560364358,
+    "verdict": "NoEvidence",
+    "unverified": 0,
+    "pending": 0,
+    "mixedArm": 0
+  },
+  "lessons": [
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000001",
+      "comparison": {
+        "treatment": {
+          "runs": 3,
+          "successes": 0,
+          "rate": 0
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 3,
+          "rate": 1
+        },
+        "difference": -1,
+        "lower": -1,
+        "upper": -0.20592328245977842,
+        "verdict": "Hurts",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": null
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000005",
+      "comparison": {
+        "treatment": {
+          "runs": 3,
+          "successes": 3,
+          "rate": 1
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 0,
+          "rate": 0
+        },
+        "difference": 1,
+        "lower": 0.20592328245977842,
+        "upper": 1,
+        "verdict": "Helps",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": null
+    }
+  ],
+  "byConsumingModel": null
+}

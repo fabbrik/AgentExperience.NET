@@ -1,0 +1,466 @@
+[
+  {
+    "record": {
+      "columns": {
+        "experience_id": "000000e1-0000-4000-8000-00000000000c",
+        "source_run_id": "000000e1-0000-4000-8000-00000000010c",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "long-approach",
+        "status": "Validated",
+        "reuse_confidence": 0.6666666666666666,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-02-20T09:00:00+00:00",
+        "updated_at": "2026-02-20T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Refund ticket handling",
+        "attempts": [
+          {
+            "attemptId": "000000e1-0000-4000-8000-0000000003c0",
+            "sequenceNumber": 0,
+            "startedAt": "2026-02-20T08:50:00+00:00",
+            "duration": "00:00:03",
+            "toolCalls": [
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001300",
+                "sequenceNumber": 0,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:00+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001301",
+                "sequenceNumber": 1,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:01+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001302",
+                "sequenceNumber": 2,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:02+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001303",
+                "sequenceNumber": 3,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:03+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001304",
+                "sequenceNumber": 4,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:04+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001305",
+                "sequenceNumber": 5,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:05+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001306",
+                "sequenceNumber": 6,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:06+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001307",
+                "sequenceNumber": 7,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:07+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001308",
+                "sequenceNumber": 8,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:08+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001309",
+                "sequenceNumber": 9,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:09+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-00000000130a",
+                "sequenceNumber": 10,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:10+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-00000000130b",
+                "sequenceNumber": 11,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:11+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-00000000130c",
+                "sequenceNumber": 12,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:12+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-00000000130d",
+                "sequenceNumber": 13,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:13+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-00000000130e",
+                "sequenceNumber": 14,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:14+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-00000000130f",
+                "sequenceNumber": 15,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:15+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001310",
+                "sequenceNumber": 16,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:16+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001311",
+                "sequenceNumber": 17,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:17+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001312",
+                "sequenceNumber": 18,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:18+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001313",
+                "sequenceNumber": 19,
+                "toolName": "read_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:19+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              },
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001314",
+                "sequenceNumber": 20,
+                "toolName": "drop_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:20+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              }
+            ],
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000e1-0000-4000-8000-000000000e0c",
+              "verificationRoundId": "000000e1-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "000000e1-0000-4000-8000-00000000020c",
+          "experienceRunId": "000000e1-0000-4000-8000-00000000010c",
+          "lesson": "Read the ledger page by page.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "000000e1-0000-4000-8000-000000000e0c"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    "ranking": {
+      "score": 0.8107217455642816,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 1,
+          "weight": 0.35
+        },
+        {
+          "kind": "Confidence",
+          "value": 0.6666666666666666,
+          "weight": 0.25
+        },
+        {
+          "kind": "Recency",
+          "value": 0.7937005259840998,
+          "weight": 0.15
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1
+        }
+      ]
+    }
+  },
+  {
+    "record": {
+      "columns": {
+        "experience_id": "000000e1-0000-4000-8000-000000000004",
+        "source_run_id": "000000e1-0000-4000-8000-000000000104",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "drop-ledger",
+        "status": "Validated",
+        "reuse_confidence": 0.6666666666666666,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-02-20T09:00:00+00:00",
+        "updated_at": "2026-02-20T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Refund ticket handling",
+        "attempts": [
+          {
+            "attemptId": "000000e1-0000-4000-8000-000000000340",
+            "sequenceNumber": 0,
+            "startedAt": "2026-02-20T08:50:00+00:00",
+            "duration": "00:00:03",
+            "toolCalls": [
+              {
+                "toolCallId": "000000e1-0000-4000-8000-000000001100",
+                "sequenceNumber": 0,
+                "toolName": "drop_ledger",
+                "arguments": {},
+                "startedAt": "2026-02-20T08:50:00+00:00",
+                "duration": "00:00:00.5000000",
+                "result": "ok",
+                "error": null
+              }
+            ],
+            "result": "ok",
+            "error": null
+          }
+        ],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "000000e1-0000-4000-8000-000000000e04",
+              "verificationRoundId": "000000e1-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "000000e1-0000-4000-8000-000000000204",
+          "experienceRunId": "000000e1-0000-4000-8000-000000000104",
+          "lesson": "Drop the stale ledger and rebuild it.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "000000e1-0000-4000-8000-000000000e04"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    "ranking": {
+      "score": 0.7932217455642815,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 0.95,
+          "weight": 0.35
+        },
+        {
+          "kind": "Confidence",
+          "value": 0.6666666666666666,
+          "weight": 0.25
+        },
+        {
+          "kind": "Recency",
+          "value": 0.7937005259840998,
+          "weight": 0.15
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1
+        }
+      ]
+    }
+  }
+]

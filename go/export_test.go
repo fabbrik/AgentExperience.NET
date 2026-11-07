@@ -4,3 +4,6 @@ package agentexperience
 func (l *Lessons) SetRenderForTest(render func(*ExperienceRecord, BlockOptions) (string, error)) {
 	l.render = render
 }
+
+// EstimateProviderBenefitPaged is EstimateProviderBenefit reading pageSize rows a page: for the fixtures' paged form.
+var EstimateProviderBenefitPaged = estimateProviderBenefit

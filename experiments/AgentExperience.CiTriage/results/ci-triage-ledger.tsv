@@ -1,0 +1,41 @@
+run_id	time	branch	label	arm	predicted	correct	cost_usd	note
+35948894012	2026-09-24T02:50:13Z	feat/4-3-release-hardening	code	none	code:global.json	false	0.000857	finalized Quarantined
+36056747561	2026-09-24T20:45:21Z	feat/5-6-batch-round-trips	code	none	unparsed	false	0.011518	parse failure; asked again for the answer; finalized Quarantined
+36176500691	2026-09-25T18:58:32Z	feat/6-3-support-matrix	ambiguous	-	skipped: ambiguous	-	0.000000	
+36176910796	2026-09-25T19:01:53Z	feat/6-3-support-matrix	ambiguous	-	skipped: ambiguous	-	0.000000	
+36182614232	2026-09-25T19:58:14Z	main	ambiguous	-	skipped: ambiguous	-	0.000000	
+36185438378	2026-09-25T20:26:08Z	main	ambiguous	-	skipped: ambiguous	-	0.000000	
+36188022550	2026-09-25T20:53:17Z	feat/7-2-support-matrix-residual	pending	-	skipped: pending	-	0.000000	
+36190630028	2026-09-25T21:20:05Z	feat/7-3-exposure-bound-evidence	code	none	flaky	false	0.001773	finalized Quarantined
+36289635883	2026-09-27T02:53:40Z	main	ambiguous	-	skipped: ambiguous	-	0.000000	
+36329556674	2026-09-27T15:30:49Z	main	ambiguous	-	skipped: ambiguous	-	0.000000	
+36347532731	2026-09-27T20:22:20Z	main	code	none	unparsed	false	0.014117	parse failure; asked again for the answer; finalized Quarantined
+36439687579	2026-09-28T15:00:47Z	fix/conformance-discrepancies	code	none	code:src/AgentExperience.Storage.Postgres/PostgresExperienceReuseFeedbackStore.cs,src/Shared/ExperienceRecordValidator.Shared.cs,src/AgentExperience.Abstractions/ReuseFeedback.cs,src/AgentExperience.Abstractions/ExperienceRecordStore.cs,tests/AgentExperience.Storage.Postgres.Tests/PostgresCryptoShreddingTests.cs	true	0.013263	asked again for the answer; finalized Validated
+36783427670	2026-09-30T22:08:28Z	main	ambiguous	-	skipped: ambiguous	-	0.000000	
+36895340901	2026-10-01T16:59:49Z	feat/14-4-exclude-model-authored-at-retrieval	code	treatment	unparsed	false	0.012281	parse failure; asked again for the answer; finalized Quarantined
+37311306342	2026-10-05T12:48:19Z	main	ambiguous	-	skipped: ambiguous	-	0.000000	
+37320674355	2026-10-05T14:03:14Z	feat/18-1-what-failed-what-worked	ambiguous	-	skipped: ambiguous	-	0.000000	
+37323095032	2026-10-05T14:21:42Z	main	ambiguous	-	skipped: ambiguous	-	0.000000	
+37332310582	2026-10-05T15:29:54Z	main	ambiguous	-	skipped: ambiguous	-	0.000000	
+37358726492	2026-10-05T18:55:55Z	feat/19-1-track-the-public-api	code	treatment	unparsed	false	0.005699	parse failure; asked again for the answer; finalized Quarantined
+37366346048	2026-10-05T20:08:57Z	main	code	-	skipped: no-log	-	0.000000	
+37365795036	2026-10-05T20:17:11Z	test/19-4-package-version-drift	ambiguous	-	skipped: ambiguous	-	0.000000	
+37990604120	2026-10-09T21:08:46Z	build/baseline-preview-8	code	holdout	unparsed	false	0.009594	parse failure; asked again for the answer; finalized Quarantined
+38080933471	2026-10-10T19:52:19Z	main	code	holdout	flaky	false	0.000798	finalized Quarantined
+38083797278	2026-10-10T20:34:43Z	main	flaky	holdout	code:Directory.Build.props	false	0.000725	finalized Quarantined
+38493585247	2026-10-14T01:11:05Z	main	ambiguous	-	skipped: ambiguous	-	0.000000	
+38510713440	2026-10-14T04:26:28Z	feat/22-2-python-core	code	holdout	code:python/tests/_postgres.py	true	0.004321	finalized Validated
+38526538145	2026-10-14T07:17:39Z	feat/22-5-go-core	code	holdout	code:.github/workflows/ci.yml,go/go.mod	true	0.001533	finalized Validated
+38527473959	2026-10-14T07:26:39Z	feat/22-5-go-core	code	holdout	code:.github/workflows/ci.yml,go/go.mod	true	0.001500	finalized Validated
+38528508525	2026-10-14T07:36:01Z	feat/22-5-go-core	code	holdout	flaky	false	0.000749	finalized Quarantined
+38591056608	2026-10-14T15:45:25Z	build/21-8-lessons-last-injected	code	treatment	flaky	false	0.000614	finalized Quarantined
+38592348884	2026-10-14T15:54:18Z	build/21-8-lessons-last-injected	code	treatment	unparsed	false	0.013682	parse failure; asked again for the answer; finalized Quarantined
+38139108369	2026-10-16T15:45:09Z	docs/console-telemetry-host	pending	-	skipped: pending	-	0.000000	
+38934621593	2026-10-16T16:55:23Z	build/pypi-name-agenticexperience	code	treatment	code:python/src/agentexperience/__init__.py	true	0.003268	finalized Validated
+39048468086	2026-10-17T16:22:22Z	build/23-2-python-semantic-retrieval	code	holdout	unparsed	false	0.011764	parse failure; asked again for the answer; finalized Quarantined
+39469599174	2026-10-20T17:59:23Z	main	ambiguous	-	skipped: ambiguous	-	0.000000	
+39533481187	2026-10-21T02:39:16Z	main	code	holdout	unparsed	false	0.005907	parse failure; asked again for the answer; finalized Quarantined
+38165667473	2026-10-21T18:48:57Z	docs/troubleshooting-page	ambiguous	-	skipped: ambiguous	-	0.000000	
+40422899820	2026-10-27T00:03:11Z	feat/25-1-holdout	code	treatment	flaky	false	0.001236	finalized Quarantined
+40448458668	2026-10-27T04:21:43Z	main	code	treatment	flaky	false	0.000549	finalized Quarantined
+40457517854	2026-10-27T05:58:25Z	main	ambiguous	-	skipped: ambiguous	-	0.000000	

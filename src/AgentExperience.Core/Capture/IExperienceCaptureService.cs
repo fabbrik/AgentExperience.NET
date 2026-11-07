@@ -35,7 +35,19 @@ public sealed record RawToolCall(
     DateTimeOffset StartedAt,
     TimeSpan Duration,
     string? Result,
-    string? Error);
+    string? Error)
+{
+    /// <summary>
+    /// Optional, raw: the short excerpt of <see cref="Result"/> the host vouched for as the recipe a later agent may be
+    /// shown (see <see cref="ToolCallRecord.RecipeExcerpt"/>), or <see langword="null"/> (the default). Kept only for a
+    /// call that returned (<see cref="Error"/> is <see langword="null"/>): it passes through the composed
+    /// <see cref="ISanitizer"/> as <c>Kind</c> <see cref="AgentExperience.Core.Sanitization.SanitizationKinds.ToolResult"/>,
+    /// exactly as <see cref="Result"/> does, and is then cut to <see cref="CaptureLimits.MaxRecipeExcerptLength"/>
+    /// characters, never between a surrogate pair. On a failed call it is dropped.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? RecipeExcerpt { get; init; }
+}
 
 /// <summary>
 /// Raw (unsanitized) data describing one observable attempt, submitted to

@@ -1,0 +1,59 @@
+{
+  "description": "Only a record live in exactly the caller's scope gets a row, its scope copied from the record: not one of another agent, not one in a narrower scope the bounds can see, not an ID with no record, and not a record named from another scope.",
+  "steps": [
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "00000071-0000-4000-8000-000000000901",
+        "arm": "Holdout",
+        "records": [
+          {
+            "experienceId": "00000071-0000-4000-8000-000000000001",
+            "revision": 1
+          },
+          {
+            "experienceId": "00000071-0000-4000-8000-000000000002",
+            "revision": 1
+          },
+          {
+            "experienceId": "00000071-0000-4000-8000-000000000003",
+            "revision": 1
+          },
+          {
+            "experienceId": "00000071-0000-4000-8000-000000000009",
+            "revision": 1
+          }
+        ],
+        "assignedAt": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "other-agent",
+          "userId": null
+        },
+        "runId": "00000071-0000-4000-8000-000000000902",
+        "arm": "Treatment",
+        "records": [
+          {
+            "experienceId": "00000071-0000-4000-8000-000000000001",
+            "revision": 1
+          }
+        ],
+        "assignedAt": "2026-03-02T11:00:00+00:00"
+      }
+    }
+  ]
+}

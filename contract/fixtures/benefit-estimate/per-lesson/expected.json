@@ -1,0 +1,94 @@
+{
+  "minimumRunsPerArm": 20,
+  "overall": {
+    "treatment": {
+      "runs": 29,
+      "successes": 23,
+      "rate": 0.7931034482758621
+    },
+    "holdout": {
+      "runs": 28,
+      "successes": 9,
+      "rate": 0.32142857142857145
+    },
+    "difference": 0.47167487684729065,
+    "lower": 0.2155044589057165,
+    "upper": 0.6504194873158029,
+    "verdict": "Helps",
+    "unverified": 0,
+    "pending": 3,
+    "mixedArm": 0
+  },
+  "lessons": [
+    {
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "comparison": {
+        "treatment": {
+          "runs": 20,
+          "successes": 16,
+          "rate": 0.8
+        },
+        "holdout": {
+          "runs": 18,
+          "successes": 9,
+          "rate": 0.5
+        },
+        "difference": 0.30000000000000004,
+        "lower": -0.001053711068915164,
+        "upper": 0.5412724588770582,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 2,
+        "mixedArm": 0
+      },
+      "byModelPair": null
+    },
+    {
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "comparison": {
+        "treatment": {
+          "runs": 6,
+          "successes": 5,
+          "rate": 0.8333333333333334
+        },
+        "holdout": {
+          "runs": 6,
+          "successes": 2,
+          "rate": 0.3333333333333333
+        },
+        "difference": 0.5,
+        "lower": -0.04030387843204997,
+        "upper": 0.7731752842826356,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": null
+    },
+    {
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "comparison": {
+        "treatment": {
+          "runs": 29,
+          "successes": 23,
+          "rate": 0.7931034482758621
+        },
+        "holdout": {
+          "runs": 28,
+          "successes": 9,
+          "rate": 0.32142857142857145
+        },
+        "difference": 0.47167487684729065,
+        "lower": 0.2155044589057165,
+        "upper": 0.6504194873158029,
+        "verdict": "Helps",
+        "unverified": 0,
+        "pending": 3,
+        "mixedArm": 0
+      },
+      "byModelPair": null
+    }
+  ],
+  "byConsumingModel": null
+}

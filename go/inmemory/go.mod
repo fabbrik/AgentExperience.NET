@@ -2,7 +2,7 @@ module github.com/fabbrik/AgentExperience.NET/go/inmemory
 
 go 1.25.0
 
-require github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.16
+require github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.17
 
 require golang.org/x/text v0.41.0
 

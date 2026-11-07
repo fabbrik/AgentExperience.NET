@@ -1,0 +1,43 @@
+{
+  "experience_holdout_assignments": [
+    {
+      "run_id": "00000070-0000-4000-8000-000000000901",
+      "experience_id": "00000070-0000-4000-8000-000000000001",
+      "revision": "1",
+      "arm": "Treatment",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "refund-agent",
+      "user_id": null,
+      "assigned_at": "2026-03-02 10:00:00.123456+00"
+    },
+    {
+      "run_id": "00000070-0000-4000-8000-000000000901",
+      "experience_id": "00000070-0000-4000-8000-000000000002",
+      "revision": "1",
+      "arm": "Treatment",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "refund-agent",
+      "user_id": null,
+      "assigned_at": "2026-03-02 10:00:00.123456+00"
+    },
+    {
+      "run_id": "00000070-0000-4000-8000-000000000902",
+      "experience_id": "00000070-0000-4000-8000-000000000001",
+      "revision": "1",
+      "arm": "Holdout",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "refund-agent",
+      "user_id": null,
+      "assigned_at": "2026-03-02 09:30:00+00"
+    }
+  ]
+}

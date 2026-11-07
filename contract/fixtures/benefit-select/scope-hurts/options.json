@@ -1,0 +1,11 @@
+{
+  "description": "The scope's overall verdict is Hurts: every record is omitted as MeasuredHarmful with the scope's detail, and nothing is injected.",
+  "enabled": true,
+  "preferMeasuredHelpful": false,
+  "perModel": false,
+  "model": null,
+  "requestLimit": null,
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

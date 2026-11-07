@@ -33,6 +33,18 @@ What it adds to the agent:
   fails the invocation; the outcome is reported through ``on_injection_recorded``.
 - **The lessons view** (contract 1.7), ``agent_experience_lessons(agent)``: a read-only list of what was learned in a
   scope, with each lesson's block, eligibility and last injection.
+- **The injection holdout** (contract 1.8), with ``holdout=HoldoutOptions(rate=...)``: a deterministic, run-ID-derived
+  share of captured runs that have a block has it withheld (``Withheld``), and both arms are recorded in the background,
+  so the benefit estimate (``agentexperience.estimate_benefit``, or .NET's) counts this agent's runs. Off by default.
+- **The run's model** (contract 1.9): capture records the model the agent's chat client reports under the environment
+  metadata key ``agentexperience.model``, for the estimate's split by model; a key the host's environment sets wins.
+- **The benefit policy** (contract 1.10), with ``benefit=BenefitPolicy(enabled=True)``: a lesson the holdout measured
+  as hurting is not injected (``InjectionResult.omitted`` says ``MeasuredHarmful``), and with
+  ``prefer_measured_helpful`` the helpful ones go first. The estimate is cached and refreshed in the background, never
+  on the request path. Off by default.
+- **Measuring another memory provider** (contract 1.11), ``use_measured_memory(agent, mem0, "mem0")``: the provider is
+  wrapped in :class:`ExperienceHoldoutContextProvider`, which withholds what it adds on a deterministic share of
+  captured runs and records each run's arm, so ``agentexperience.estimate_provider_benefit`` (or .NET's) measures it.
 
 Nothing here raises into the agent: a store, identity, classifier or verifier failure means no block, or no stored
 record, and is reported through ``on_injection_failure`` or ``on_capture_failure``. Only the invocation's own
@@ -42,11 +54,15 @@ cancellation and the tool's own exceptions propagate, unchanged.
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import copy
 import dataclasses
 import functools
+import inspect
 import json
 import threading
 import uuid
+from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -65,7 +81,10 @@ from agent_framework import (
 )
 
 from . import __version__
-from .block import BlockOptions, render_block
+from ._text import is_null_or_whitespace, utf16_len
+from .benefit_policy import BenefitCache, BenefitPolicy, OmittedRecord, select_block
+from .block import BLOCK_OVERHEAD_BYTES, BlockOptions, RankedRecord
+from .capabilities import ModelAuthoredLessonPolicy, ReceivingAgent, active_gate, gated_window
 from .capture import RawAttempt, RawToolCall, RunCapture, RunExecutionStatus
 from .classifiers import (
     TOOL_REPORTED_ERROR_CLASS,
@@ -79,7 +98,6 @@ from .embedding import (
     EmbeddingWrite,
     EmbeddingWriteResult,
     VectorFallback,
-    VectorQuery,
     VectorSearchResult,
     content_hash,
     embed_text,
@@ -88,10 +106,21 @@ from .embedding import (
     run_on_vector_thread,
     validate_model_id,
     validate_vector,
+    vector_query_for_policy,
 )
 from .encoding import Duration, Instant
 from .error_class import is_single_token
-from .finalize import FinalizedExperience, finalize
+from .finalize import FinalizedExperience, finalize_async
+from .holdout import (
+    MAX_HOLDOUT_RECORDS,
+    HoldoutArm,
+    HoldoutAssignment,
+    HoldoutOptions,
+    ProviderHoldoutAssignment,
+    assign_holdout,
+    check_provider_key,
+    provider_salt,
+)
 from .identity import (
     DevelopmentOnlyError,
     ExperienceIdentity,
@@ -105,17 +134,22 @@ from .inmemory import (
     AuthorizationDenied,
     EmbeddingIndex,
     ExperienceStore,
+    HoldoutRecorder,
     InjectionRecorder,
     InMemoryExperienceStore,
     LessonsReader,
+    ProviderHoldoutRecorder,
 )
 from .lessons import ExperienceLessons
+from .model import MODEL_METADATA_KEY, reported_model, with_model
 from .observer import classify as _classify_error
 from .observer import observe
-from .records import EnvironmentFingerprint, Provenance, RunExposure
+from .records import EnvironmentFingerprint, ExperienceRecord, Provenance, RunExposure, Scope
+from .reflector import ExperienceReflector, is_model_authored
+from .retrieval import ConfidenceDecayPolicy, RetrievalPolicy
 from .sanitization import Sanitization
-from .search import SearchParameters, SearchRow, rank
-from .task_text import CHAT_HISTORY, EXTERNAL, derive_task_text
+from .search import AuthorizationBounds, ExcludedRecord, SearchParameters, SearchRow, rank
+from .task_text import CHAT_HISTORY, EXTERNAL, MAX_TASK_TEXT_LENGTH, derive_task_text
 from .task_text import Message as TaskMessage
 from .task_text import MessagePart as TaskMessagePart
 from .verification import ClosedVerificationRound
@@ -212,13 +246,44 @@ class InjectionFailure:
 
 @dataclass(frozen=True)
 class InjectionResult:
-    """What one injection delivered: the records in the block, best first, and the block's size in UTF-8 bytes."""
+    """What one injection delivered: the records in the block, best first, and the block's size in UTF-8 bytes. With
+    the holdout (contract 1.8) a held-out invocation is reported too: ``outcome`` ``Withheld``, nothing delivered
+    (``experience_ids`` empty, ``byte_count`` 0), and the records it was denied in ``withheld_experience_ids``."""
 
     experience_ids: tuple[uuid.UUID, ...]
     byte_count: int
     truncated: bool
     vector_fallback: VectorFallback | None = None
     """Why the injection answered from text alone (contract 1.6), or ``None`` when the vector channel contributed."""
+    outcome: Literal[
+        "Injected",
+        "Withheld",
+        "NothingToInject",
+        "RetrievalTimedOut",
+        "RetrievalDenied",
+        "RetrievalFailed",
+        "Skipped",
+        "Failed",
+    ] = "Injected"
+    """``Injected``; ``Withheld`` when the holdout withheld the block (contract 1.8); ``Skipped`` when there is no
+    identity or the request resolver returned ``None``, ``Failed`` when resolving the identity, deriving the task text,
+    the request resolver or the injection itself raised, and ``RetrievalFailed`` when the request was refused or the
+    search failed (contract 1.13: every attempt is reported, as .NET's ``OnContextInjected`` is;
+    ``on_injection_failure`` is still told why); or, as .NET reports it,
+    ``NothingToInject`` when there was no task text or every ranked record was omitted (``omitted`` says why: a scope
+    measured ``Hurts`` omits them all as ``MeasuredHarmful``); ``RetrievalTimedOut`` when retrieval ran past the
+    retrieval policy's timeout or was refused at its abandoned-search cap, and ``RetrievalDenied`` when the identity's
+    bounds do not permit its scope (contract 1.12; nothing delivered)."""
+    withheld_experience_ids: tuple[uuid.UUID, ...] = ()
+    """The records a held-out invocation's block named and did not deliver; empty otherwise."""
+    omitted: tuple[OmittedRecord, ...] = ()
+    """Every ranked record that was not delivered, and why, in .NET's order and with .NET's detail: ``MeasuredHarmful``
+    (the benefit policy, contract 1.10), ``ModelAuthored``, ``ToolUnavailable`` or ``RiskClassExceeded`` (the capability
+    gate, no detail, contract 1.13), ``OverRecordLimit``, ``HostDenied`` (the host's decision, contract 1.13) or
+    ``OverByteBudget``."""
+    excluded: tuple[ExcludedRecord, ...] = ()
+    """The candidates retrieval's eligibility checks left out before ranking, and why (contract 1.12, .NET's
+    ``ExperienceInjectionResult.Excluded``): ``IneligibleStatus``, ``ModelAuthored`` or ``Expired``."""
 
 
 InjectionRecordOutcome = Literal["Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"]
@@ -238,6 +303,16 @@ class InjectionRecordResult:
 
 
 @dataclass(frozen=True)
+class HoldoutRecordResult:
+    """How recording one run's holdout assignment ended (contract 1.8, the ``record_holdout`` operation): the outcome
+    (as for an injection record), the assignment, and the exception, when there was one (never record content)."""
+
+    outcome: InjectionRecordOutcome
+    assignment: HoldoutAssignment
+    exception: BaseException | None = None
+
+
+@dataclass(frozen=True)
 class IdentityContext:
     """What an identity resolver is given: the agent and the caller's session. Never model output."""
 
@@ -246,6 +321,86 @@ class IdentityContext:
 
 
 IdentityResolver = Callable[[IdentityContext], "ExperienceIdentity | Awaitable[ExperienceIdentity | None] | None"]
+
+
+@dataclass(frozen=True)
+class InjectionRequest:
+    """
+    What one invocation retrieves (contract 1.13): the request a :data:`RequestResolver` returns, .NET's
+    ``RetrieveExperienceRequest`` less the authorization and scope, which this port takes from the identity.
+
+    - ``task_text``: what retrieval matches on; blank, or longer than 4096 UTF-16 code units, is refused by retrieval
+      (``RetrievalFailed``).
+    - ``preferred_environment``: replaces the agent's ``preferred_environment`` for this invocation when given.
+    - ``limit``: the request's own limit (1 to the retrieval policy's ``candidate_limit``; anything else is refused by
+      retrieval): the ranking is cut to it, and at most this many records are injected.
+    - ``exclude_model_authored``: also leaves model-authored lessons out for this invocation (it never clears the
+      agent's ``model_authored_lessons="Exclude"``).
+    - ``correlation_id``: set on the ``inject`` span as ``agentexperience.correlation_id``.
+    """
+
+    task_text: str
+    preferred_environment: Mapping[str, str] | None = None
+    limit: int | None = None
+    exclude_model_authored: bool = False
+    correlation_id: str | None = None
+
+
+@dataclass(frozen=True)
+class RequestContext:
+    """What a request resolver is given (.NET's ``ExperienceInjectionContext``): the agent, the caller's session, the
+    invocation's messages as the task text's derivation reads them (the replayed history and earlier context providers'
+    messages, then the new input), the derived task text (``None`` when no user message qualifies) and the identity
+    the invocation runs for."""
+
+    agent: Any
+    session: Any
+    messages: Sequence[Any]
+    derived_task_text: str | None
+    identity: ExperienceIdentity
+
+
+RequestResolver = Callable[[RequestContext], "InjectionRequest | Awaitable[InjectionRequest | None] | None"]
+"""Turns one invocation into its :class:`InjectionRequest`, synchronously or asynchronously (.NET's ``ResolveRequest``
+and ``ResolveRequestAsync``). ``None`` skips the invocation (``Skipped``); an exception injects nothing (``Failed``)."""
+
+
+@dataclass(frozen=True)
+class InjectionDecision:
+    """The host's decision on one record (.NET's ``InjectionDecision``): permitted or not, and a content-free reason
+    (the ``HostDenied`` omission's detail)."""
+
+    permitted: bool
+    reason: str | None = None
+
+    @staticmethod
+    def permit() -> InjectionDecision:
+        """A decision that permits the record."""
+        return InjectionDecision(True)
+
+    @staticmethod
+    def deny(reason: str | None = None) -> InjectionDecision:
+        """A decision that denies the record, with a content-free reason."""
+        return InjectionDecision(False, reason)
+
+
+@dataclass(frozen=True)
+class DecisionContext:
+    """What the host's decision is given (.NET's ``ExperienceInjectionDecisionContext``): the record as retrieval ranked
+    it, the record that would be rendered (this port has no re-read, so the same record), and whether the provider
+    treats it as model-authored (decide on this, never on the reflection's declared authorship)."""
+
+    candidate: RankedRecord
+    current: ExperienceRecord
+    model_authored: bool
+
+
+DecideInjection = Callable[[DecisionContext], "InjectionDecision | None"]
+"""The host's per-record decision (.NET's ``DecideInjection``): synchronous, asked once per selected record after the
+selection and before the byte budget. Fail-closed: raising or returning ``None`` denies (``HostDenied``)."""
+
+HOST_DENIED_DETAIL = "The host injection decision denied the record."
+"""The ``HostDenied`` detail of a denial that gives no reason (.NET's, byte for byte)."""
 
 
 def default_environment() -> EnvironmentFingerprint:
@@ -259,6 +414,15 @@ def default_environment() -> EnvironmentFingerprint:
         application_version=None,
         metadata={"ProcessArchitecture": platform.machine() or "unknown"},
     )
+
+
+def _with_reported_model(environment: EnvironmentFingerprint, agent: Any) -> EnvironmentFingerprint:
+    """``environment`` with the model ``agent``'s chat client reports under ``agentexperience.model`` (contract 1.9);
+    unchanged when it reports none, or when the host's environment already names one."""
+    model = reported_model(agent)
+    if model is None or MODEL_METADATA_KEY in environment.metadata:
+        return environment
+    return dataclasses.replace(environment, metadata=with_model(environment.metadata, model))
 
 
 @dataclass
@@ -278,17 +442,41 @@ class ExperienceSettings:
     environment: EnvironmentFingerprint = field(default_factory=default_environment)
     preferred_environment: Mapping[str, str] = field(default_factory=dict)
     exclude_model_authored: bool = False
+    """Leaves model-authored lessons out: the same as ``model_authored_lessons="Exclude"`` (either excludes)."""
     message_role: Literal["user", "system"] = "user"
+    model_authored_lessons: ModelAuthoredLessonPolicy = "Include"
+    """.NET's ``ModelAuthoredLessons`` (contract 1.13): ``Include`` injects them fenced and labelled; ``Exclude`` asks
+    retrieval to leave them out and omits any that arrives as ``ModelAuthored``."""
+    receiving_agent: ReceivingAgent | None = None
+    """.NET's ``ReceivingAgent`` (contract 1.13): the capability gate; ``None`` gates nothing."""
+    resolve_request: RequestResolver | None = None
+    """.NET's ``ResolveRequest``/``ResolveRequestAsync`` (contract 1.13); ``None``: the derived task text."""
+    decide_injection: DecideInjection | None = None
+    """.NET's ``DecideInjection`` (contract 1.13); ``None`` permits every record."""
     on_capture_failure: Callable[[CaptureFailure], None] | None = None
     on_injection_failure: Callable[[InjectionFailure], None] | None = None
     on_injected: Callable[[InjectionResult], None] | None = None
     on_finalized: Callable[[FinalizedExperience], None] | None = None
     on_injection_recorded: Callable[[InjectionRecordResult], None] | None = None
+    reflector: ExperienceReflector | None = None
+    """The reflector finalization asks for a verified run's lesson (contract 1.14): ``None`` for the deterministic one,
+    the default; :class:`~agentexperience.chat_reflector.ChatClientExperienceReflector` asks a model. Opt-in."""
     embedder: Embedder | None = None
     """Turns text into a vector, for hybrid retrieval and for embedding each stored record (contract 1.6)."""
     min_vector_relevance: float | None = None
     """When set (0 to 1), vector candidates whose relevance is below it are dropped; text candidates never are."""
     on_vector_fallback: Callable[[VectorFallback], None] | None = None
+    retrieval_policy: RetrievalPolicy = field(default_factory=RetrievalPolicy)
+    """The retrieval policy (contract 1.12): the timeout bounding a retrieval, the confidence floor, the expiry, the
+    recency half-life, the candidate limit, the abandoned-search cap, the minimum of matched terms and the vector
+    floor, with .NET's defaults."""
+    confidence_decay: ConfidenceDecayPolicy | None = None
+    """Decays each record's confidence at ranking time by its domain (contract 1.12); ``None``: no decay."""
+    holdout: HoldoutOptions = field(default_factory=HoldoutOptions)
+    """The injection holdout (contract 1.8): off by default (rate 0)."""
+    benefit: BenefitPolicy = field(default_factory=BenefitPolicy)
+    """Acting on the measured benefit (contract 1.10): off by default."""
+    on_holdout_recorded: Callable[[HoldoutRecordResult], None] | None = None
     clock: Callable[[], Instant] = Instant.now
     new_id: Callable[[], uuid.UUID] = uuid.uuid4
     finalization_timeout: float = DEFAULT_FINALIZATION_TIMEOUT
@@ -299,8 +487,13 @@ class ExperienceSettings:
     abandoned and reported ``OutcomeUnknown``. The invocation never waits for it."""
     vector_timeout: float = DEFAULT_VECTOR_TIMEOUT
     """Seconds the vector channel may take in all (embedding the task text and searching); past it the injection
-    answers from text alone and reports ``ProviderUnavailable`` or ``VectorSearchFailed``."""
+    answers from text alone and reports ``ProviderUnavailable`` or ``VectorSearchFailed``. Only when strictly shorter
+    than the retrieval policy's ``timeout``: otherwise the policy's timeout decides, and a vector channel still running
+    then times the retrieval out (``RetrievalTimedOut``), as .NET's one bound on both channels does."""
     _index_tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False, compare=False)
+    # Contract 1.11: the measured memory providers use_measured_memory wrapped on the agent, whose records
+    # ExperienceContextProvider.wait_for_injection_records awaits too.
+    _measured: list[Any] = field(default_factory=list, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.store is None:
@@ -324,12 +517,17 @@ class ExperienceSettings:
             "on_finalized",
             "on_injection_recorded",
             "on_vector_fallback",
+            "on_holdout_recorded",
+            "resolve_request",
+            "decide_injection",
             "clock",
             "new_id",
         ):
             value = getattr(self, name)
             if value is not None and not callable(value):
                 raise TypeError(f"{name} must be callable when given.")
+        if self.reflector is not None and not callable(getattr(self.reflector, "reflect", None)):
+            raise TypeError("reflector must have a reflect(request) method.")
         if not self.finalization_timeout > 0:
             raise ValueError("finalization_timeout must be a positive number of seconds.")
         if not self.injection_record_timeout > 0:
@@ -338,14 +536,40 @@ class ExperienceSettings:
             raise ValueError("vector_timeout must be a positive number of seconds.")
         if self.min_vector_relevance is not None and not 0.0 <= self.min_vector_relevance <= 1.0:
             raise ValueError("min_vector_relevance must be between 0 and 1.")
+        if not isinstance(self.retrieval_policy, RetrievalPolicy):
+            raise TypeError("retrieval_policy must be a RetrievalPolicy.")
+        if self.confidence_decay is not None and not isinstance(self.confidence_decay, ConfidenceDecayPolicy):
+            raise TypeError("confidence_decay must be a ConfidenceDecayPolicy or None.")
         if self.embedder is not None and not (
             isinstance(getattr(self.embedder, "model_id", None), str)
             and hasattr(self.embedder, "dimension")
             and callable(getattr(self.embedder, "embed", None))
         ):
             raise TypeError("embedder must have model_id, dimension and an embed(text) method.")
+        if not isinstance(self.holdout, HoldoutOptions):
+            raise TypeError("holdout must be a HoldoutOptions.")
+        if not isinstance(self.benefit, BenefitPolicy):
+            raise TypeError("benefit must be a BenefitPolicy.")
+        if self.block_options.max_bytes <= BLOCK_OVERHEAD_BYTES:
+            # As .NET's ExperienceInjectionLimits: a budget the block's own frame fills could never hold a record.
+            raise ValueError(
+                f"max_bytes must exceed the block's fixed header and footer ({BLOCK_OVERHEAD_BYTES} bytes), or no "
+                "record could ever fit."
+            )
+        if self.decide_injection is not None and (
+            inspect.iscoroutinefunction(self.decide_injection)
+            or inspect.iscoroutinefunction(type(self.decide_injection).__call__)
+        ):
+            raise TypeError(
+                "decide_injection must be synchronous, as .NET's DecideInjection is: decide from what you prefetched "
+                "in resolve_request, which may be async."
+            )
         if self.message_role not in ("user", "system"):
             raise ValueError("message_role must be 'user' or 'system'.")
+        if self.model_authored_lessons not in ("Include", "Exclude"):
+            raise ValueError("model_authored_lessons must be 'Include' or 'Exclude'.")
+        if self.receiving_agent is not None and not isinstance(self.receiving_agent, ReceivingAgent):
+            raise TypeError("receiving_agent must be a ReceivingAgent or None.")
         if self.task_id is not None and not self.task_id.strip():
             raise ValueError("task_id must not be blank; pass None to use the agent's name.")
 
@@ -361,6 +585,20 @@ class ExperienceSettings:
             ensure_development_environment(resolved.environment_name)
         return resolved
 
+    @property
+    def excludes_model_authored(self) -> bool:
+        """Whether model-authored lessons are left out: ``model_authored_lessons="Exclude"`` or
+        ``exclude_model_authored``."""
+        return self.exclude_model_authored or self.model_authored_lessons == "Exclude"
+
+    @property
+    def vector_floor(self) -> float | None:
+        """The vector channel's floor: ``min_vector_relevance`` when set, which replaces the retrieval policy's
+        ``minimum_vector_relevance`` (as .NET's ``MinimumSemanticSimilarity`` does), else the policy's."""
+        if self.min_vector_relevance is not None:
+            return self.min_vector_relevance
+        return self.retrieval_policy.minimum_vector_relevance
+
     def task_id_for(self, agent: Any) -> str:
         return self.task_id or reduce_name(getattr(agent, "name", None)) or DEFAULT_TASK_ID
 
@@ -369,6 +607,14 @@ class ExperienceSettings:
             return
         try:
             self.on_injection_failure(failure)
+        except Exception:
+            pass
+
+    def report_injected(self, result: InjectionResult) -> None:
+        if self.on_injected is None:
+            return
+        try:
+            self.on_injected(result)
         except Exception:
             pass
 
@@ -392,6 +638,14 @@ class ExperienceSettings:
             return
         try:
             self.on_injection_recorded(result)
+        except Exception:
+            pass
+
+    def report_holdout_recorded(self, result: HoldoutRecordResult) -> None:
+        if self.on_holdout_recorded is None:
+            return
+        try:
+            self.on_holdout_recorded(result)
         except Exception:
             pass
 
@@ -449,7 +703,8 @@ class _CaptureScope:
                 task_id=settings.task_id_for(self.agent),
                 task_description=task_text,
                 scope=identity.scope,
-                environment=settings.environment,
+                # Contract 1.9: the model the agent's chat client reports, unless the host's environment names one.
+                environment=_with_reported_model(settings.environment, self.agent),
                 provenance=Provenance(PROVENANCE_SOURCE, __version__, now, None),
                 started_at=now,
                 sanitization=settings.sanitization,
@@ -562,13 +817,14 @@ class _CaptureScope:
                 return
 
         try:
-            finalized = finalize(
+            finalized = await finalize_async(
                 run,
                 closed_round=ClosedVerificationRound(round_id, verification.artifact_revision),
                 required_checks=verification.required_checks,
                 evidence=verification.evidence,
                 current_artifact_revision=verification.artifact_revision,
                 finalized_at=settings.clock(),
+                reflector=settings.reflector,
             )
         except Exception as ex:
             self.report("Finalize", f"Finalizing the run raised {_type_name(ex)}; the run is not stored.", ex)
@@ -745,102 +1001,164 @@ def _task_messages(inputs: Sequence[Any], context: Sequence[tuple[str, Sequence[
 # ---- Injection ---------------------------------------------------------------------------------------------------
 
 
-class ExperienceContextProvider(ContextProvider):
+class _AbandonedSearches:
     """
-    Injects the lessons that apply to an invocation, before the model is called: the task text from the invocation's
-    messages, the text search in the identity's scope, the contract's ranking, and the rendered block as one message.
-    Never raises into the agent; a failure means no block and is reported through ``on_injection_failure``.
-
-    Once a block is handed over, the records it delivered are recorded as injected (contract 1.4) in a background task
-    on the running event loop, bounded by ``injection_record_timeout``; :meth:`wait_for_injection_records` awaits the
-    ones still running, for a host shutting down or a test.
+    The text searches one provider abandoned (contract 1.12, .NET's ``MaxAbandonedSearches``): a search still running
+    past the retrieval policy's timeout, or when the caller cancelled, is not stopped (a thread cannot be) but counted
+    until its thread actually ends. While the count is at the cap no new search starts.
     """
 
-    def __init__(self, settings: ExperienceSettings, source_id: str = SOURCE_ID) -> None:
-        super().__init__(source_id)
-        self.settings = settings
-        self._recordings: set[asyncio.Task[None]] = set()
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._count = 0
+
+    @property
+    def count(self) -> int:
+        with self._lock:
+            return self._count
+
+    def start(self, call: Callable[[], Any]) -> _Search:
+        """Starts ``call`` on a thread; the returned search is awaited for its answer and abandoned on a timeout."""
+        return _Search(self, call)
+
+
+class _Search:
+    """One text search on a daemon thread of its own (so an abandoned one never holds the event loop's shutdown up):
+    its thread always runs to its end, which is when an abandoned search stops counting."""
+
+    def __init__(self, owner: _AbandonedSearches, call: Callable[[], Any]) -> None:
+        self._owner = owner
+        self._ended = False
+        self._abandoned = False
+        loop = asyncio.get_running_loop()
+        self._future: asyncio.Future[Any] = loop.create_future()
+        context = contextvars.copy_context()
+
+        def settle(value: Any, error: BaseException | None) -> None:
+            if not self._future.done():
+                if error is None:
+                    self._future.set_result(value)
+                else:
+                    self._future.set_exception(error)
+
+        def run() -> None:
+            try:
+                try:
+                    value, error = context.run(call), None
+                except BaseException as ex:
+                    value, error = None, ex
+                try:
+                    loop.call_soon_threadsafe(settle, value, error)
+                except RuntimeError:  # the loop closed first
+                    pass
+            finally:
+                with owner._lock:
+                    self._ended = True
+                    if self._abandoned:
+                        owner._count -= 1
+
+        threading.Thread(target=run, name="agentexperience-search", daemon=True).start()
+
+    async def answer(self) -> Any:
+        return await self._future
+
+    def abandon(self) -> None:
+        """Counts the search as abandoned until its thread ends (at once, when it already has)."""
+        with self._owner._lock:
+            if not self._ended and not self._abandoned:
+                self._abandoned = True
+                self._owner._count += 1
+
+
+class _BackgroundRecords:
+    """
+    The background records of one provider (contract 1.4's injection records, 1.8's holdout assignments, 1.11's
+    provider holdout assignments): each a task on the running event loop whose writes run on daemon threads of its own,
+    bounded by ``timeout()`` seconds, at most :data:`MAX_ABANDONED_INJECTION_RECORDS` writes at once. Never raises into
+    the invocation.
+    """
+
+    def __init__(self, timeout: Callable[[], float]) -> None:
+        self._timeout = timeout
+        self._recordings: set[asyncio.Task[Any]] = set()
         self._abandoned_records = 0
         self._running_writes = 0
         self._abandoned_lock = threading.Lock()
 
-    async def wait_for_injection_records(self) -> None:
-        """Completes once every injection record this provider started on the running event loop has ended. Each is
-        bounded by ``injection_record_timeout``, so this is too; it never raises."""
+    async def settled(self) -> None:
+        """Completes once every record started on the running event loop has ended; never raises."""
         loop = asyncio.get_running_loop()
         while pending := [task for task in self._recordings if task.get_loop() is loop and not task.done()]:
             await asyncio.gather(*pending, return_exceptions=True)
 
     @property
-    def abandoned_injection_records(self) -> int:
-        """How many injection writes that outlived their timeout are still running against the store."""
+    def abandoned(self) -> int:
         with self._abandoned_lock:
             return self._abandoned_records
 
-    def _start_recording(self, identity: ExperienceIdentity, ids: tuple[uuid.UUID, ...], injected_at: Instant) -> None:
-        """Starts recording ``ids`` as injected at ``injected_at``, in the background; never raises, never waits."""
-        settings = self.settings
+    def track(self, task: asyncio.Task[Any]) -> None:
+        """Counts ``task`` among the records :meth:`settled` awaits."""
+        self._recordings.add(task)
+        task.add_done_callback(self._recordings.discard)
+
+    def start(
+        self,
+        operation: str,
+        writes: Callable[[], list[Callable[[], None]]] | None,
+        report: Callable[[InjectionRecordOutcome, BaseException | None], None],
+    ) -> None:
+        """Starts one background record (``writes`` is ``None`` for a store that does not track it: ``NotTracked``);
+        never raises, never waits."""
         try:
-            recorder = settings.store if isinstance(settings.store, InjectionRecorder) else None
-            if recorder is None:
-                with observe("record_injection") as op:
+            if writes is None:
+                with observe(operation) as op:
                     if op is not None:
                         op.outcome("NotTracked")
-                settings.report_injection_recorded(InjectionRecordResult("NotTracked", ids))
+                report("NotTracked", None)
                 return
-            task = asyncio.get_running_loop().create_task(self._record(recorder, identity, ids, injected_at))
+            task = asyncio.get_running_loop().create_task(self._record(operation, writes(), report))
         except Exception as ex:
-            with observe("record_injection") as op:
+            with observe(operation) as op:
                 if op is not None:
                     op.outcome("NotRecorded", "Unexpected")
-            settings.report_injection_recorded(InjectionRecordResult("NotRecorded", ids, ex))
+            report("NotRecorded", ex)
             return
         self._recordings.add(task)
         task.add_done_callback(self._recordings.discard)
 
     async def _record(
         self,
-        recorder: InjectionRecorder,
-        identity: ExperienceIdentity,
-        ids: tuple[uuid.UUID, ...],
-        injected_at: Instant,
+        operation: str,
+        writes: list[Callable[[], None]],
+        report: Callable[[InjectionRecordOutcome, BaseException | None], None],
     ) -> None:
         """
-        The background record: the IDs in chunks of at most 200, each a call on a worker thread of the provider's own,
-        all within ``injection_record_timeout``. A call that overruns it is abandoned (a thread cannot be stopped): it
-        is counted until it ends. At most :data:`MAX_ABANDONED_INJECTION_RECORDS` writes run at once, so writes that
-        hang can never take more threads than that, and never the event loop's default executor, which the search and
-        capture use. Never raises, except the task's own cancellation, which is reported first.
+        The background record: one write per chunk of at most 200 records, each a call on a worker thread of the
+        provider's own, all within ``injection_record_timeout``. A call that overruns it is abandoned (a thread cannot
+        be stopped): it is counted until it ends. At most :data:`MAX_ABANDONED_INJECTION_RECORDS` writes run at once,
+        so writes that hang can never take more threads than that, and never the event loop's default executor, which
+        the search and capture use. Never raises, except the task's own cancellation, which is reported first.
         """
-        with observe("record_injection") as op:
-            await self._record_observed(recorder, identity, ids, injected_at, op)
+        with observe(operation) as op:
+            await self._record_observed(writes, report, op)
 
     async def _record_observed(
         self,
-        recorder: InjectionRecorder,
-        identity: ExperienceIdentity,
-        ids: tuple[uuid.UUID, ...],
-        injected_at: Instant,
+        writes: list[Callable[[], None]],
+        report: Callable[[InjectionRecordOutcome, BaseException | None], None],
         op: Any,
     ) -> None:
-        settings = self.settings
         outcome: InjectionRecordOutcome = "Recorded"
         error: BaseException | None = None
         error_class: str | None = None
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + settings.injection_record_timeout
+        deadline = loop.time() + self._timeout()
         try:
-            for start in range(0, len(ids), MAX_RECORD_INJECTION_IDS):
+            for chunk_write in writes:
                 left = deadline - loop.time()
                 if left <= 0:
                     raise TimeoutError("The injection record ran out of time.")
-                chunk = list(ids[start : start + MAX_RECORD_INJECTION_IDS])
-                write = self._start_write(
-                    loop,
-                    functools.partial(
-                        recorder.record_injection, identity.authorization, identity.scope, chunk, injected_at
-                    ),
-                )
+                write = self._start_write(loop, chunk_write)
                 if write is None:
                     outcome = "NotRecorded"
                     error_class = "Timeout"
@@ -858,7 +1176,7 @@ class ExperienceContextProvider(ContextProvider):
             if op is not None:
                 op.outcome("OutcomeUnknown", "Cancelled")
                 op.close()
-            settings.report_injection_recorded(InjectionRecordResult("OutcomeUnknown", ids, ex))
+            report("OutcomeUnknown", ex)
             raise
         except Exception as ex:
             # A refusal (the grant is missing) is an answer, not a failure: only a store or unexpected failure counts.
@@ -866,7 +1184,7 @@ class ExperienceContextProvider(ContextProvider):
             error_class = None if isinstance(ex, AuthorizationDenied) else _classify_error(ex)
         if op is not None:
             op.outcome(outcome, error_class)
-        settings.report_injection_recorded(InjectionRecordResult(outcome, ids, error))
+        report(outcome, error)
 
     def _start_write(
         self, loop: asyncio.AbstractEventLoop, write: Callable[[], None]
@@ -919,13 +1237,107 @@ class ExperienceContextProvider(ContextProvider):
                 state.abandoned = True
                 self._abandoned_records += 1
 
+
+class ExperienceContextProvider(ContextProvider):
+    """
+    Injects the lessons that apply to an invocation, before the model is called: the task text from the invocation's
+    messages, the text search in the identity's scope, the contract's ranking, and the rendered block as one message.
+    Never raises into the agent; a failure means no block and is reported through ``on_injection_failure``.
+
+    Once a block is handed over, the records it delivered are recorded as injected (contract 1.4) in a background task
+    on the running event loop, bounded by ``injection_record_timeout``; :meth:`wait_for_injection_records` awaits the
+    ones still running, for a host shutting down or a test.
+    """
+
+    def __init__(self, settings: ExperienceSettings, source_id: str = SOURCE_ID) -> None:
+        super().__init__(source_id)
+        self.settings = settings
+        self._background = _BackgroundRecords(lambda: self.settings.injection_record_timeout)
+        self._searches = _AbandonedSearches()
+        # Contract 1.10: the cached benefit estimates, only with the policy on.
+        self._benefit = (
+            BenefitCache(settings.store, settings.benefit, settings.clock) if settings.benefit.enabled else None
+        )
+
+    async def wait_for_benefit_refreshes(self) -> None:
+        """Completes once every benefit refresh this provider started so far has ended (.NET's
+        ``BenefitRefreshesSettledAsync``). Each is bounded by the policy's ``refresh_timeout``; it never raises."""
+        if self._benefit is not None:
+            await self._benefit.settled()
+
+    async def wait_for_injection_records(self) -> None:
+        """Completes once every injection record this provider started on the running event loop has ended, and
+        every record of a memory provider :func:`use_measured_memory` wrapped on the same agent (contract 1.11). Each
+        is bounded by ``injection_record_timeout``, so this is too; it never raises."""
+        await self._background.settled()
+        for measured in list(self.settings._measured):
+            await measured.wait_for_records()
+
+    @property
+    def abandoned_searches(self) -> int:
+        """How many text searches abandoned on a retrieval timeout (or a cancellation) are still running against the
+        store (contract 1.12); at the retrieval policy's ``max_abandoned_searches`` no new search starts."""
+        return self._searches.count
+
+    @property
+    def abandoned_injection_records(self) -> int:
+        """How many injection writes that outlived their timeout are still running against the store."""
+        return self._background.abandoned
+
+    def _start_recording(self, identity: ExperienceIdentity, ids: tuple[uuid.UUID, ...], injected_at: Instant) -> None:
+        """Starts recording ``ids`` as injected at ``injected_at``, in the background; never raises, never waits."""
+        settings = self.settings
+        recorder = settings.store if isinstance(settings.store, InjectionRecorder) else None
+
+        def writes() -> list[Callable[[], None]]:
+            assert recorder is not None
+            return [
+                functools.partial(
+                    recorder.record_injection,
+                    identity.authorization,
+                    identity.scope,
+                    list(ids[start : start + MAX_RECORD_INJECTION_IDS]),
+                    injected_at,
+                )
+                for start in range(0, len(ids), MAX_RECORD_INJECTION_IDS)
+            ]
+
+        def report(outcome: InjectionRecordOutcome, error: BaseException | None) -> None:
+            settings.report_injection_recorded(InjectionRecordResult(outcome, ids, error))
+
+        self._background.start("record_injection", None if recorder is None else writes, report)
+
+    def _start_recording_holdout(self, identity: ExperienceIdentity, assignment: HoldoutAssignment) -> None:
+        """Starts recording the run's holdout ``assignment`` (contract 1.8), in the background, exactly as an injection
+        record is (the ``record_holdout`` operation); never raises, never waits."""
+        settings = self.settings
+        recorder = settings.store if isinstance(settings.store, HoldoutRecorder) else None
+        records = assignment.records
+
+        def writes() -> list[Callable[[], None]]:
+            assert recorder is not None
+            return [
+                functools.partial(
+                    recorder.record_holdout_assignment,
+                    identity.authorization,
+                    identity.scope,
+                    dataclasses.replace(assignment, records=records[start : start + MAX_HOLDOUT_RECORDS]),
+                )
+                for start in range(0, len(records), MAX_HOLDOUT_RECORDS)
+            ]
+
+        def report(outcome: InjectionRecordOutcome, error: BaseException | None) -> None:
+            settings.report_holdout_recorded(HoldoutRecordResult(outcome, assignment, error))
+
+        self._background.start("record_holdout", None if recorder is None else writes, report)
+
     async def wait_for_index_writes(self) -> None:
         """Completes once the embedding writes started after records were stored have ended; see
         :meth:`ExperienceSettings.wait_for_index_writes`."""
         await self.settings.wait_for_index_writes()
 
     async def _vector_channel(
-        self, task_text: str, identity: ExperienceIdentity
+        self, task_text: str, identity: ExperienceIdentity, exclude_model_authored: bool
     ) -> tuple[list[SearchRow], VectorFallback | None]:
         """
         The vector channel (contract 1.6): embed the task text, search the stored vectors, both within
@@ -941,16 +1353,28 @@ class ExperienceContextProvider(ContextProvider):
                 "NotConfigured", "The store does not serve vector search, so only text retrieval ran."
             )
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + settings.vector_timeout
+        # Contract 1.12: vector_timeout is the channel's own fallback only when strictly shorter than the retrieval
+        # policy's timeout; otherwise the policy's timeout alone decides (and a channel still running times the
+        # retrieval out), so two equal bounds never race.
+        own = settings.vector_timeout < settings.retrieval_policy.timeout.total_seconds()
+        deadline = loop.time() + settings.vector_timeout if own else None
+
+        def remaining() -> float | None:
+            return None if deadline is None else max(deadline - loop.time(), 0.0)
+
         try:
             model_id, dimension = embedder.model_id, embedder.dimension
-            raw = await asyncio.wait_for(embed_text(embedder, task_text), max(deadline - loop.time(), 0.0))
+            raw = await asyncio.wait_for(embed_text(embedder, task_text), remaining())
             if not isinstance(model_id, str) or not model_id.strip():
                 return [], VectorFallback("ProviderUnavailable", "The embedder reported no model ID.")
             validate_model_id(model_id)
             vector = validate_vector(raw, dimension)
-            query = VectorQuery(
-                identity.scope, model_id, vector, exclude_model_authored=settings.exclude_model_authored
+            query = vector_query_for_policy(
+                identity.scope,
+                model_id,
+                vector,
+                settings.retrieval_policy,
+                exclude_model_authored=exclude_model_authored,
             )
         except (asyncio.TimeoutError, TimeoutError) as ex:
             return [], VectorFallback("ProviderUnavailable", "The embedder did not answer in time.", ex)
@@ -961,7 +1385,7 @@ class ExperienceContextProvider(ContextProvider):
         try:
             result = await asyncio.wait_for(
                 run_on_vector_thread(store.search_vectors, identity.authorization, query),
-                max(deadline - loop.time(), 0.0),
+                remaining(),
             )
         except (asyncio.TimeoutError, TimeoutError) as ex:
             return [], VectorFallback("VectorSearchFailed", "The vector search did not answer in time.", ex)
@@ -990,6 +1414,16 @@ class ExperienceContextProvider(ContextProvider):
             if op is not None:
                 op.outcome(outcome)
 
+    def _nothing(
+        self, outcome: Literal["Skipped", "Failed", "RetrievalFailed"], op: Any
+    ) -> Literal["Skipped", "Failed", "RetrievalFailed"]:
+        """An attempt that injects nothing before any selection (contract 1.13): reported through ``on_injected`` with
+        its outcome, as .NET reports every attempt, and tagged with no omission."""
+        if op is not None:
+            op.set("agentexperience.omitted_count", 0)
+        self.settings.report_injected(InjectionResult((), 0, False, outcome=outcome))
+        return outcome
+
     async def _inject(self, agent: Any, session: Any, context: Any, op: Any) -> str:
         """The injection; answers its outcome (``InjectionOutcome``'s member name). A raise is the invocation's own
         cancellation, which the observer reports as ``Faulted``/``Cancelled``."""
@@ -1004,11 +1438,12 @@ class ExperienceContextProvider(ContextProvider):
                 identity = await settings.resolve_identity(agent, session)
         except Exception as ex:
             settings.report_injection(InjectionFailure(f"Resolving the identity raised {_type_name(ex)}.", ex))
-            return "Failed"
+            return self._nothing("Failed", op)
         if identity is None:
-            return "Skipped"
+            return self._nothing("Skipped", op)
 
         retrieval_failed = False
+        assignment: HoldoutAssignment | None = None
         try:
             history = {
                 provider.source_id
@@ -1019,74 +1454,238 @@ class ExperienceContextProvider(ContextProvider):
                 (CHAT_HISTORY if source in history else source, batch)
                 for source, batch in context.context_messages.items()
             ]
-            task_text = derive_task_text(_task_messages(context.input_messages, earlier))
-            if task_text is None:
-                return "NothingToInject"
-            parameters = SearchParameters(
-                identity.scope, task_text, exclude_model_authored=settings.exclude_model_authored
-            )
-            with observe("retrieve") as retrieval:
-                text_search = asyncio.ensure_future(
-                    asyncio.to_thread(settings.store.search, identity.authorization, parameters)
+            derived = derive_task_text(_task_messages(context.input_messages, earlier))
+        except Exception as ex:
+            settings.report_injection(InjectionFailure(f"Injection raised {_type_name(ex)}; no block was added.", ex))
+            return self._nothing("Failed", op)
+        policy = settings.retrieval_policy
+        exclude = settings.excludes_model_authored
+        preferred: Mapping[str, str] = settings.preferred_environment
+        request_limit: int | None = None
+        if settings.resolve_request is not None:
+            # Contract 1.13: the host's request resolver, sync or async. None skips this invocation; a raise injects
+            # nothing (Failed); the invocation's own cancellation propagates.
+            messages = [message for batch in context.context_messages.values() for message in batch]
+            messages += list(context.input_messages)
+            try:
+                request = await resolve(
+                    settings.resolve_request(RequestContext(agent, session, messages, derived, identity))
                 )
-                vector_search = asyncio.ensure_future(self._vector_channel(task_text, identity))
-                # Both channels run together; the vector channel never raises (it answers with a fallback instead).
-                text_found, vector_found = await asyncio.gather(text_search, vector_search, return_exceptions=True)
-                if isinstance(vector_found, BaseException):
-                    vector_found = (
-                        [],
-                        VectorFallback("VectorSearchFailed", "The vector channel failed unexpectedly."),
+                if request is not None and not isinstance(request, InjectionRequest):
+                    raise TypeError("The request resolver must return an InjectionRequest or None.")
+            except (Exception, asyncio.CancelledError) as ex:
+                # As .NET: a cancellation propagates only when the invocation itself is being cancelled; any other is
+                # a failure like any other raise.
+                if isinstance(ex, asyncio.CancelledError) and _being_cancelled():
+                    raise
+                settings.report_injection(
+                    InjectionFailure(f"The injection request resolver (resolve_request) raised {_type_name(ex)}.", ex)
+                )
+                return self._nothing("Failed", op)
+            if request is None:
+                return self._nothing("Skipped", op)
+            if request.correlation_id is not None and op is not None:
+                op.set("agentexperience.correlation_id", request.correlation_id)
+            refusal = _refused(request, policy)
+            if refusal is not None:
+                # As .NET's retrieval refuses such a request: nothing is searched, and retrieval failed.
+                settings.report_injection(InjectionFailure(refusal))
+                return self._nothing("RetrievalFailed", op)
+            task_text: str | None = request.task_text
+            exclude = exclude or request.exclude_model_authored
+            if request.preferred_environment is not None:
+                preferred = dict(request.preferred_environment)
+            request_limit = request.limit
+        else:
+            task_text = derived
+        # The capability gate this invocation runs under (contract 1.13), with use_run_tools over the tools it offers.
+        gate = active_gate(
+            settings.receiving_agent,
+            _run_tools(agent, context)
+            if settings.receiving_agent is not None and settings.receiving_agent.use_run_tools
+            else None,
+        )
+        window = gated_window(request_limit, gate, settings.block_options.max_records, policy.candidate_limit)
+        try:
+            if task_text is None:
+                settings.report_injected(InjectionResult((), 0, False, outcome="NothingToInject"))
+                return "NothingToInject"
+            parameters = SearchParameters.for_policy(identity.scope, task_text, policy, exclude_model_authored=exclude)
+            stopped: Literal["RetrievalTimedOut", "RetrievalDenied"] | None = None
+            with observe("retrieve") as retrieval:
+                if not identity.authorization.permits(identity.scope):
+                    # Contract 1.12, as .NET: a scope outside the bounds is Denied before anything is searched or
+                    # embedded.
+                    if retrieval is not None:
+                        retrieval.outcome("Denied")
+                    stopped = "RetrievalDenied"
+                elif self._searches.count >= policy.max_abandoned_searches:
+                    # Too many earlier searches are still running against the store: none is started, and the call
+                    # ends as the timeout it would almost certainly become.
+                    if retrieval is not None:
+                        retrieval.outcome("TimedOut")
+                    stopped = "RetrievalTimedOut"
+                    settings.report_injection(
+                        InjectionFailure(
+                            "The candidate store has too many abandoned searches still running (at least "
+                            f"{policy.max_abandoned_searches}), so no search was started."
+                        )
                     )
-                vector_rows, fallback = vector_found
-                if fallback is not None:
-                    settings.report_vector_fallback(fallback)
-                if isinstance(text_found, BaseException):
-                    # The text channel's failure fails the call, whatever the vector channel found. Retrieval reports
-                    # it as its outcome, as .NET does; it is not thrown.
-                    if retrieval is not None:
-                        retrieval.outcome("Failed")
-                    retrieval_failed = True
                 else:
-                    rows = text_found
-                    # The instant the block is built at: ranking's "now", and the injection's instant.
-                    now = settings.clock()
-                    if vector_rows:
-                        ranked = rank_hybrid(
-                            rows,
-                            vector_rows,
-                            identity.scope,
-                            now,
-                            settings.preferred_environment,
-                            minimum_vector_relevance=settings.min_vector_relevance,
-                            exclude_model_authored=settings.exclude_model_authored,
+                    search = self._searches.start(
+                        functools.partial(settings.store.search, identity.authorization, parameters)
+                    )
+                    text_search = asyncio.ensure_future(search.answer())
+                    vector_search = asyncio.ensure_future(self._vector_channel(task_text, identity, exclude))
+                    try:
+                        # Both channels run together, bounded together by the policy's timeout; the vector channel
+                        # never raises (it answers with a fallback instead).
+                        text_found, vector_found = await asyncio.wait_for(
+                            asyncio.gather(text_search, vector_search, return_exceptions=True),
+                            policy.timeout.total_seconds(),
                         )
-                    else:
-                        ranked = rank(
-                            rows,
-                            identity.scope,
-                            now,
-                            settings.preferred_environment,
-                            exclude_model_authored=settings.exclude_model_authored,
-                        )
-                    if retrieval is not None:
-                        retrieval.outcome("Completed")
+                    except (asyncio.TimeoutError, TimeoutError):
+                        search.abandon()
+                        if retrieval is not None:
+                            retrieval.outcome("TimedOut")
+                        stopped = "RetrievalTimedOut"
+                    except BaseException:
+                        # The caller's own cancellation: it propagates, and the search is abandoned too.
+                        search.abandon()
+                        raise
+                    if stopped is None:
+                        if isinstance(vector_found, BaseException):
+                            vector_found = (
+                                [],
+                                VectorFallback("VectorSearchFailed", "The vector channel failed unexpectedly."),
+                            )
+                        vector_rows, fallback = vector_found
+                        if fallback is not None:
+                            settings.report_vector_fallback(fallback)
+                        if isinstance(text_found, BaseException):
+                            # The text channel's failure fails the call, whatever the vector channel found.
+                            # Retrieval reports it as its outcome, as .NET does; it is not thrown.
+                            if retrieval is not None:
+                                retrieval.outcome("Failed")
+                            retrieval_failed = True
+                        else:
+                            rows = text_found
+                            # The instant the block is built at: ranking's "now", and the injection's instant.
+                            now = settings.clock()
+                            if vector_rows:
+                                ranked = rank_hybrid(
+                                    rows,
+                                    vector_rows,
+                                    identity.scope,
+                                    now,
+                                    preferred,
+                                    minimum_vector_relevance=settings.vector_floor,
+                                    exclude_model_authored=exclude,
+                                    policy=policy,
+                                    confidence_decay=settings.confidence_decay,
+                                )
+                            else:
+                                ranked = rank(
+                                    rows,
+                                    identity.scope,
+                                    now,
+                                    preferred,
+                                    exclude_model_authored=exclude,
+                                    policy=policy,
+                                    confidence_decay=settings.confidence_decay,
+                                )
+                            if window is not None:
+                                # .NET's cut to the request's own limit, widened for the capability gate.
+                                ranked = dataclasses.replace(ranked, ranked=ranked.ranked[:window])
+                            if retrieval is not None:
+                                retrieval.outcome("Completed")
+            if stopped is not None:
+                settings.report_injected(InjectionResult((), 0, False, outcome=stopped))
+                return stopped
             if retrieval_failed:
                 assert isinstance(text_found, BaseException)
                 raise text_found
-            block = render_block(ranked.ranked, settings.block_options)
-            if op is not None:
-                op.set("agentexperience.omitted_count", len(block.omitted))
-            if block.is_empty:
-                return "NothingToInject"
-            message = Message(
-                role=settings.message_role,
-                contents=[block.text],
-                additional_properties={HISTORICAL_REFERENCE_KEY: True},
+            # Contract 1.10: the benefit policy's cached view (never waits on the store), then the selection.
+            view = None
+            if self._benefit is not None:
+                model = _invoking_model(settings, agent, captured)
+                view = self._benefit.current(identity.authorization, identity.scope, identity.principal, model)
+            selection = select_block(
+                ranked.ranked,
+                view,
+                settings.block_options,
+                request_limit=request_limit,
+                exclude_model_authored=exclude,
+                prefer_measured_helpful=settings.benefit.prefer_measured_helpful,
+                gate=gate,
+                decide=None
+                if settings.decide_injection is None
+                else functools.partial(_decide, settings.decide_injection),
             )
-            context.extend_messages(self, [message])
+            block = selection.block
+            if op is not None:
+                op.set("agentexperience.omitted_count", len(selection.omitted))
+            if block.is_empty:
+                # As .NET reports it: nothing injected, and every omission.
+                settings.report_injected(
+                    InjectionResult(
+                        (),
+                        0,
+                        ranked.truncated,
+                        fallback,
+                        outcome="NothingToInject",
+                        omitted=selection.omitted,
+                        excluded=ranked.excluded,
+                    )
+                )
+                return "NothingToInject"
+            # The injection holdout (contract 1.8). Decided once the block is built, so what a held-out run is denied is
+            # exactly what it would have been given, and before anything is handed over. Only a run this agent's own
+            # capture captures takes part, and only with records to deliver; everything else is injected as it always
+            # was, and records nothing.
+            run_id = scope.run_id if captured and scope is not None else None
+            holdout = settings.holdout
+            if holdout.active and block.included and run_id is not None:
+                arm: HoldoutArm = assign_holdout(run_id, holdout.salt, holdout.rate)
+                assignment = HoldoutAssignment(
+                    run_id,
+                    arm,
+                    tuple(RunExposure(record.experience_id, record.revision) for record in block.included),
+                    now,
+                )
+            if assignment is None or assignment.arm == "Treatment":
+                message = Message(
+                    role=settings.message_role,
+                    contents=[block.text],
+                    additional_properties={HISTORICAL_REFERENCE_KEY: True},
+                )
+                context.extend_messages(self, [message])
         except Exception as ex:
             settings.report_injection(InjectionFailure(f"Injection raised {_type_name(ex)}; no block was added.", ex))
-            return "RetrievalFailed" if retrieval_failed else "Failed"
+            return self._nothing("RetrievalFailed" if retrieval_failed else "Failed", op)
+
+        if assignment is not None and assignment.arm == "Holdout":
+            # The holdout arm: nothing handed over, no exposure, no injection record; the assignment is recorded in the
+            # background. This port delivers no withdrawal notices, so a held-out invocation is never a retraction.
+            withheld = tuple(record.experience_id for record in block.included)
+            if settings.on_injected is not None:
+                try:
+                    settings.on_injected(
+                        InjectionResult(
+                            (),
+                            0,
+                            ranked.truncated,
+                            fallback,
+                            "Withheld",
+                            withheld,
+                            selection.omitted,
+                            ranked.excluded,
+                        )
+                    )
+                except Exception:
+                    pass
+            self._start_recording_holdout(identity, assignment)
+            return "Withheld"
 
         # The records this block delivers, at the revision each was rendered from, on the run the invocation is
         # captured as. Recorded last, once nothing that could fail remains.
@@ -1095,7 +1694,16 @@ class ExperienceContextProvider(ContextProvider):
         delivered = tuple(record.experience_id for record in block.included)
         if settings.on_injected is not None:
             try:
-                settings.on_injected(InjectionResult(delivered, block.byte_count, ranked.truncated, fallback))
+                settings.on_injected(
+                    InjectionResult(
+                        delivered,
+                        block.byte_count,
+                        ranked.truncated,
+                        fallback,
+                        omitted=selection.omitted,
+                        excluded=ranked.excluded,
+                    )
+                )
             except Exception:
                 pass
 
@@ -1103,7 +1711,94 @@ class ExperienceContextProvider(ContextProvider):
         # block is handed over and the model called without waiting for the store.
         if delivered:
             self._start_recording(identity, delivered, now)
+
+        # The treatment arm's assignment, recorded the same way.
+        if assignment is not None:
+            self._start_recording_holdout(identity, assignment)
         return "Injected"
+
+
+def _refused(request: InjectionRequest, policy: RetrievalPolicy) -> str | None:
+    """Why retrieval refuses ``request`` (.NET's ``RetrieveAsync`` argument checks), or ``None``."""
+    if not isinstance(request.task_text, str) or is_null_or_whitespace(request.task_text):
+        return "Retrieval refused the request: the task text is blank."
+    if utf16_len(request.task_text) > MAX_TASK_TEXT_LENGTH:
+        return f"Retrieval refused the request: the task text is longer than {MAX_TASK_TEXT_LENGTH} characters."
+    limit = request.limit
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0):
+        return "Retrieval refused the request: Limit must be strictly positive when specified."
+    if limit is not None and limit > policy.candidate_limit:
+        return (
+            "Retrieval refused the request: Limit must be at most the policy's candidate limit "
+            f"({policy.candidate_limit}); a larger limit could never be satisfied."
+        )
+    return None
+
+
+def _decide(decide: DecideInjection, candidate: RankedRecord) -> OmittedRecord | None:
+    """The host's decision on one selected record (contract 1.13): ``None`` when permitted, otherwise its ``HostDenied``
+    omission. Fail-closed: a raise, ``None`` or anything but an :class:`InjectionDecision` denies."""
+    record = candidate.record
+    try:
+        decision = decide(DecisionContext(candidate, record, is_model_authored(record.reflection)))
+    except Exception as ex:
+        return OmittedRecord(
+            record.experience_id,
+            "HostDenied",
+            f"The host injection decision threw {_type_name(ex)}, so the record was denied.",
+        )
+    if inspect.iscoroutine(decision):
+        # Synchronous only, as .NET's: an awaitable is not a decision, so it denies (closed, never awaited).
+        decision.close()
+    if isinstance(decision, InjectionDecision) and decision.permitted is True:
+        return None
+    reason = decision.reason if isinstance(decision, InjectionDecision) else None
+    return OmittedRecord(record.experience_id, "HostDenied", HOST_DENIED_DETAIL if reason is None else reason)
+
+
+def _being_cancelled() -> bool:
+    """Whether the running task (the invocation) is itself being cancelled. Before Python 3.11 a task cannot say, so
+    every cancellation counts as the invocation's own."""
+    task = asyncio.current_task()
+    if task is None:
+        return False
+    cancelling = getattr(task, "cancelling", None)
+    return True if cancelling is None else bool(cancelling())
+
+
+def _tool_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def _run_tools(agent: Any, context: Any) -> list[Any]:
+    """The tools this invocation offers the model, as a context provider sees them (contract 1.13's ``use_run_tools``):
+    the agent's own (``default_options["tools"]``) and those an earlier context provider added (``context.tools``), and
+    ``options["tools"]`` should a framework version hand providers one. agent-framework does not hand a provider the
+    ``tools=`` list of one ``run`` call, nor an MCP server's functions, nor tools a later provider or middleware adds,
+    so they are not seen. Each is a name, or an object with a ``name`` (a plain function: its ``__name__``)."""
+    tools: list[Any] = []
+    try:
+        tools += _tool_list((getattr(agent, "default_options", None) or {}).get("tools"))
+        tools += _tool_list((getattr(context, "options", None) or {}).get("tools"))
+        tools += _tool_list(getattr(context, "tools", None))
+    except Exception:
+        return []
+    return [
+        tool if isinstance(tool, str) or hasattr(tool, "name") else getattr(tool, "__name__", None) for tool in tools
+    ]
+
+
+def _invoking_model(settings: ExperienceSettings, agent: Any, captured: bool) -> str | None:
+    """The model the benefit policy acts for (contract 1.10): the model capture records for the run (the host's
+    environment value when it sets one) when the invocation is captured, otherwise the one the agent's chat client
+    reports."""
+    if captured:
+        return _with_reported_model(settings.environment, agent).metadata.get(MODEL_METADATA_KEY)
+    return reported_model(agent)
 
 
 # ---- Capture -----------------------------------------------------------------------------------------------------
@@ -1275,7 +1970,8 @@ def agent_experience_lessons(source: Any) -> ExperienceLessons:
     """
     The read-only lessons view (contract 1.7) for an agent set up with :func:`use_agent_experience`, or for its
     :class:`ExperienceSettings`: it reads the same store, renders blocks with the same block options, excludes
-    model-authored lessons when the setup does, and uses the setup's clock. When the setup has one fixed identity (the
+    model-authored lessons when the setup does, applies the setup's retrieval policy (its confidence floor and
+    ``max_age``, contract 1.12) and uses the setup's clock. When the setup has one fixed identity (the
     development identity, say), ``list()`` lists its scope; otherwise pass the identity from your own authentication:
     ``list(identity)``. ``TypeError`` for an agent that was not set up, or a store that cannot list lessons.
     """
@@ -1289,10 +1985,350 @@ def agent_experience_lessons(source: Any) -> ExperienceLessons:
     return ExperienceLessons(
         cast("LessonsReader", settings.store),
         block_options=settings.block_options,
-        exclude_model_authored=settings.exclude_model_authored,
+        exclude_model_authored=settings.excludes_model_authored,
         clock=settings.clock,
         identity=settings.identity if isinstance(settings.identity, ExperienceIdentity) else None,
+        benefit=settings.benefit,
+        retrieval_policy=settings.retrieval_policy,
     )
+
+
+# ---- Measuring another memory provider (contract 1.11) ------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProviderHoldoutRecordResult:
+    """How recording one run's arm in a memory provider's holdout ended (contract 1.11, the
+    ``record_provider_holdout`` operation): the outcome (as for an injection record), the assignment (``None`` when
+    inspecting the provider's answer failed and nothing was assigned), and the exception, when there was one."""
+
+    outcome: InjectionRecordOutcome
+    assignment: ProviderHoldoutAssignment | None
+    exception: BaseException | None = None
+
+
+ProviderAuthorize = Callable[[Scope], "AuthorizationBounds | None"]
+"""The host's answer for a captured run with no identity resolved: the bounds to record under, or ``None``."""
+
+
+def _private_context(context: Any) -> Any:
+    """A context of the wrapped provider's own: the invocation's, with every container it adds to copied, so nothing it
+    adds reaches the invocation unless the wrapper delivers it. ``options`` and ``metadata`` are shared, as they are
+    without the wrapper (the model never sees them)."""
+    private = copy.copy(context)
+    private.input_messages = list(context.input_messages)
+    private.context_messages = {source: list(batch) for source, batch in context.context_messages.items()}
+    private.instructions = list(context.instructions)
+    private.tools = list(context.tools)
+    middleware = getattr(context, "middleware", None)
+    if isinstance(middleware, dict):
+        private.middleware = {source: list(batch) for source, batch in middleware.items()}
+    return private
+
+
+def _same(left: Sequence[Any], right: Sequence[Any]) -> bool:
+    return len(left) == len(right) and all(a is b for a, b in zip(left, right, strict=True))
+
+
+def _deliver_batches(target: dict[str, list[Any]], source: dict[str, list[Any]]) -> None:
+    for key in [key for key in target if key not in source]:
+        del target[key]
+    for key, batch in source.items():
+        if key not in target:
+            target[key] = list(batch)
+        elif not _same(target[key], batch):
+            target[key][:] = batch
+
+
+def _deliver(context: Any, private: Any) -> None:
+    """Makes the invocation's context what the wrapped provider left its own: exactly as without the wrapper."""
+    if not _same(context.input_messages, private.input_messages):
+        context.input_messages[:] = private.input_messages
+    _deliver_batches(context.context_messages, private.context_messages)
+    if context.instructions != private.instructions:
+        context.instructions[:] = private.instructions
+    if not _same(context.tools, private.tools):
+        context.tools[:] = private.tools
+    middleware = getattr(context, "middleware", None)
+    if isinstance(middleware, dict) and isinstance(getattr(private, "middleware", None), dict):
+        _deliver_batches(middleware, private.middleware)
+
+
+def _messages(context: Any) -> list[Any]:
+    return [*context.input_messages, *(message for batch in context.context_messages.values() for message in batch)]
+
+
+def _added(context: Any, private: Any) -> bool:
+    """Whether the wrapped provider added anything: an instruction (non-empty, and not one it was handed), or a message
+    or tool it was not handed (compared by identity)."""
+    handed_instructions = Counter(instruction for instruction in context.instructions)
+    answered_instructions = Counter(instruction for instruction in private.instructions)
+    if any(
+        isinstance(instruction, str) and instruction and count > handed_instructions[instruction]
+        for instruction, count in answered_instructions.items()
+    ):
+        return True
+    handed_messages = {id(message) for message in _messages(context)}
+    if any(message is not None and id(message) not in handed_messages for message in _messages(private)):
+        return True
+    handed_tools = {id(item) for item in context.tools}
+    return any(item is not None and id(item) not in handed_tools for item in private.tools)
+
+
+class ExperienceHoldoutContextProvider(ContextProvider):
+    """
+    Puts another memory provider (Mem0, Zep, Letta, the host's own: any MAF ``ContextProvider``) under the same
+    holdout the lessons run under, so its benefit can be measured (contract 1.11): on a deterministic share of captured
+    runs whose wrapped provider added something, what it added is withheld, and each such run's arm is recorded against
+    ``provider_key``. :func:`agentexperience.estimate_provider_benefit` then compares the arms' verified outcomes. Off
+    by default (rate 0). .NET's ``ExperienceHoldoutContextProvider``.
+
+    - **The wrapped provider runs exactly as without the wrapper.** Its ``before_run`` is always called, in both arms,
+      and so is its ``after_run`` (with the invocation's own context); it keeps its ``source_id``, so its session
+      state is its own. Its exceptions propagate unchanged, and nothing is recorded for an invocation whose hook raised.
+    - **At rate 0** the wrapper is a pass-through: nothing is inspected, assigned or recorded, and no telemetry.
+    - **Who takes part.** Only an invocation captured by this agent's own :func:`use_agent_experience` (it has a run
+      ID), with an authorization (the identity capture resolved, else ``authorize(scope)``; a callback that raises
+      counts as no answer), whose wrapped provider added an instruction, a message or a tool. Every other invocation
+      gets exactly what the wrapped provider added, and is assigned nothing.
+    - **The arm** is :func:`~agentexperience.holdout.assign_provider_holdout` of the run ID: a ``Holdout`` invocation
+      sees exactly the context it would without the provider; a ``Treatment`` one gets what the provider added.
+    - **The context passed in is never changed by the wrapper.** The wrapped provider adds to a context of its own
+      (the invocation's, with its messages, instructions, tools and middleware copied; ``options`` and ``metadata``
+      shared), and its additions are copied into the invocation's context in the treatment arm, or when the run does
+      not take part.
+    - **What is recorded**, in the background, bounded by ``record_timeout`` and never delaying or failing the
+      invocation: the run, the key, the arm and the instant, through the store's
+      ``record_provider_holdout_assignment``, in the scope the run is captured in. Its outcome is the
+      ``record_provider_holdout`` operation in telemetry and ``on_recorded``. A failure while inspecting the provider's
+      answer delivers the answer unchanged, records nothing, and is reported ``NotRecorded`` (``Unexpected``).
+
+    ``ValueError`` for a malformed key; ``TypeError`` for a provider without ``before_run``/``after_run``, holdout
+    options that are not :class:`HoldoutOptions`, or a callback that is not callable.
+    """
+
+    def __init__(
+        self,
+        inner: Any,
+        provider_key: str,
+        holdout: HoldoutOptions,
+        store: object,
+        *,
+        authorize: ProviderAuthorize | None = None,
+        clock: Callable[[], Instant] = Instant.now,
+        record_timeout: float = DEFAULT_INJECTION_RECORD_TIMEOUT,
+        on_recorded: Callable[[ProviderHoldoutRecordResult], None] | None = None,
+    ) -> None:
+        if (
+            inner is None
+            or not callable(getattr(inner, "before_run", None))
+            or not callable(getattr(inner, "after_run", None))
+        ):
+            raise TypeError("inner must be a MAF context provider (with before_run and after_run).")
+        source_id = getattr(inner, "source_id", None)
+        if not isinstance(source_id, str):
+            raise TypeError("inner must have a source_id.")
+        check_provider_key(provider_key)
+        if not isinstance(holdout, HoldoutOptions):
+            raise TypeError("holdout must be a HoldoutOptions.")
+        if store is None:
+            raise ValueError("A store is required.")
+        for name, value in (("authorize", authorize), ("clock", clock), ("on_recorded", on_recorded)):
+            if value is not None and not callable(value):
+                raise TypeError(f"{name} must be callable when given.")
+        if not record_timeout > 0:
+            raise ValueError("record_timeout must be a positive number of seconds.")
+        # The wrapped provider's own source ID: MAF hands the wrapper its session state, and attributes nothing to the
+        # wrapper.
+        super().__init__(source_id)
+        self.after_run_once_per_turn = bool(getattr(inner, "after_run_once_per_turn", False))
+        self._inner = inner
+        self._provider_key = provider_key
+        self._holdout = holdout
+        self._salt = provider_salt(provider_key, holdout.salt)
+        self._store = store
+        self._authorize = authorize
+        self._clock = clock
+        self._on_recorded = on_recorded
+        self._background = _BackgroundRecords(lambda: record_timeout)
+
+    @property
+    def provider_key(self) -> str:
+        """The key the assignments are recorded against."""
+        return self._provider_key
+
+    @property
+    def inner(self) -> Any:
+        """The wrapped provider."""
+        return self._inner
+
+    @property
+    def holdout(self) -> HoldoutOptions:
+        """The rate and salt the arms are drawn with."""
+        return self._holdout
+
+    async def wait_for_records(self) -> None:
+        """Completes once every background record this wrapper started on the running event loop has ended. Each is
+        bounded by ``record_timeout``, so this is too; it never raises."""
+        await self._background.settled()
+
+    @property
+    def abandoned_records(self) -> int:
+        """How many writes that outlived their timeout are still running against the store."""
+        return self._background.abandoned
+
+    async def before_run(
+        self,
+        *,
+        agent: Any,
+        session: Any,
+        context: Any,
+        state: dict[str, Any],
+    ) -> None:
+        if not self._holdout.active:
+            await self._inner.before_run(agent=agent, session=session, context=context, state=state)
+            return
+
+        private = _private_context(context)
+        await self._inner.before_run(agent=agent, session=session, context=private, state=state)
+        try:
+            scope = _current_scope.get()
+            run_id = scope.run_id if scope is not None and scope.agent is agent else None
+            authorized = None
+            if run_id is not None and scope is not None and _added(context, private):
+                authorized = self._authorization(scope)
+            if run_id is None or authorized is None:
+                _deliver(context, private)
+                return
+            bounds, run_scope = authorized
+            arm: HoldoutArm = assign_holdout(run_id, self._salt, self._holdout.rate)
+            assignment = ProviderHoldoutAssignment(run_id, self._provider_key, arm, self._clock())
+        except Exception as ex:
+            # A check that raised after the wrapped provider answered: its answer, unchanged, and no row.
+            with observe("record_provider_holdout") as op:
+                if op is not None:
+                    op.outcome("NotRecorded", "Unexpected")
+            self._report_later(ProviderHoldoutRecordResult("NotRecorded", None, ex))
+            _deliver(context, private)
+            return
+
+        self._start_recording(bounds, run_scope, assignment)
+        if arm == "Treatment":
+            _deliver(context, private)
+
+    async def after_run(
+        self,
+        *,
+        agent: Any,
+        session: Any,
+        context: Any,
+        state: dict[str, Any],
+    ) -> None:
+        """Forwards to the wrapped provider, in both arms, so it keeps learning from every run."""
+        await self._inner.after_run(agent=agent, session=session, context=context, state=state)
+
+    def _authorization(self, scope: _CaptureScope) -> tuple[AuthorizationBounds, Scope] | None:
+        """The identity capture resolved for this invocation, else the host's callback's answer (``None``: the run
+        does not take part; a callback that raises is no answer)."""
+        identity = scope.identity
+        if identity is not None:
+            return identity.authorization, identity.scope
+        capture = scope.capture
+        if self._authorize is None or capture is None:
+            return None
+        run_scope = capture.run.scope
+        try:
+            bounds = self._authorize(run_scope)
+        except Exception:
+            return None
+        return (bounds, run_scope) if isinstance(bounds, AuthorizationBounds) else None
+
+    def _report(self, result: ProviderHoldoutRecordResult) -> None:
+        if self._on_recorded is None:
+            return
+        try:
+            self._on_recorded(result)
+        except Exception:
+            pass
+
+    def _report_later(self, result: ProviderHoldoutRecordResult) -> None:
+        """Calls ``on_recorded`` on a worker thread, never on the invocation's path (a callback that blocks never
+        delays the model call); :meth:`wait_for_records` awaits it. Never raises."""
+        if self._on_recorded is None:
+            return
+        try:
+            task = asyncio.get_running_loop().create_task(asyncio.to_thread(self._report, result))
+        except Exception:
+            return
+        self._background.track(task)
+
+    def _start_recording(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: ProviderHoldoutAssignment
+    ) -> None:
+        """Starts recording ``assignment`` in the background (the ``record_provider_holdout`` operation); never
+        raises, never waits."""
+        store = self._store
+        recorder = store if isinstance(store, ProviderHoldoutRecorder) else None
+
+        def writes() -> list[Callable[[], None]]:
+            assert recorder is not None
+            return [functools.partial(recorder.record_provider_holdout_assignment, bounds, scope, assignment)]
+
+        def report(outcome: InjectionRecordOutcome, error: BaseException | None) -> None:
+            self._report_later(ProviderHoldoutRecordResult(outcome, assignment, error))
+
+        self._background.start("record_provider_holdout", None if recorder is None else writes, report)
+
+
+def use_measured_memory(
+    agent: Any,
+    memory: Any,
+    provider_key: str,
+    *,
+    holdout: HoldoutOptions | None = None,
+    authorize: ProviderAuthorize | None = None,
+    on_recorded: Callable[[ProviderHoldoutRecordResult], None] | None = None,
+) -> ExperienceHoldoutContextProvider:
+    """
+    Wraps ``memory`` (another memory provider: any MAF ``ContextProvider``) in an
+    :class:`ExperienceHoldoutContextProvider` on an agent :func:`use_agent_experience` was called on, and returns the
+    wrapper: .NET's ``UseMeasuredMemory``. The wrapper takes the agent's store, clock and ``injection_record_timeout``,
+    and, without ``holdout``, the injection holdout's rate and salt (off by default); the key is mixed into the salt,
+    so the provider's arms are drawn independently of the lessons' either way. ``memory`` is replaced in the agent's
+    ``context_providers`` where it is, or the wrapper is appended. A run is recorded under the identity
+    :func:`use_agent_experience` resolved for it, in the scope it is captured in.
+
+    On PostgreSQL the application role needs the grants of the contract's ``sql/application-role-privileges-1.11.sql``;
+    without them every invocation still runs (and withholds) and every assignment is reported ``NotRecorded``.
+    ``ValueError`` when :func:`use_agent_experience` was not called on ``agent``, or for a malformed key.
+    """
+    middleware = getattr(agent, "middleware", None)
+    capture = next(
+        (item for item in middleware or () if isinstance(item, ExperienceCaptureMiddleware)),
+        None,
+    )
+    providers = getattr(agent, "context_providers", None)
+    if capture is None or not isinstance(providers, list):
+        raise ValueError("Call use_agent_experience on the agent before use_measured_memory.")
+    settings = capture.settings
+    wrapper = ExperienceHoldoutContextProvider(
+        memory,
+        provider_key,
+        settings.holdout if holdout is None else holdout,
+        settings.store,
+        authorize=authorize,
+        clock=settings.clock,
+        record_timeout=settings.injection_record_timeout,
+        on_recorded=on_recorded,
+    )
+    for index, provider in enumerate(providers):
+        if provider is memory:
+            providers[index] = wrapper
+            break
+    else:
+        providers.append(wrapper)
+    settings._measured.append(wrapper)
+    return wrapper
 
 
 # ---- The one-call setup ------------------------------------------------------------------------------------------
@@ -1326,6 +2362,16 @@ def use_agent_experience(
     min_vector_relevance: float | None = None,
     vector_timeout: float = DEFAULT_VECTOR_TIMEOUT,
     on_vector_fallback: Callable[[VectorFallback], None] | None = None,
+    holdout: HoldoutOptions | None = None,
+    on_holdout_recorded: Callable[[HoldoutRecordResult], None] | None = None,
+    benefit: BenefitPolicy | None = None,
+    retrieval_policy: RetrievalPolicy | None = None,
+    confidence_decay: ConfidenceDecayPolicy | None = None,
+    model_authored_lessons: ModelAuthoredLessonPolicy = "Include",
+    receiving_agent: ReceivingAgent | None = None,
+    resolve_request: RequestResolver | None = None,
+    decide_injection: DecideInjection | None = None,
+    reflector: ExperienceReflector | None = None,
 ) -> AgentT:
     """
     Wires capture and injection into a MAF agent (an ``Agent``, or any agent with ``context_providers`` and
@@ -1349,8 +2395,39 @@ def use_agent_experience(
     ``embedder`` (contract 1.6) turns text into a vector: with one, injection runs the text and the vector channel
     together (in-memory and PostgreSQL+pgvector stores serve it) and merges them, and every stored record's summary is
     embedded in the background. Without one, or when the vector channel fails, the injection answers from text and
-    reports why (``on_vector_fallback``, ``InjectionResult.vector_fallback``). ``vector_timeout`` bounds the embedding
-    and the search of one injection; ``min_vector_relevance`` drops weaker vector candidates.
+    reports why (``on_vector_fallback``, ``InjectionResult.vector_fallback``). ``vector_timeout``, when shorter than the
+    retrieval policy's timeout, bounds the embedding and the search of one injection; ``min_vector_relevance`` drops
+    weaker vector candidates (replacing the policy's ``minimum_vector_relevance``).
+
+    ``holdout`` (contract 1.8), ``HoldoutOptions(rate=0.1)`` say, withholds the block from a deterministic share of
+    captured runs that have one, and records both arms (in the background, reported through ``on_holdout_recorded``)
+    for the .NET benefit estimate. Off by default. On PostgreSQL the application role needs the grants of the
+    contract's ``sql/application-role-privileges-1.8.sql``; without them every assignment is reported ``NotRecorded``.
+
+    ``benefit`` (contract 1.10), ``BenefitPolicy(enabled=True)`` say, acts on the holdout's measured benefit: a lesson
+    measured as hurting is not injected (``InjectionResult.omitted`` says ``MeasuredHarmful``), a scope whose lessons
+    together hurt gets none, and with ``prefer_measured_helpful`` the helpful ones go first. The estimate is cached and
+    refreshed in the background, never on the request path. Off by default.
+
+    ``retrieval_policy`` (contract 1.12), .NET's ``RetrievalPolicy`` with its defaults, bounds each retrieval by its
+    ``timeout`` (500 ms; past it nothing is injected, ``RetrievalTimedOut``), caps the searches abandoned on a timeout
+    that are still running, and sets the confidence floor, the expiry (``max_age``, records excluded as ``Expired``),
+    the recency half-life, the candidate limit, the minimum of matched terms and the vector floor.
+    ``confidence_decay``, a :class:`~agentexperience.retrieval.ConfidenceDecayPolicy`, fades each record's confidence
+    by its domain at ranking time. Neither ever changes a stored record.
+
+    The injection options of contract 1.13, .NET's ``ExperienceInjectionOptions``: ``model_authored_lessons``
+    (``"Include"``, the default, injects model-authored lessons fenced and labelled; ``"Exclude"`` leaves them out, as
+    ``exclude_model_authored=True`` does); ``receiving_agent``, a :class:`~agentexperience.ReceivingAgent`, keeps out a
+    record whose verified approach calls a tool the agent lacks or one riskier than it may use (``ToolUnavailable``,
+    ``RiskClassExceeded``); ``resolve_request``, sync or async, turns each invocation into an :class:`InjectionRequest`
+    (``None`` skips it); and ``decide_injection`` is the host's per-record decision (fail-closed, ``HostDenied``). The
+    block's layout, failure detail, argument allowlist and limits are ``block_options``.
+
+    ``reflector`` (contract 1.14) writes a verified run's lesson: the deterministic reflector by default, or
+    :class:`~agentexperience.chat_reflector.ChatClientExperienceReflector`, which asks a model and sends it sanitized
+    captured run content (opt-in; its lessons are stored model-authored, screened by the content guard, and fenced at
+    injection). Its call counts against ``finalization_timeout``: give it a timeout below that.
     """
     providers = getattr(agent, "context_providers", None)
     if not isinstance(providers, list):
@@ -1386,6 +2463,16 @@ def use_agent_experience(
         min_vector_relevance=min_vector_relevance,
         vector_timeout=vector_timeout,
         on_vector_fallback=on_vector_fallback,
+        holdout=HoldoutOptions() if holdout is None else holdout,
+        on_holdout_recorded=on_holdout_recorded,
+        benefit=BenefitPolicy() if benefit is None else benefit,
+        retrieval_policy=RetrievalPolicy() if retrieval_policy is None else retrieval_policy,
+        confidence_decay=confidence_decay,
+        model_authored_lessons=model_authored_lessons,
+        receiving_agent=receiving_agent,
+        reflector=reflector,
+        resolve_request=resolve_request,
+        decide_injection=decide_injection,
     )
 
     # Capture first, so it wraps everything else on the agent: injection runs inside it and reuses its identity.
@@ -1400,28 +2487,44 @@ __all__ = [
     "DEFAULT_INJECTION_RECORD_TIMEOUT",
     "DEFAULT_VECTOR_TIMEOUT",
     "HISTORICAL_REFERENCE_KEY",
+    "HOST_DENIED_DETAIL",
     "MAX_ABANDONED_INJECTION_RECORDS",
     "PROVENANCE_SOURCE",
     "SOURCE_ID",
     "TOOL_REPORTED_ERROR_CLASS",
     "UNVERSIONED_REVISION",
     "Approval",
+    "BenefitPolicy",
     "CaptureFailure",
+    "DecideInjection",
+    "DecisionContext",
     "DevelopmentOnlyError",
     "Embedder",
     "ExperienceCaptureMiddleware",
     "ExperienceContextProvider",
+    "ExperienceHoldoutContextProvider",
     "ExperienceIdentity",
     "ExperienceLessons",
     "ExperienceSettings",
     "ExperienceStore",
     "ExperienceToolMiddleware",
+    "HoldoutOptions",
+    "HoldoutRecordResult",
     "IdentityContext",
     "InMemoryExperienceStore",
+    "InjectionDecision",
     "InjectionFailure",
     "InjectionRecordOutcome",
     "InjectionRecordResult",
+    "InjectionRequest",
     "InjectionResult",
+    "OmittedRecord",
+    "ProviderAuthorize",
+    "ProviderHoldoutAssignment",
+    "ProviderHoldoutRecordResult",
+    "ReceivingAgent",
+    "RequestContext",
+    "RequestResolver",
     "ToolResultContext",
     "VectorFallback",
     "Verification",
@@ -1438,4 +2541,5 @@ __all__ = [
     "is_development_environment",
     "tool_succeeded",
     "use_agent_experience",
+    "use_measured_memory",
 ]

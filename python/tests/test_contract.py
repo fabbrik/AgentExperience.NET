@@ -113,10 +113,12 @@ def test_the_contract_version_is_one_this_package_supports() -> None:
     assert version == CONTRACT_VERSION
 
 
-@pytest.mark.parametrize("version", ["2.0", "1.8", None])
+@pytest.mark.parametrize("version", ["2.0", "1.20", None])
 def test_an_unsupported_contract_version_fails_with_a_clear_message(version: str | None) -> None:
     with pytest.raises(
-        UnsupportedContractVersion, match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4, 1\.5, 1\.6, 1\.7"
+        UnsupportedContractVersion,
+        match=r"supports only 1\.0, 1\.1, 1\.2, 1\.3, 1\.4, 1\.5, 1\.6, 1\.7, 1\.8, 1\.9, 1\.10, 1\.11, 1\.12, 1\.13, "
+        r"1\.14, 1\.15, 1\.16, 1\.17, 1\.18, 1\.19",
     ):
         check_contract_version({"contractVersion": version})
 
@@ -145,6 +147,13 @@ def test_every_contract_file_matches_the_lock() -> None:
         "write-experience-embedding.sql",
         "search-experience-vector.sql",
         "list-experience-lessons.sql",
+        "record-holdout-assignment.sql",
+        "query-holdout-outcomes.sql",
+        "record-provider-holdout-assignment.sql",
+        "query-provider-holdout-outcomes.sql",
+        "lifecycle.sql",
+        "reuse-feedback.sql",
+        "lifecycle-1.18.sql",
     ],
 )
 def test_the_packaged_sql_is_the_contract_sql(name: str) -> None:
@@ -153,21 +162,64 @@ def test_the_packaged_sql_is_the_contract_sql(name: str) -> None:
 
 def test_every_fixture_family_has_cases() -> None:
     assert {entry.name for entry in FIXTURES.iterdir() if entry.is_dir()} == {
+        "benefit-estimate",
+        "benefit-select",
+        "holdout-outcomes",
+        "model-metadata",
+        "confidence-engine",
+        "content-guard",
         "embedding-summary",
         "embedding-write",
         "encoding",
         "erased",
         "error-class",
         "finalize",
+        "finalize-reuse-evidence",
         "hybrid-merge",
+        "holdout-assign",
+        "holdout-record",
         "inject",
+        "inject-options",
+        "lesson-export",
+        "lessons-html",
         "lessons-view",
+        "lifecycle-apply",
+        "lifecycle-commit",
+        "lifecycle-sql",
+        "provider-benefit-estimate",
+        "provider-holdout-assign",
+        "provider-holdout-record",
         "record-injection",
+        "reflection-output",
+        "reflection-prompt",
+        "retrieval-policy",
+        "reuse-feedback",
+        "reuse-feedback-sql",
         "search",
         "task-text",
         "vector-search",
     }
-    for family in ("erased", "finalize", "inject", "record-injection", "search", "task-text"):
+    for family in (
+        "benefit-estimate",
+        "benefit-select",
+        "erased",
+        "finalize",
+        "holdout-outcomes",
+        "holdout-record",
+        "inject",
+        "lifecycle-apply",
+        "lifecycle-commit",
+        "lifecycle-sql",
+        "provider-benefit-estimate",
+        "provider-holdout-record",
+        "record-injection",
+        "retrieval-policy",
+        "reuse-feedback",
+        "reuse-feedback-sql",
+        "finalize-reuse-evidence",
+        "search",
+        "task-text",
+    ):
         assert cases(family), family
 
 
@@ -286,6 +338,7 @@ def test_inject(name: str) -> None:
             max_records=options["maxRecords"],
             max_bytes=options["maxBytes"],
             approach_arguments=options["approachArguments"],
+            recipe_excerpts=options.get("recipeExcerpts", []),
         ),
     )
     expected = (directory / "expected-block.txt").read_bytes()

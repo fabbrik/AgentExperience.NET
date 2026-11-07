@@ -1,6 +1,6 @@
 # Store conformance suite
 
-What any implementation of the core storage ports must do, written as tests. The library holds four abstract xUnit
+What any implementation of the core storage ports must do, written as tests. The library holds five abstract xUnit
 classes. A test project that implements the ports subclasses each one and supplies its store through a factory
 method; its own runner then discovers and runs the inherited tests. The library itself is not a test project, is
 never packed, and depends only on `AgentExperience.Abstractions` and xUnit's assertion and core packages.
@@ -11,6 +11,7 @@ never packed, and depends only on `AgentExperience.Abstractions` and xUnit's ass
 | `CandidateSourceConformanceTests` | `IExperienceCandidateSource` (seeded through an `IExperienceRecordStore`) | `CreateRecordStore()`, `CreateCandidateSource()` |
 | `ReuseFeedbackStoreConformanceTests` | `IExperienceReuseFeedbackStore` | `CreateStore()` |
 | `EmbeddingIndexConformanceTests` | `IExperienceEmbeddingIndex` (seeded through an `IExperienceRecordStore`) | `CreateRecordStore()`, `CreateEmbeddingIndex()` |
+| `SignatureSourceConformanceTests` | `IExperienceSignatureSource` (seeded through an `IExperienceRecordStore`) | `CreateRecordStore()`, `CreateSignatureSource()` |
 
 Every test observes the ports only, with no SQL and no knowledge of how a store is built. Each test works in a
 tenant of its own, so a store shared by all tests (one database, one container) still keeps them independent.
@@ -81,6 +82,24 @@ run in the `postgres` CI job on every supported major, in plaintext and crypto-s
 - `TracksInjections` is `true`, and a store overrides it, `RecordInjectionAsync` and `QueryWithInjectionsAsync`
   together. `RecordStoreConformanceTests.AssertInjectionTrackingIsConsistent(store)` checks the "all three or none" rule
   for any store or decorator, including one that does not track injections at all.
+- `RecordHoldoutAssignmentAsync` commits whatever it matches (a record in another scope, or one nothing holds, is
+  skipped without a word) and changes nothing about the records; an empty run ID, an undefined arm, an empty record ID,
+  a negative revision, too many records, an unset instant, no assignment or a malformed scope is `Invalid`, and a scope
+  outside the authorization is `Denied`. `TracksHoldout` is `true`, and a store overrides it,
+  `RecordHoldoutAssignmentAsync` and `QueryHoldoutOutcomesAsync` together;
+  `RecordStoreConformanceTests.AssertHoldoutTrackingIsConsistent(store)` checks that for any store or decorator.
+- `QueryHoldoutOutcomesAsync` (story 25.2) reads back exactly the scope's rows in (run, record) order, pages after a
+  cursor without gaps or repeats, and gives each row the outcome status of the run's own record in exactly the row's
+  scope (none when the run has no record there, even if an earlier record in another scope or tenant names the run,
+  whatever the caller's bounds). A limit outside 1..1000, a cursor with an empty ID, no query or a
+  malformed scope is `Invalid`; a scope outside the authorization is `Denied`.
+- `RecordProviderHoldoutAssignmentAsync` (story 25.8) writes one row per run and provider key in exactly the caller's
+  scope and keeps the first; `QueryProviderHoldoutOutcomesAsync` reads back exactly one key's rows in that scope, in run
+  order, paging after a run without gaps or repeats, each with its run's own outcome as `QueryHoldoutOutcomesAsync`
+  joins it. An empty run ID, a malformed key (outside 1-100 characters of `[A-Za-z0-9._-]`), an undefined arm, an unset
+  instant, a limit outside 1..1000, an empty resume run, no request or a malformed scope is `Invalid`; a scope outside
+  the authorization is `Denied`. `TracksProviderHoldout` is `true`, and a store overrides it and both methods together;
+  `RecordStoreConformanceTests.AssertProviderHoldoutTrackingIsConsistent(store)` checks that for any store or decorator.
 
 **Candidate source**
 

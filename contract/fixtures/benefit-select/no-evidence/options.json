@@ -1,0 +1,11 @@
+{
+  "description": "The policy is on and every verdict is NoEvidence: nothing changes.",
+  "enabled": true,
+  "preferMeasuredHelpful": true,
+  "perModel": false,
+  "model": null,
+  "requestLimit": null,
+  "maxRecords": 3,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

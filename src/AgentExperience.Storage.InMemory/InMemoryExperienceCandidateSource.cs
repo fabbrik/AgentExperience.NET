@@ -107,7 +107,11 @@ public sealed class InMemoryExperienceCandidateSource : IExperienceCandidateSour
                     && record.ReuseConfidence >= query.MinimumConfidence
                     && !(query.ExcludeModelAuthored && IsModelAuthored(record)))
             .Where(indexed => terms.Count(indexed.Text.Contains) >= required)
-            .Select(indexed => new ExperienceCandidate(indexed.Record, Relevance(indexed.Text, terms)))
+            .Select(indexed => new ExperienceCandidate(indexed.Record, Relevance(indexed.Text, terms))
+            {
+                // Story 28.5: the plain share of the query's terms, before the field weighting, for the injection floor.
+                TermCoverage = (double)terms.Count(indexed.Text.Contains) / terms.Count,
+            })
             .OrderByDescending(candidate => candidate.Relevance)
             .ThenBy(candidate => candidate.Record.ExperienceId)
             .Take(query.Limit)

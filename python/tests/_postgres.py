@@ -23,10 +23,17 @@ import os
 import re
 from collections.abc import Generator
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from _contract import CONTRACT, MIGRATIONS
+
+from agentexperience import RetrievalPolicy
+
+PG_RETRIEVAL_POLICY = RetrievalPolicy(timeout=timedelta(seconds=30))
+"""The retrieval policy every PostgreSQL agent test runs injection under: a timeout generous enough that a cold
+Testcontainers server cannot time a retrieval out (the default is 500 ms, contract 1.12)."""
 
 OWNER = "contract_owner"
 APPLICATION = "contract_app"
@@ -36,6 +43,8 @@ SCHEMA = "agent_experience"
 PRIVILEGES_SQL = CONTRACT / "sql" / "application-role-privileges.sql"
 PRIVILEGES_1_4_SQL = CONTRACT / "sql" / "application-role-privileges-1.4.sql"
 PRIVILEGES_1_6_SQL = CONTRACT / "sql" / "application-role-privileges-1.6.sql"
+PRIVILEGES_1_8_SQL = CONTRACT / "sql" / "application-role-privileges-1.8.sql"
+PRIVILEGES_1_11_SQL = CONTRACT / "sql" / "application-role-privileges-1.11.sql"
 VECTOR_MIGRATIONS = MIGRATIONS.parent.parent / "AgentExperience.Storage.Postgres.Vectors" / "Migrations"
 _ROLE_PLACEHOLDER = ':"application_role"'
 
@@ -82,6 +91,18 @@ APPLICATION_ROLE_PRIVILEGES_1_6 = APPLICATION_ROLE_PRIVILEGES + application_role
 )
 """The 1.0 file, then the 1.4 file, then the 1.6 file (the embeddings table's): what the .NET privileges call grants
 on a schema with the vectors migrations applied."""
+
+APPLICATION_ROLE_PRIVILEGES_1_8 = APPLICATION_ROLE_PRIVILEGES_1_6 + application_role_privileges(
+    APPLICATION, path=PRIVILEGES_1_8_SQL
+)
+"""The 1.0, 1.4 and 1.6 files, then the 1.8 file (the holdout assignment table's, contract 1.8): what the .NET
+privileges call grants on the tables a contract 1.8 port reads and writes."""
+
+APPLICATION_ROLE_PRIVILEGES_1_11 = APPLICATION_ROLE_PRIVILEGES_1_8 + application_role_privileges(
+    APPLICATION, path=PRIVILEGES_1_11_SQL
+)
+"""The 1.0, 1.4, 1.6 and 1.8 files, then the 1.11 file (the provider holdout table's, contract 1.11): what the .NET
+privileges call grants on every table a contract 1.11 port reads and writes."""
 
 
 @dataclass(frozen=True)
@@ -178,7 +199,7 @@ def database_name(label: str) -> str:
 
 def create_database(admin: Server, label: str, *, privileges: list[str] | None = None) -> str:
     """A fresh database, migrated by the .NET scripts (the vectors package's too, after ``CREATE EXTENSION vector`` as a
-    superuser) and with the application role's privileges (the three contract files unless ``privileges`` says
+    superuser) and with the application role's privileges (the five contract files unless ``privileges`` says
     otherwise); its name."""
     import psycopg
     from psycopg import sql
@@ -200,7 +221,7 @@ def create_database(admin: Server, label: str, *, privileges: list[str] | None =
             with owner.transaction():
                 owner.execute(script.read_text(encoding="utf-8").encode("utf-8"))
         with owner.transaction():
-            for statement in APPLICATION_ROLE_PRIVILEGES_1_6 if privileges is None else privileges:
+            for statement in APPLICATION_ROLE_PRIVILEGES_1_11 if privileges is None else privileges:
                 owner.execute(statement.encode("utf-8"))
     return name
 

@@ -278,6 +278,16 @@ public class ContractPostgresDatabase : IAsyncLifetime
     /// <summary>The application role's name, as the privileges statements name it.</summary>
     public static string ApplicationRole => Application;
 
+    /// <summary>
+    /// A <c>postgresql://</c> URL for the application role on <paramref name="caseName"/>'s database, which
+    /// <see cref="CreateAsync"/> made: what a Python or Go process connects with.
+    /// </summary>
+    public string ApplicationUrlOf(string caseName)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(_container!.GetConnectionString());
+        return $"postgresql://{Application}:{Password}@{builder.Host}:{builder.Port}/contract_{caseName.Replace('-', '_')}";
+    }
+
     public async Task DisposeAsync()
     {
         foreach (var source in _sources)

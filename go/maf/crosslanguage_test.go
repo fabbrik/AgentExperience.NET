@@ -89,6 +89,8 @@ func runGoAgent(t *testing.T, store ae.Store) ([]ae.FinalizedExperience, *script
 	model.arguments = func(int) string { return `{"suite":"unit"}` }
 	config := agent.Config{Name: "Go Agent", Tools: []tool.Tool{exits("exit=3", "exit=0", "exit=3", "exit=0")}}
 	options := h.options(Options{
+		// Generous, for the PostgreSQL leg: cold containers and the race detector.
+		RetrievalPolicy:    postgresRetrieval,
 		Store:              store,
 		Identity:           crossIdentity,
 		Verify:             ae.ToolSucceeded("run_tests", ae.WithArtifactRevision("build-7")),
@@ -243,10 +245,10 @@ var recordSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 	}
 	compiler := jsonschema.NewCompiler()
 	compiler.UseRegexpEngine(ecmaRegexp)
-	if err := compiler.AddResource("experience-record.v1.json", document); err != nil {
+	if err := compiler.AddResource("experience-record.v1-1.19.json", document); err != nil {
 		return nil, err
 	}
-	return compiler.Compile("experience-record.v1.json")
+	return compiler.Compile("experience-record.v1-1.19.json")
 })
 
 func assertValidRecord(t *testing.T, stored any) {

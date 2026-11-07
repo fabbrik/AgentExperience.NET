@@ -47,6 +47,15 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
 
     private readonly Dictionary<Guid, ExperienceRecord> _records = [];
     private readonly Dictionary<Guid, RecordSearchText> _searchText = [];
+
+    /// <summary>
+    /// Each record's failure signatures, derived once when it is created (a record's attempts never change
+    /// afterwards), and the two indexes the signature source looks them up by: the whole key, and the tool and error
+    /// class. Kept under the same lock as the records, so a committed write is visible to the next lookup.
+    /// </summary>
+    private readonly Dictionary<Guid, IReadOnlyList<ExperienceRecordFailureSignature>> _signatures = [];
+    private readonly Dictionary<string, List<Guid>> _signaturesByKey = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string ToolName, string ErrorClass), List<Guid>> _signaturesByToolAndClass = [];
     private readonly Dictionary<Guid, StoredEvent> _events = [];
     private readonly Dictionary<Guid, List<StoredEvent>> _history = [];
     private readonly Dictionary<Guid, StoredEvidence> _evidence = [];
@@ -105,6 +114,7 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
         // caller's instance, and its text never changes afterwards.
         var snapshot = StoredSnapshots.Record(record);
         var searchText = SearchText.Index(snapshot);
+        var signatures = ExperienceFailureSignatures.Of(snapshot);
 
         lock (_gate)
         {
@@ -115,6 +125,7 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
             }
 
             _searchText.Add(snapshot.ExperienceId, searchText);
+            IndexSignatures(snapshot.ExperienceId, signatures);
             return Task.FromResult(new ExperienceRecordCreateResult(ExperienceStoreOutcome.Created, NoErrors));
         }
     }
@@ -338,6 +349,285 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
     }
 
     /// <inheritdoc />
+    public bool TracksHoldout => true;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The instant is clamped to this store's clock, as the PostgreSQL store clamps it to the database's. A row that
+    /// already exists for a run and record is kept as it is. This store has no erasure, so no row is ever removed, and no
+    /// run's own record is ever a tombstone: the PostgreSQL store's refusal of a write for a run whose record is being
+    /// erased has nothing to refuse here, and a run whose record is live or not yet written is recorded as
+    /// in PostgreSQL.
+    /// </remarks>
+    public Task<ExperienceHoldoutRecordResult> RecordHoldoutAssignmentAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        HoldoutAssignment assignment,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var errors = ExperienceRecordValidator.ValidateHoldoutAssignment(scope, assignment);
+        if (errors.Count > 0)
+        {
+            return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Invalid, errors));
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Denied, NoErrors));
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<ExperienceHoldoutRecordResult>(cancellationToken);
+        }
+
+        var now = StoredSnapshots.Timestamp(_timeProvider.GetUtcNow());
+        var at = StoredSnapshots.Timestamp(assignment.AssignedAt);
+        if (at > now)
+        {
+            at = now;
+        }
+
+        lock (_gate)
+        {
+            foreach (var exposure in assignment.Records)
+            {
+                // Only a record in exactly this scope; anything else is skipped, revealing nothing.
+                if (!_records.TryGetValue(exposure.ExperienceId, out var record) || record.Scope != scope)
+                {
+                    continue;
+                }
+
+                HoldoutAssignments.TryAdd(
+                    (assignment.RunId, exposure.ExperienceId),
+                    new StoredHoldoutAssignment(assignment.RunId, exposure.ExperienceId, exposure.Revision, assignment.Arm, scope, at));
+            }
+        }
+
+        return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Committed, NoErrors));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The rows in exactly the query's scope, ordered by run and then record (<see cref="Guid.CompareTo(Guid)"/>), each
+    /// joined to the stored record in exactly the row's scope whose <see cref="ExperienceRecord.SourceRunId"/> is its run
+    /// (the earliest created, then the lowest ID, when more than one does).
+    /// </remarks>
+    public Task<HoldoutOutcomeQueryResult> QueryHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        HoldoutOutcomeQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+
+        var errors = ExperienceRecordValidator.ValidateHoldoutOutcomeQuery(query);
+        if (errors.Count > 0)
+        {
+            return Task.FromResult(new HoldoutOutcomeQueryResult(ExperienceStoreOutcome.Invalid, [], errors));
+        }
+
+        if (!authorization.Permits(query.Scope))
+        {
+            return Task.FromResult(new HoldoutOutcomeQueryResult(ExperienceStoreOutcome.Denied, [], NoErrors));
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<HoldoutOutcomeQueryResult>(cancellationToken);
+        }
+
+        lock (_gate)
+        {
+            var page = HoldoutAssignments.Values
+                .Where(row => row.Scope == query.Scope)
+                .Where(row => query.After is not { } after
+                    || row.RunId.CompareTo(after.RunId) > 0
+                    || (row.RunId == after.RunId && row.ExperienceId.CompareTo(after.ExperienceId) > 0))
+                .OrderBy(row => row.RunId)
+                .ThenBy(row => row.ExperienceId)
+                .Take(query.Limit)
+                .ToList();
+
+            var runs = new Dictionary<Guid, (TaskVerificationStatus? Outcome, string? Model)>();
+            var lessonModels = new Dictionary<Guid, string?>();
+            var rows = new List<HoldoutOutcomeRow>(page.Count);
+            foreach (var row in page)
+            {
+                if (!runs.TryGetValue(row.RunId, out var run))
+                {
+                    var runRecord = _records.Values
+                        .Where(record => record.SourceRunId == row.RunId && record.Scope == row.Scope)
+                        .OrderBy(record => record.CreatedAt)
+                        .ThenBy(record => record.ExperienceId)
+                        .FirstOrDefault();
+                    run = (runRecord?.Outcome?.Status, ModelOf(runRecord));
+                    runs[row.RunId] = run;
+                }
+
+                if (!lessonModels.TryGetValue(row.ExperienceId, out var lessonModel))
+                {
+                    // Only a lesson in exactly the row's scope is consulted, as PostgreSQL reads it; the authorization check is defence in depth.
+                    lessonModel = _records.TryGetValue(row.ExperienceId, out var lesson) && lesson.Scope == row.Scope && authorization.Permits(lesson.Scope)
+                        ? ModelOf(lesson)
+                        : null;
+                    lessonModels[row.ExperienceId] = lessonModel;
+                }
+
+                rows.Add(new HoldoutOutcomeRow(row.RunId, row.Arm, row.ExperienceId, row.AssignedAt, run.Outcome)
+                {
+                    RunModel = run.Model,
+                    LessonModel = lessonModel,
+                });
+            }
+
+            return Task.FromResult(new HoldoutOutcomeQueryResult(ExperienceStoreOutcome.Found, rows, NoErrors));
+        }
+    }
+
+    /// <summary>The holdout assignment rows, keyed on run and record. Internal, for tests.</summary>
+    internal Dictionary<(Guid RunId, Guid ExperienceId), StoredHoldoutAssignment> HoldoutAssignments { get; } = [];
+
+    /// <summary>The model a record's environment names (<see cref="HoldoutOutcomeRow.ModelMetadataKey"/>), or <see langword="null"/> when none or blank.</summary>
+    private static string? ModelOf(ExperienceRecord? record) =>
+        record?.Environment?.Metadata is { } metadata
+        && metadata.TryGetValue(HoldoutOutcomeRow.ModelMetadataKey, out var model)
+        && !string.IsNullOrWhiteSpace(model)
+            ? model
+            : null;
+
+    /// <summary>A copy of every holdout assignment row, taken under the store's lock. For tests.</summary>
+    internal IReadOnlyList<StoredHoldoutAssignment> ReadHoldoutAssignments()
+    {
+        lock (_gate)
+        {
+            return [.. HoldoutAssignments.Values];
+        }
+    }
+
+    /// <summary>One holdout assignment row: ids, a revision, the arm, the scope and an instant.</summary>
+    internal sealed record StoredHoldoutAssignment(Guid RunId, Guid ExperienceId, long Revision, HoldoutArm Arm, Scope Scope, DateTimeOffset AssignedAt);
+
+    /// <inheritdoc />
+    public bool TracksProviderHoldout => true;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The instant is clamped to this store's clock. A row that already exists for a run and key is kept as it is. This
+    /// store has no erasure, so no row is ever removed and no write is ever refused for an erased run.
+    /// </remarks>
+    public Task<ExperienceHoldoutRecordResult> RecordProviderHoldoutAssignmentAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        ProviderHoldoutAssignment assignment,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var errors = ExperienceRecordValidator.ValidateProviderHoldoutAssignment(scope, assignment);
+        if (errors.Count > 0)
+        {
+            return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Invalid, errors));
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Denied, NoErrors));
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<ExperienceHoldoutRecordResult>(cancellationToken);
+        }
+
+        var now = StoredSnapshots.Timestamp(_timeProvider.GetUtcNow());
+        var at = StoredSnapshots.Timestamp(assignment.AssignedAt);
+        if (at > now)
+        {
+            at = now;
+        }
+
+        lock (_gate)
+        {
+            ProviderHoldoutAssignments.TryAdd(
+                (scope.TenantId, assignment.RunId, assignment.ProviderKey),
+                new StoredProviderHoldoutAssignment(assignment.RunId, assignment.ProviderKey, assignment.Arm, scope, at));
+        }
+
+        return Task.FromResult(new ExperienceHoldoutRecordResult(ExperienceStoreOutcome.Committed, NoErrors));
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The key's rows in exactly the query's scope, ordered by run (<see cref="Guid.CompareTo(Guid)"/>), each joined to
+    /// the stored record in exactly the row's scope whose <see cref="ExperienceRecord.SourceRunId"/> is its run (the
+    /// earliest created, then the lowest ID, when more than one does), as <see cref="QueryHoldoutOutcomesAsync"/> joins it.
+    /// </remarks>
+    public Task<ProviderHoldoutOutcomeQueryResult> QueryProviderHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        ProviderHoldoutOutcomeQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+
+        var errors = ExperienceRecordValidator.ValidateProviderHoldoutOutcomeQuery(query);
+        if (errors.Count > 0)
+        {
+            return Task.FromResult(new ProviderHoldoutOutcomeQueryResult(ExperienceStoreOutcome.Invalid, [], errors));
+        }
+
+        if (!authorization.Permits(query.Scope))
+        {
+            return Task.FromResult(new ProviderHoldoutOutcomeQueryResult(ExperienceStoreOutcome.Denied, [], NoErrors));
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<ProviderHoldoutOutcomeQueryResult>(cancellationToken);
+        }
+
+        lock (_gate)
+        {
+            var rows = ProviderHoldoutAssignments.Values
+                .Where(row => row.Scope == query.Scope && string.Equals(row.ProviderKey, query.ProviderKey, StringComparison.Ordinal))
+                .Where(row => query.AfterRunId is not { } after || row.RunId.CompareTo(after) > 0)
+                .OrderBy(row => row.RunId)
+                .Take(query.Limit)
+                .Select(row => new ProviderHoldoutOutcomeRow(
+                    row.RunId,
+                    row.ProviderKey,
+                    row.Arm,
+                    row.AssignedAt,
+                    _records.Values
+                        .Where(record => record.SourceRunId == row.RunId && record.Scope == row.Scope)
+                        .OrderBy(record => record.CreatedAt)
+                        .ThenBy(record => record.ExperienceId)
+                        .FirstOrDefault()?.Outcome?.Status))
+                .ToList();
+
+            return Task.FromResult(new ProviderHoldoutOutcomeQueryResult(ExperienceStoreOutcome.Found, rows, NoErrors));
+        }
+    }
+
+    /// <summary>The provider holdout rows, keyed on tenant, run and provider key. Internal, for tests.</summary>
+    internal Dictionary<(string TenantId, Guid RunId, string ProviderKey), StoredProviderHoldoutAssignment> ProviderHoldoutAssignments { get; } = [];
+
+    /// <summary>A copy of every provider holdout row, taken under the store's lock. For tests.</summary>
+    internal IReadOnlyList<StoredProviderHoldoutAssignment> ReadProviderHoldoutAssignments()
+    {
+        lock (_gate)
+        {
+            return [.. ProviderHoldoutAssignments.Values];
+        }
+    }
+
+    /// <summary>One provider holdout row: the run, the key, the arm, the scope and an instant.</summary>
+    internal sealed record StoredProviderHoldoutAssignment(Guid RunId, string ProviderKey, HoldoutArm Arm, Scope Scope, DateTimeOffset AssignedAt);
+
+    /// <inheritdoc />
     public Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(
         AuthorizationContext authorization,
         Scope scope,
@@ -466,6 +756,84 @@ public sealed class InMemoryExperienceRecordStore : IExperienceRecordStore
             return [.. _records.Values
                 .Where(record => record.Scope == scope && predicate(record))
                 .Select(record => (record, _searchText[record.ExperienceId]))];
+        }
+    }
+
+    /// <summary>
+    /// The records in exactly <paramref name="scope"/> that <paramref name="predicate"/> accepts and that hold a failure
+    /// signature matching <paramref name="signature"/> under <paramref name="match"/>, each with how it matched and
+    /// whether its matched signature was resolved (for a coarse match, whether any matching one was; for an exact
+    /// match, the exact one), read under the store's lock, for the signature source that searches this store.
+    /// Signatures of a version other than <see cref="ExperienceFailureSignature.SignatureVersion"/> are never stored here.
+    /// </summary>
+    internal List<(ExperienceRecord Record, ExperienceSignatureMatch Match, ExperienceSignatureResolution Resolution)> SelectBySignature(
+        Scope scope,
+        Func<ExperienceRecord, bool> predicate,
+        ExperienceFailureSignature signature,
+        ExperienceSignatureMatch match)
+    {
+        var key = signature.Key;
+        lock (_gate)
+        {
+            var ids = match == ExperienceSignatureMatch.Exact
+                ? _signaturesByKey.GetValueOrDefault(key)
+                : _signaturesByToolAndClass.GetValueOrDefault((signature.ToolName, signature.ErrorClass));
+            if (ids is null)
+            {
+                return [];
+            }
+
+            var found = new List<(ExperienceRecord, ExperienceSignatureMatch, ExperienceSignatureResolution)>();
+            foreach (var id in ids)
+            {
+                var record = _records[id];
+                if (record.Scope != scope || !predicate(record))
+                {
+                    continue;
+                }
+
+                var held = _signatures[id];
+                var exact = held.Where(s => string.Equals(s.Signature.Key, key, StringComparison.Ordinal)).ToList();
+                var matched = exact.Count > 0
+                    ? exact
+                    : [.. held.Where(s => string.Equals(s.Signature.ToolName, signature.ToolName, StringComparison.Ordinal)
+                        && string.Equals(s.Signature.ErrorClass, signature.ErrorClass, StringComparison.Ordinal))];
+                found.Add((
+                    record,
+                    exact.Count > 0 ? ExperienceSignatureMatch.Exact : ExperienceSignatureMatch.Coarse,
+                    matched.Any(s => s.Resolution == ExperienceSignatureResolution.Resolved)
+                        ? ExperienceSignatureResolution.Resolved
+                        : ExperienceSignatureResolution.Unresolved));
+            }
+
+            return found;
+        }
+    }
+
+    /// <summary>Adds a newly created record's signatures to both indexes. Called under the store's lock.</summary>
+    private void IndexSignatures(Guid experienceId, IReadOnlyList<ExperienceRecordFailureSignature> signatures)
+    {
+        _signatures.Add(experienceId, signatures);
+        foreach (var held in signatures)
+        {
+            var signature = held.Signature;
+            Add(_signaturesByKey, signature.Key, experienceId);
+            Add(_signaturesByToolAndClass, (signature.ToolName, signature.ErrorClass), experienceId);
+        }
+
+        static void Add<TKey>(Dictionary<TKey, List<Guid>> index, TKey key, Guid experienceId)
+            where TKey : notnull
+        {
+            if (!index.TryGetValue(key, out var ids))
+            {
+                index[key] = ids = [];
+            }
+
+            // A record holds each key once, but two of its signatures can share a tool and class.
+            if (ids.Count == 0 || ids[^1] != experienceId)
+            {
+                ids.Add(experienceId);
+            }
         }
     }
 

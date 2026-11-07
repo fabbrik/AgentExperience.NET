@@ -22,7 +22,8 @@ CORE_SOURCE = "AgentExperience.Core"
 """The source and meter the core operations are reported under (``docs/telemetry.md``)."""
 
 MAF_SOURCE = "AgentExperience.MicrosoftAgentFramework"
-"""The source and meter ``inject`` and ``record_injection`` are reported under."""
+"""The source and meter ``inject``, ``record_injection``, ``record_holdout``, ``record_provider_holdout`` and
+``benefit_refresh`` are reported under."""
 
 FAULTED = "Faulted"
 """The outcome of an operation that threw."""
@@ -55,21 +56,83 @@ OPERATIONS: Mapping[str, OperationSpec] = {
     "verify": OperationSpec(CORE_SOURCE, True, ("Unknown", "Verified", "Failed")),
     "reflect": OperationSpec(CORE_SOURCE, True, ("Unknown", "Verified", "Failed")),
     "finalize": OperationSpec(CORE_SOURCE, True, ("Validated", "Quarantined")),
-    "retrieve": OperationSpec(CORE_SOURCE, True, ("Completed", "Failed")),
+    "retrieve": OperationSpec(CORE_SOURCE, True, ("Completed", "TimedOut", "Denied", "Failed")),
     "index": OperationSpec(CORE_SOURCE, True, ("Indexed", "Stale", "Missing", "ProviderFailed", "IndexFailed")),
-    "inject": OperationSpec(MAF_SOURCE, True, ("Injected", "NothingToInject", "Skipped", "RetrievalFailed", "Failed")),
+    "lifecycle.commit": OperationSpec(
+        CORE_SOURCE,
+        True,
+        (
+            "Committed",
+            "TransitionNotAllowed",
+            "ReplacementNotAllowed",
+            "StaleRevision",
+            "StatusMismatch",
+            "Conflict",
+            "NotFound",
+            "Denied",
+            "Invalid",
+            "Deleted",
+        ),
+    ),
+    "confidence.apply": OperationSpec(
+        CORE_SOURCE,
+        True,
+        (
+            "Applied",
+            "Ineligible",
+            "StaleRevision",
+            "StatusMismatch",
+            "Conflict",
+            "NotFound",
+            "Denied",
+            "Invalid",
+            "Deleted",
+            "Unverified",
+        ),
+    ),
+    "reuse_feedback": OperationSpec(
+        CORE_SOURCE, True, ("Recorded", "AlreadyRecorded", "Conflict", "Denied", "Invalid")
+    ),
+    "inject": OperationSpec(
+        MAF_SOURCE,
+        True,
+        (
+            "Injected",
+            "NothingToInject",
+            "Skipped",
+            "RetrievalTimedOut",
+            "RetrievalDenied",
+            "RetrievalFailed",
+            "Failed",
+            "Withheld",
+        ),
+    ),
     "record_injection": OperationSpec(MAF_SOURCE, False, ("Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown")),
+    "record_holdout": OperationSpec(MAF_SOURCE, False, ("Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown")),
+    "record_provider_holdout": OperationSpec(
+        MAF_SOURCE, False, ("Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown")
+    ),
+    "benefit_refresh": OperationSpec(MAF_SOURCE, False, ("Refreshed", "NotRefreshed", "OutcomeUnknown")),
 }
 """Every operation this port reports, by its ``operation`` value. The port reports no other: not ``retention.sweep``,
-``delete``, grants, seal, backfill, lifecycle, confidence, reuse-feedback, ``deindex`` or ``reindex``."""
+``delete``, grants, seal, backfill, ``deindex`` or ``reindex``. ``lifecycle.commit`` and ``confidence.apply`` are
+contract 1.16's; ``reuse_feedback`` is contract 1.17's."""
 
-NEVER_NESTED: frozenset[str] = frozenset({"inject", "record_injection"})
+NEVER_NESTED: frozenset[str] = frozenset(
+    {"inject", "record_injection", "record_holdout", "record_provider_holdout", "benefit_refresh"}
+)
 """Operations whose ``nested`` is always ``false``, as in .NET."""
 
 ATTRIBUTES: tuple[str, ...] = (
     "agentexperience.attempt_id",
+    "agentexperience.confidence.admission",
+    "agentexperience.correlation_id",
+    "agentexperience.event_id",
     "agentexperience.experience_id",
+    "agentexperience.feedback_id",
+    "agentexperience.independence.refusal",
     "agentexperience.omitted_count",
+    "agentexperience.reflection.screening_refusal",
     "agentexperience.reflection_id",
     "agentexperience.run_id",
     "agentexperience.stage",

@@ -85,6 +85,15 @@ internal sealed class CaptureScope
     internal ExperienceIdentity? Identity { get; private init; }
 
     /// <summary>
+    /// The model the run records (its environment's <see cref="HoldoutOutcomeRow.ModelMetadataKey"/> entry), or
+    /// <see langword="null"/> when it records none.
+    /// </summary>
+    internal string? Model { get; private init; }
+
+    /// <summary>The scope the run is captured, and its record finalized, in: the descriptor's.</summary>
+    internal Scope Scope => _descriptor.Scope;
+
+    /// <summary>
     /// Whether <paramref name="agent"/> -- the agent a context provider was invoked for -- is the agent this scope
     /// captures, compared through the <see cref="ChatClientAgent"/> each resolves to, so a delegating wrapper and the
     /// chat client agent it wraps are the same agent. A nested agent inherits this scope through the async flow but
@@ -131,6 +140,21 @@ internal sealed class CaptureScope
 
     /// <summary>Whether finalization has already been triggered for this run.</summary>
     internal bool IsFinalized => Volatile.Read(ref _finalized) != 0;
+
+    /// <summary>
+    /// Recall at the moment of failure for this invocation, when the context provider set it up (recall is configured
+    /// and the provider ran inside this capture with a request); otherwise <see langword="null"/>.
+    /// </summary>
+    internal Injection.RecallRun? Recall
+    {
+        get => Volatile.Read(ref _recall);
+        set => Volatile.Write(ref _recall, value);
+    }
+
+    private Injection.RecallRun? _recall;
+
+    /// <summary>Reports, once per run at most, that recall is configured but cannot run (<see cref="ExperienceCaptureFailureStage.Recall"/>).</summary>
+    internal void ReportRecall(string reason) => ReportFailure(ExperienceCaptureFailureStage.Recall, reason, exception: null);
 
     /// <summary>
     /// Resolves the run descriptor, opens the run -- or continues the one the descriptor names -- and
@@ -201,6 +225,7 @@ internal sealed class CaptureScope
         Guid? assignedRunId = descriptor.ContinuesRunId;
         Guid runId;
         DateTimeOffset runStartedAt;
+        string? runModel;
         DateTimeOffset startedAt;
         long startTimestamp;
         try
@@ -265,7 +290,9 @@ internal sealed class CaptureScope
                 RecordedAt: startedAt,
                 CorrelationId: Activity.Current is { IdFormat: ActivityIdFormat.W3C } activity ? activity.TraceId.ToHexString() : null);
 
-            var started = service.StartRun(runId, descriptor.TaskId, descriptor.TaskDescription, descriptor.Scope, options.Environment, provenance, startedAt);
+            // Story 25.4: the model the agent's chat client reports, unless the host's environment already names one.
+            var environment = AgentModel.WithModel(options.Environment, AgentModel.Of(agent));
+            var started = service.StartRun(runId, descriptor.TaskId, descriptor.TaskDescription, descriptor.Scope, environment, provenance, startedAt);
             if (started is null || started.Outcome is not (StartRunOutcome.Started or StartRunOutcome.Continued))
             {
                 Report(options, new ExperienceCaptureFailure(ExperienceCaptureFailureStage.StartRun, runId, $"StartRun returned {started?.Outcome.ToString() ?? "null"}; the invocation runs uncaptured.", null));
@@ -278,6 +305,9 @@ internal sealed class CaptureScope
             runStartedAt = started.Outcome == StartRunOutcome.Continued && started.Run is { } existing
                 ? existing.StartedAt
                 : startedAt;
+
+            // A continued run keeps the environment it was opened with, and so the model.
+            runModel = AgentModel.Recorded(started.Run?.Environment ?? environment);
         }
         catch (Exception ex)
         {
@@ -302,6 +332,7 @@ internal sealed class CaptureScope
         {
             Agent = agent,
             Identity = runIdentity,
+            Model = runModel,
         };
 
         if (session is not null)
@@ -392,13 +423,14 @@ internal sealed class CaptureScope
     /// <see cref="ExperienceCaptureOptions.ClassifyToolResult"/> names an error class for it -- as failed with that class,
     /// keeping the result text the model saw.
     /// </summary>
-    internal void CompleteToolCall(PendingToolCall pending, object? result)
+    /// <returns>The error class the call is recorded as failed with, or <see langword="null"/> when it is recorded as returned or not recorded.</returns>
+    internal string? CompleteToolCall(PendingToolCall pending, object? result)
     {
         // A call finishing after finalization took its snapshot is not recorded (see AddToolCall), so it is not
         // classified either: the host's classifier runs only for a call capture can still record.
         if (IsFinalized)
         {
-            return;
+            return null;
         }
 
         // The call's duration ends when the tool returned, not after the host's classifier ran.
@@ -410,7 +442,7 @@ internal sealed class CaptureScope
         catch (Exception ex)
         {
             ReportFailure(ExperienceCaptureFailureStage.ToolCall, $"Measuring a tool call's duration threw {ex.GetType().FullName}; the tool call is not recorded.", ex);
-            return;
+            return null;
         }
 
         // On the raw result, before it is converted to text; never replaces what the model receives.
@@ -430,10 +462,45 @@ internal sealed class CaptureScope
         catch (Exception ex)
         {
             ReportFailure(ExperienceCaptureFailureStage.ToolCall, $"Converting a tool result to text threw {ex.GetType().FullName}; the tool call is not recorded.", ex);
-            return;
+            return null;
         }
 
-        AddToolCall(pending, text, error, duration);
+        // The recipe (story 28.4): only for a call recorded as returned, on the raw result, never replacing it.
+        var excerpt = error is null ? RecipeExcerpt(pending, result) : null;
+
+        AddToolCall(pending, text, error, duration, excerpt);
+        return error;
+    }
+
+    /// <summary>
+    /// The excerpt the host's <see cref="ExperienceCaptureOptions.RecipeResultExcerpt"/> vouches for, or
+    /// <see langword="null"/> when there is no callback, it returns none, or it throws (reported once, type only).
+    /// </summary>
+    private string? RecipeExcerpt(PendingToolCall pending, object? result)
+    {
+        if (_options.RecipeResultExcerpt is not { } excerpt)
+        {
+            return null;
+        }
+
+        try
+        {
+            return excerpt(new ExperienceToolResultContext
+            {
+                ToolCallId = pending.ToolCallId,
+                ToolName = pending.ToolName,
+                Arguments = ReadOnlyView(pending.Arguments),
+                Result = result,
+            });
+        }
+        catch (Exception ex)
+        {
+            ReportFailure(
+                ExperienceCaptureFailureStage.RecipeExcerpt,
+                $"RecipeResultExcerpt threw {ex.GetType().FullName}; the tool call is recorded without an excerpt.",
+                ex);
+            return null;
+        }
     }
 
     /// <summary>
@@ -678,6 +745,11 @@ internal sealed class CaptureScope
             else
             {
                 Volatile.Write(ref _completedRun, 1);
+                if (completed.RunStoreFailure is { } runStoreFailure)
+                {
+                    // Reported on its own stage, and finalization goes on: the completion itself landed.
+                    ReportFailure(ExperienceCaptureFailureStage.RunStore, runStoreFailure, completed.RunStoreException);
+                }
             }
         }
         catch (Exception ex)
@@ -908,6 +980,12 @@ internal sealed class CaptureScope
                 result.Failure?.Exception);
         }
 
+        // The host refused the run, and its stored copy could not be deleted: the one run store problem finalization reports.
+        if (result.RunStoreFailure is { } runStoreFailure)
+        {
+            Fail(ExperienceCaptureFailureStage.RunStore, runStoreFailure, null);
+        }
+
         // Finalization may have overrun the timeout and already been reported as such; telling the
         // host it finished after that would contradict the failure it already saw.
         if (cancellationToken.IsCancellationRequested)
@@ -925,7 +1003,7 @@ internal sealed class CaptureScope
         }
     }
 
-    private void AddToolCall(PendingToolCall pending, string? result, string? error, TimeSpan? duration = null)
+    private void AddToolCall(PendingToolCall pending, string? result, string? error, TimeSpan? duration = null, string? recipeExcerpt = null)
     {
         try
         {
@@ -936,7 +1014,10 @@ internal sealed class CaptureScope
                 StartedAt: pending.StartedAt,
                 Duration: duration ?? _options.TimeProvider.GetElapsedTime(pending.StartTimestamp),
                 Result: result,
-                Error: error);
+                Error: error)
+            {
+                RecipeExcerpt = recipeExcerpt,
+            };
 
             lock (_toolCallsGate)
             {

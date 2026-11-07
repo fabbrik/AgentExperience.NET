@@ -42,6 +42,7 @@ public class DiagnosticsAgreementTests
         "ErrorClassAttribute",
         "ErrorTypeAttribute",
         "CorrelationIdAttribute",
+        "SignatureMatchAttribute",
         "FaultedOutcome",
         "OperationCountInstrument",
         "OperationDurationInstrument",
@@ -65,7 +66,7 @@ public class DiagnosticsAgreementTests
     {
         // The sanity guard: a typo in the list above, or a Core rename, must not make this pass by
         // comparing nothing.
-        Assert.Equal(14, Restated.Length);
+        Assert.Equal(15, Restated.Length);
 
         foreach (var name in Restated)
         {

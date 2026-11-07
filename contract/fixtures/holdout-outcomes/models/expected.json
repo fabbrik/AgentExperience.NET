@@ -1,0 +1,63 @@
+{
+  "pages": [
+    {
+      "after": null,
+      "rows": [
+        {
+          "runId": "00000081-0000-4000-8000-00000000010b",
+          "arm": "Treatment",
+          "experienceId": "00000081-0000-4000-8000-000000000001",
+          "assignedAt": "2026-03-02T09:01:00.123456+00:00",
+          "runOutcome": "Verified",
+          "runModel": "run-model",
+          "lessonModel": "lesson-model"
+        },
+        {
+          "runId": "00000081-0000-4000-8000-00000000010b",
+          "arm": "Treatment",
+          "experienceId": "00000081-0000-4000-8000-000000000002",
+          "assignedAt": "2026-03-02T09:01:00.123456+00:00",
+          "runOutcome": "Verified",
+          "runModel": "run-model",
+          "lessonModel": null
+        },
+        {
+          "runId": "00000081-0000-4000-8000-00000000010c",
+          "arm": "Holdout",
+          "experienceId": "00000081-0000-4000-8000-000000000003",
+          "assignedAt": "2026-03-02T09:02:00.123456+00:00",
+          "runOutcome": "Failed",
+          "runModel": null,
+          "lessonModel": null
+        },
+        {
+          "runId": "00000081-0000-4000-8000-00000000010c",
+          "arm": "Holdout",
+          "experienceId": "00000081-0000-4000-8000-000000000004",
+          "assignedAt": "2026-03-02T09:02:00.123456+00:00",
+          "runOutcome": "Failed",
+          "runModel": null,
+          "lessonModel": " padded-model "
+        },
+        {
+          "runId": "00000081-0000-4000-8000-00000000010d",
+          "arm": "Treatment",
+          "experienceId": "00000081-0000-4000-8000-000000000001",
+          "assignedAt": "2026-03-02T09:03:00.123456+00:00",
+          "runOutcome": "Verified",
+          "runModel": null,
+          "lessonModel": "lesson-model"
+        },
+        {
+          "runId": "00000081-0000-4000-8000-000000000900",
+          "arm": "Holdout",
+          "experienceId": "00000081-0000-4000-8000-000000000004",
+          "assignedAt": "2026-03-02T09:04:00.123456+00:00",
+          "runOutcome": null,
+          "runModel": null,
+          "lessonModel": " padded-model "
+        }
+      ]
+    }
+  ]
+}

@@ -49,7 +49,7 @@ internal static class FinalizeContract
 
     private const string Revision = "rev-1";
 
-    private static readonly ClosedVerificationRound Round = new(Fixed.Id(0x7e, 1), Revision);
+    internal static readonly ClosedVerificationRound Round = new(Fixed.Id(0x7e, 1), Revision);
 
     /// <summary>Every finalize case, by directory name.</summary>
     public static IReadOnlyList<(string Name, FinalizeInput Input)> Cases { get; } =
@@ -97,7 +97,68 @@ internal static class FinalizeContract
     /// in input order, and for the run's exposures. An attempt capture refuses is not stored, and the attempts it keeps
     /// are numbered from 0 in the order they were recorded.
     /// </summary>
-    public static async Task<(JsonObject Record, JsonObject Event, JsonObject Capture)> RunWithCaptureAsync(FinalizeInput input)
+    public static async Task<(JsonObject Record, JsonObject Event, JsonObject Capture)> RunWithCaptureAsync(FinalizeInput input) =>
+        await RunWithReflectorAsync(input, new DefaultExperienceReflector()) is var (record, lifecycleEvent, capture, _)
+            ? (record, lifecycleEvent, capture)
+            : default;
+
+    /// <summary>
+    /// As <see cref="RunWithCaptureAsync"/>, finalizing with <paramref name="reflector"/> (contract 1.14: the model-backed
+    /// reflector over a scripted chat client), also returning the finalization's result.
+    /// </summary>
+    public static async Task<(JsonObject Record, JsonObject Event, JsonObject Capture, FinalizeExperienceResult Result)> RunWithReflectorAsync(
+        FinalizeInput input,
+        IExperienceReflector reflector)
+    {
+        var (capture, captureOutcomes) = await CaptureAsync(input);
+        var run = input.Run;
+
+        var store = new InMemoryExperienceRecordStore(new FixedTimeProvider(input.Verification.FinalizedAt));
+        var finalization = new ExperienceFinalizationService(capture, reflector, store, new ExperienceLifecycleService(store));
+        var result = await finalization.FinalizeAsync(Request(input));
+        Assert.True(result.IsDurable, $"The case did not finalize durably: {result.Outcome} at {result.Stage}: {result.Reason}");
+
+        var read = await store.GetAsync(Fixed.Authorization, run.Scope, result.ExperienceId!.Value, CancellationToken.None);
+        Assert.Equal(ExperienceStoreOutcome.Found, read.Outcome);
+        var record = read.Record!;
+        var initial = result.Event ?? throw new InvalidOperationException("A durable finalization committed no initial event.");
+
+        var lifecycleEvent = new JsonObject
+        {
+            ["event_id"] = initial.EventId.ToString("D", CultureInfo.InvariantCulture),
+            ["experience_id"] = initial.ExperienceRecordId.ToString("D", CultureInfo.InvariantCulture),
+            ["prior_status"] = initial.PriorStatus?.ToString(),
+            ["current_status"] = initial.CurrentStatus.ToString(),
+            ["reason"] = initial.Reason,
+            ["producer"] = initial.Producer,
+            ["occurred_at"] = ContractJson.Timestamp(initial.OccurredAt),
+            ["expected_revision"] = initial.ExpectedRevision,
+            ["applied_revision"] = result.Revision,
+        };
+
+        return (ContractJson.ToStored(record), lifecycleEvent, captureOutcomes, result);
+    }
+
+    /// <summary>The finalization request a case makes: its run, <see cref="Fixed.Authorization"/>, and its verification.</summary>
+    internal static FinalizeExperienceRequest Request(FinalizeInput input)
+    {
+        var verification = input.Verification;
+        return new FinalizeExperienceRequest(
+            input.Run.RunId,
+            Fixed.Authorization,
+            verification.ClosedRound,
+            [.. verification.RequiredChecks.Select(check => new RequiredCheck(check.CheckId, check.ExpectedKind))],
+            verification.Evidence,
+            verification.CurrentArtifactRevision,
+            StorageDecision.Permit,
+            verification.FinalizedAt);
+    }
+
+    /// <summary>
+    /// The capture half of a case: the run captured (and sanitized) by an in-memory capture service, completed, and ready
+    /// to finalize; and <c>expected-capture.json</c>, what capture answered.
+    /// </summary>
+    internal static async Task<(InMemoryExperienceCaptureService Capture, JsonObject Outcomes)> CaptureAsync(FinalizeInput input)
     {
         var sanitization = input.Options.AllowedArgumentNames is { } names
             ? AgentExperienceDefaults.SanitizationAllowing([.. names])
@@ -139,40 +200,7 @@ internal static class FinalizeContract
             run.ExecutionStatus ?? throw new InvalidOperationException("A finalize case's run must have finished."),
             run.EndedAt ?? throw new InvalidOperationException("A finalize case's run must have an end."));
         Assert.Equal(CompleteRunOutcome.Recorded, completed.Outcome);
-
-        var store = new InMemoryExperienceRecordStore(new FixedTimeProvider(input.Verification.FinalizedAt));
-        var finalization = new ExperienceFinalizationService(capture, new DefaultExperienceReflector(), store, new ExperienceLifecycleService(store));
-        var verification = input.Verification;
-        var result = await finalization.FinalizeAsync(new FinalizeExperienceRequest(
-            run.RunId,
-            Fixed.Authorization,
-            verification.ClosedRound,
-            [.. verification.RequiredChecks.Select(check => new RequiredCheck(check.CheckId, check.ExpectedKind))],
-            verification.Evidence,
-            verification.CurrentArtifactRevision,
-            StorageDecision.Permit,
-            verification.FinalizedAt));
-        Assert.True(result.IsDurable, $"The case did not finalize durably: {result.Outcome} at {result.Stage}: {result.Reason}");
-
-        var read = await store.GetAsync(Fixed.Authorization, run.Scope, result.ExperienceId!.Value, CancellationToken.None);
-        Assert.Equal(ExperienceStoreOutcome.Found, read.Outcome);
-        var record = read.Record!;
-        var initial = result.Event ?? throw new InvalidOperationException("A durable finalization committed no initial event.");
-
-        var lifecycleEvent = new JsonObject
-        {
-            ["event_id"] = initial.EventId.ToString("D", CultureInfo.InvariantCulture),
-            ["experience_id"] = initial.ExperienceRecordId.ToString("D", CultureInfo.InvariantCulture),
-            ["prior_status"] = initial.PriorStatus?.ToString(),
-            ["current_status"] = initial.CurrentStatus.ToString(),
-            ["reason"] = initial.Reason,
-            ["producer"] = initial.Producer,
-            ["occurred_at"] = ContractJson.Timestamp(initial.OccurredAt),
-            ["expected_revision"] = initial.ExpectedRevision,
-            ["applied_revision"] = result.Revision,
-        };
-
-        return (ContractJson.ToStored(record), lifecycleEvent, captureOutcomes);
+        return (capture, captureOutcomes);
     }
 
     // ---- Cases -------------------------------------------------------------------------------------------------------
@@ -669,7 +697,7 @@ internal static class FinalizeContract
 
     // ---- Builders ----------------------------------------------------------------------------------------------------
 
-    private static ExperienceRun Run(Guid runId, string taskId, string? description, DateTimeOffset startedAt, IReadOnlyList<Attempt> attempts) => new(
+    internal static ExperienceRun Run(Guid runId, string taskId, string? description, DateTimeOffset startedAt, IReadOnlyList<Attempt> attempts) => new(
         runId,
         taskId,
         description,
@@ -682,7 +710,7 @@ internal static class FinalizeContract
         startedAt,
         startedAt.AddSeconds(20));
 
-    private static Attempt Attempt(Guid runId, int sequence, DateTimeOffset startedAt, IReadOnlyList<ToolCallRecord> calls, string? result = null, string? error = null) => new(
+    internal static Attempt Attempt(Guid runId, int sequence, DateTimeOffset startedAt, IReadOnlyList<ToolCallRecord> calls, string? result = null, string? error = null) => new(
         SubId(runId, 0xa0 + sequence),
         sequence,
         startedAt,
@@ -691,7 +719,7 @@ internal static class FinalizeContract
         result,
         error);
 
-    private static ToolCallRecord Call(
+    internal static ToolCallRecord Call(
         Guid runId,
         int attempt,
         int sequence,
@@ -709,7 +737,7 @@ internal static class FinalizeContract
             result,
             error);
 
-    private static VerificationInput Verified(Guid runId, DateTimeOffset finalizedAt, params (string CheckId, string Kind, CheckResult Result)[] checks) => new(
+    internal static VerificationInput Verified(Guid runId, DateTimeOffset finalizedAt, params (string CheckId, string Kind, CheckResult Result)[] checks) => new(
         Round,
         [.. checks.Select(check => new RequiredCheckInput(check.CheckId, check.Kind))],
         [.. checks.Select((check, index) => new Evidence(
@@ -726,7 +754,7 @@ internal static class FinalizeContract
         finalizedAt);
 
     /// <summary>An ID derived from a case's run ID, so every ID in a case reads as belonging to it.</summary>
-    private static Guid SubId(Guid runId, int n)
+    internal static Guid SubId(Guid runId, int n)
     {
         var text = runId.ToString("D", CultureInfo.InvariantCulture);
         return Guid.Parse(text[..24] + n.ToString("x12", CultureInfo.InvariantCulture));

@@ -9,7 +9,7 @@ not match), and the executable test that proves this repository works against it
 It is the successor to the Story 1.7 research digest, which lived in a directory excluded from git. Anything a
 reader needs to check a pin is here.
 
-**Last verified: 2026-10-16** (the `0.1.0-preview.14` release checks; every probe resolved as for `0.1.0-preview.13`, except that the newest MAF in range is now 1.25.0), against nuget.org's registration API and a full local run of the suite on `net10.0`
+**Last verified: 2026-10-27** (the `0.1.0-preview.17` release checks; no pin or floor moved since `0.1.0-preview.14`, and the floats now resolve MAF 1.26.0 and the 10.11.0 / 10.0.14 `Microsoft.Extensions.*` releases), against nuget.org's registration API and a full local run of the suite on `net10.0`
 and all four PostgreSQL majors, plus the floating-dependency leg and both MAF probe legs. Re-verify — and update the date — whenever
 a pin or a floor moves.
 
@@ -20,7 +20,7 @@ each "everything else" cell says why the line is where it is.
 
 | Dimension | Supported | Everything else |
 | --- | --- | --- |
-| Target framework | `net10.0` only. All six packages target it, and every project in the repository (tests, the sample, the reuse baseline, the experiments) builds and runs on it (see [Target frameworks](#target-frameworks)) | `net8.0` and `net9.0` were targeted up to `0.1.0-preview.3`, and dropped after it, by the maintainer's decision, ahead of both leaving support on 10 November 2026; a host on .NET 8 or 9 stays on `0.1.0-preview.3`. .NET Framework and `netstandard2.0` are ruled out by `Npgsql` 10, which ships `net8.0`+ only, and `Microsoft.Extensions.Compliance.Redaction`, which ships no `netstandard2.0` build |
+| Target framework | `net10.0` only. All eight packages target it, and every project in the repository (tests, the sample, the reuse baseline, the experiments) builds and runs on it (see [Target frameworks](#target-frameworks)) | `net8.0` and `net9.0` were targeted up to `0.1.0-preview.3`, and dropped after it, by the maintainer's decision, ahead of both leaving support on 10 November 2026; a host on .NET 8 or 9 stays on `0.1.0-preview.3`. .NET Framework and `netstandard2.0` are ruled out by `Npgsql` 10, which ships `net8.0`+ only, and `Microsoft.Extensions.Compliance.Redaction`, which ships no `netstandard2.0` build |
 | .NET SDK | `10.0.302` for a release build (see below) | Development may roll forward to a later feature band; a release may not |
 | Microsoft Agent Framework | `Microsoft.Agents.AI` **1.22.0 or any later 1.x**, declared `[1.22.0, 2.0.0)`. CI tests the floor and the newest 1.x on every change, and both gate pushes and the weekly schedule (see [the MAF matrix](#the-maf-compatibility-matrix)) | 2.0 and later are outside the range: a host on one gets NuGet's NU1608 warning about this adapter. MAF states no SemVer promise and changed caller-visible behaviour five times between 1.15 and 1.22, so its next major is where a break is expected; [the version policy](#the-version-policy-floors-and-one-bounded-range) says why the bound sits there and nowhere lower |
 | Everything else the packages reference | The floor in each row below, **or any later release in the same major** (the same minor for the 0.x `Pgvector`) | A later major restores (the packages declare no upper bound, so it is never a restore conflict) but is untested until a floor moves. See [the version policy](#the-version-policy-floors-and-one-bounded-range) |
@@ -135,7 +135,7 @@ checks above; nothing else enforces it.
 
 | Pin | Declared in | Published | Content hash | Source | Executable evidence |
 | --- | --- | --- | --- | --- | --- |
-| `Microsoft.Agents.AI` **[1.22.0, 2.0.0)** | `src/AgentExperience.MicrosoftAgentFramework` | 2026-09-18 | `YdQJbL47n8PJmTGCD6DzapD2TQiCfI1f/669ECcHsKw1po3WhTq2lZoO3X7PJ6sZSGE/I2RReJ/hTGwtBZ7WTA==` | <https://www.nuget.org/packages/Microsoft.Agents.AI/1.22.0>, source at tag [`dotnet-1.22.0`](https://github.com/microsoft/agent-framework/tree/dotnet-1.22.0/dotnet/src). Requires `Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 10.0.12 and the 10.10.0 `Microsoft.Extensions.AI`/`Compliance`/`VectorData`/`AI.Evaluation` train, which is why the pins below moved with it. Every version from 1.15.0 to 1.22.0 ships `net8.0`, `net9.0` and `net10.0` builds | `CompatibilityProof/MafHooksProof` (invocation hooks, failure visibility through `InvokedCoreAsync`), `CompatibilityProof/ContextProviderFitProof` (custom `AIContextProvider` injection), and the whole `AgentExperience.MicrosoftAgentFramework.Tests` suite driving real `ChatClientAgent` runs |
+| `Microsoft.Agents.AI` **[1.22.0, 2.0.0)** | `src/AgentExperience.MicrosoftAgentFramework` | 2026-09-18 | `YdQJbL47n8PJmTGCD6DzapD2TQiCfI1f/669ECcHsKw1po3WhTq2lZoO3X7PJ6sZSGE/I2RReJ/hTGwtBZ7WTA==` | <https://www.nuget.org/packages/Microsoft.Agents.AI/1.22.0>, source at tag [`dotnet-1.22.0`](https://github.com/microsoft/agent-framework/tree/dotnet-1.22.0/dotnet/src). Requires `Microsoft.Extensions.DependencyInjection.Abstractions` ≥ 10.0.12 and the 10.10.0 `Microsoft.Extensions.AI`/`Compliance`/`VectorData`/`AI.Evaluation` train, which is why the pins below moved with it. Every version from 1.15.0 to 1.22.0 ships `net8.0`, `net9.0` and `net10.0` builds | `CompatibilityProof/MafHooksProof` (invocation hooks, failure visibility through `InvokedCoreAsync`), `CompatibilityProof/ContextProviderFitProof` (custom `AIContextProvider` injection), `CompatibilityProof/FunctionMiddlewareInstructionsProof` (instructions a function middleware appends after a failed call reach the next model call of that run only: recall at the moment of failure), and the whole `AgentExperience.MicrosoftAgentFramework.Tests` suite driving real `ChatClientAgent` runs |
 
 The pin moved from 1.20.0 to 1.22.0 in story 5.1 (1.21.0 was never pinned). Nothing in the adapter had to change;
 one documented caveat went away (the third bullet below). Story 7.2 turned the exact pin into the range
@@ -202,14 +202,29 @@ Facts from MAF's own source that shaped the adapter, re-checked at tag `dotnet-1
 | `dbup-core` **6.1.1+** | `Storage.Postgres` (referenced directly, its floor moved in lockstep with `dbup-postgresql`) | 2026-02-23 | `kgpuyJVEFJHoIj/slnc994Go88aoeZqNDfGHDBr4sh7CsEWwJhOTCt/FJqO4ziUImL5L0NEY0kxxOiNgPKI2Fw==` | <https://www.nuget.org/packages/dbup-core/6.1.1> | As above. `MigratorLogSilenceTests` also records that this version's engine builder starts with no logger |
 | `Pgvector` **0.3.2+** (within 0.3.x) | `Storage.Postgres.Vectors` | 2025-05-20 | `n7M5LuNejHUmtWky3zCbNO+tP1Gnjiuv9Qtu4LyvB1602dD8RiBxxCQp9jEjM0ZFDxAZF1oOWkNIkXw46KT00Q==` | <https://www.nuget.org/packages/Pgvector/0.3.2> (sole dependency `Npgsql >= 8.0.5`, satisfied by 10.0.3) | `PostgresEmbeddingIndexTests`, `HybridRetrievalIntegrationTests`, `PostgresDeindexingTests`, `CompatibilityProof/PostgresVectorProof` |
 | `Microsoft.Extensions.AI.Abstractions` **10.10.0+** | `Storage.Postgres.Vectors` | 2026-09-09 | `frBHj2ckpevA+KdDLikxv8oxGPrJiyTvaiblYp+vtVEt0q6J73XP5m2SICm86nFK6rl+L1GCKxIy4S5Lb3p2kQ==` | <https://www.nuget.org/packages/Microsoft.Extensions.AI.Abstractions/10.10.0> | `OfflineVectorsTests` drives `AiExperienceEmbeddingGenerator` over an in-test `IEmbeddingGenerator`, with no model credentials. MAF 1.22.0 requires ≥ 10.10.0, so this floor moved with it in story 5.1. The same version arrives transitively through MAF 1.22.0, and the release tests assert the two resolve identically. The floating leg resolved **10.10.1** (published 2026-09-25) and passed |
+| `Microsoft.Data.Sqlite` **10.0.12+** | `Storage.Sqlite` | 2026-09-08 | `yZ7JQJqVWSICoSZmKJSx0mCm6vgZ2lnIzmPomiEDDfpCKDq93sGY8/d/+7BBPXgeSOdddfqC7GThK6TcV8RSxg==` | <https://www.nuget.org/packages/Microsoft.Data.Sqlite/10.0.12> (brings `Microsoft.Data.Sqlite.Core` and the bundled native SQLite, `SQLitePCLRaw.bundle_e_sqlite3`, built with FTS5). The same train as the DI abstractions floor below | `AgentExperience.Storage.Sqlite.Tests` (the store conformance suite on a file, two connections committing on one file, erasure reaching the FTS5 index, migration), `SqliteRetrievalQualityTests`. Added with the SQLite store; the floating leg's result below predates it |
 
 ### Core and shared
 
 | Pin | Declared in | Published | Content hash | Source | Executable evidence |
 | --- | --- | --- | --- | --- | --- |
-| `Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.12+** | `Core`, `Storage.Postgres`, `Storage.Postgres.Vectors`, `Storage.InMemory` | 2026-09-08 | `9/qymSh7hVDMGTGwrLz8MRp5zRyXy9adGDOs4HwRdnLil3oZGYuWeZjbmHgCQ9BL1qBroVfgUK3U/nb61617Cw==` | <https://www.nuget.org/packages/Microsoft.Extensions.DependencyInjection.Abstractions/10.0.12> | `CoreServiceRegistrationTests`, `PostgresServiceRegistrationTests`, the vectors registrations and `InMemoryStorageRegistrationTests`, each resolved from a real container. Moved from 10.0.11 in the first three packages together, because MAF 1.22.0 requires ≥ 10.0.12; the in-memory store (story 11.2) took the same floor |
+| `Microsoft.Extensions.DependencyInjection.Abstractions` **10.0.12+** | `Core`, `Storage.Postgres`, `Storage.Postgres.Vectors`, `Storage.InMemory`, `Storage.Sqlite` | 2026-09-08 | `9/qymSh7hVDMGTGwrLz8MRp5zRyXy9adGDOs4HwRdnLil3oZGYuWeZjbmHgCQ9BL1qBroVfgUK3U/nb61617Cw==` | <https://www.nuget.org/packages/Microsoft.Extensions.DependencyInjection.Abstractions/10.0.12> | `CoreServiceRegistrationTests`, `PostgresServiceRegistrationTests`, the vectors registrations, `InMemoryStorageRegistrationTests` and `SqliteStorageRegistrationTests`, each resolved from a real container. Moved from 10.0.11 in the first three packages together, because MAF 1.22.0 requires ≥ 10.0.12; the in-memory store (story 11.2) took the same floor |
 | `Microsoft.Extensions.Hosting.Abstractions` **10.0.3+** | `Storage.InMemory`, `MicrosoftAgentFramework` | 2026-02-10 | `GdMpC10Jf6poxSvUJ4lgYpJ5F/kJeaAoJmrPufjBoPYyCTKKY5Dyl0rZA+LBNvFqTq1cZa/lhlptlUhNvU6xrg==` | <https://www.nuget.org/packages/Microsoft.Extensions.Hosting.Abstractions/10.0.3>. Supplies `IHostEnvironment` and `IsProduction()`, all the in-memory store's production guard reads, and the same rule guards the MAF adapter's `UseDevelopmentIdentity` (one shared source file). The MAF adapter took this dependency in `0.1.0-preview.11`: an ASP.NET Core or Generic Host app already references it, and a plain console app now gains it and its 10.0.3 abstractions (configuration, diagnostics, file providers, logging); its own dependencies are the 10.0.3 `Microsoft.Extensions.*` abstractions, and its `DependencyInjection.Abstractions` ≥ 10.0.3 is met by the 10.0.12 floor above. The floor is 10.0.3 because that is the version the repository already resolves (the live experiment's lock file, through `System.ClientModel`), so every lock file that holds the package runs the floor | `InMemoryStorageRegistrationTests` (Production refused, the explicit override, Development and Staging allowed, no `IHostEnvironment` allowed) and `AgentExperienceFiveLineSetupTests` (the development identity refused in Production, allowed in Development) on every target framework. Added in story 11.2; the floating leg's result below predates it |
 | `Microsoft.Extensions.Compliance.Redaction` **10.10.0+** | `Core` | 2026-09-09 | `RW0HuSIl5CH/SSLa31MIKc6LPmy3DjtJmf/5LjTTKMmwBeNex6ZnF1Q46vzklAPSQ2BDu/MHL/6G5CBoyWLQAA==` | <https://www.nuget.org/packages/Microsoft.Extensions.Compliance.Redaction/10.10.0> | `DefaultSanitizerTests`, `SanitizerConformanceTests`, `CompatibilityProof/EvaluationRedactionProof`. It was the floor `10.9.0` until story 5.1, then exact, then the floor `10.10.0` again since story 6.3 — this time with CI proving both ends of the range. 10.10.0 rather than 10.9.0 is a preference, not a requirement: Core does not reference MAF. But a host with Core and the MAF adapter resolves `Microsoft.Extensions.Compliance.Abstractions` 10.10.0 through MAF 1.22.0 either way, and Redaction 10.10.0 is the release built against that version, the same train as every other floor here. A host that needs a newer Redaction now simply gets it |
+
+### The aexp tool
+
+`AgentExperience.Cli` is a .NET tool, not a library: its package carries its whole dependency graph under `tools/`,
+resolved once when it is packed from its committed lock file, so every installed copy runs exactly that graph and a
+host never composes it with its own. Its references are therefore not floors a host meets; the release tests leave them
+out of the floor rules, and its test project runs the graph the tool ships. In that graph the MCP SDK lifts two library
+floors, `Microsoft.Extensions.DependencyInjection.Abstractions` to 10.0.13 and `Microsoft.Extensions.AI.Abstractions` to
+10.11.0, inside the tool only; every library is still tested at its own floors.
+
+| Pin | Declared in | Published | Content hash | Source | Executable evidence |
+| --- | --- | --- | --- | --- | --- |
+| `ModelContextProtocol.Core` **2.3.0** | `Cli` | 2026-10-20 | `jnCDayv+LWLfXWbi3dHsvru8rtcksCfA2Fe/Lol1AbvsManxJKlpf/8bAfWQyCcFGUqv7ORqq4Xn18m5mUZmQg==` | <https://www.nuget.org/packages/ModelContextProtocol.Core/2.3.0>, the official MCP C# SDK's core package (the stdio and stream transports, the low-level server and the client), the newest stable release when the tool was added; the hosting package `ModelContextProtocol` is not used | `AgentExperience.Cli.Tests` (`McpServerTests`: the SDK's own client lists the tools and runs a learn-then-recall scenario against `aexp mcp` over in-process pipes) |
+| `Microsoft.Extensions.DependencyInjection` **10.0.12** | `Cli` | 2026-09-08 | `4bTS7TpB4aMRxegFpYgsp9HDI0TvFC6bt2n9SsyJ9xLy6ZEspW2ji7bQ7dKguG2w5LbsJtFiWz+wiPZgpmQ/KQ==` | <https://www.nuget.org/packages/Microsoft.Extensions.DependencyInjection/10.0.12>: the container the tool builds the library in, the version the test projects already use | `AgentExperience.Cli.Tests` (every command builds the library in it) |
 
 ### Telemetry
 
@@ -325,6 +340,11 @@ purpose. It gates pushes and the weekly schedule, and reports without blocking o
 [the version policy](#the-version-policy-floors-and-one-bounded-range)). Run it locally
 the same way; it never edits your tree.
 
+**Result on 2026-10-27** (the `0.1.0-preview.17` release checks, `net10.0` only): PASSED. `Microsoft.Agents.AI` floated
+to **1.26.0**, `Microsoft.Extensions.AI.Abstractions` and `Microsoft.Extensions.Compliance.Redaction` to **10.11.0**, and
+`Microsoft.Extensions.DependencyInjection.Abstractions` and `Microsoft.Extensions.Hosting.Abstractions` to **10.0.14**;
+`dbup-core`, `dbup-postgresql`, `Npgsql` and `Pgvector` resolved to their floors.
+
 **Result on 2026-10-16** (the `0.1.0-preview.14` release checks, `net10.0` only): PASSED. `Microsoft.Agents.AI` floated
 to **1.25.0**; every other float resolved as on 2026-10-09.
 
@@ -388,6 +408,10 @@ become floors in the copy, so a newer MAF that raises a shared floor fails the l
 a test-only pin no host has; and the probe fails unless the adapter's tests actually resolved the version it names.
 `MAF_PROBE_INDEX_URL` replaces nuget.org's version list (a `file://` URL works); on 2026-09-25 a list holding
 `2.0.0`, `2.0.0-preview.1` and `10.1.0` beside 1.22.0 made the probe note the out-of-range versions and probe 1.22.0.
+
+**Result on 2026-10-27** (the `0.1.0-preview.17` release checks, `net10.0` only): the newest stable version inside the
+range is now **1.26.0**. Both legs **PASSED**, the floor (1.22.0) and 1.26.0, adapter tests and the 6 MAF proofs. The
+adapter needed no change.
 
 **Result on 2026-10-16** (the `0.1.0-preview.14` release checks, `net10.0` only): the newest stable version inside the
 range is now **1.25.0**. Both legs **PASSED**, the floor (1.22.0) and 1.25.0, adapter tests and the 6 MAF proofs. The

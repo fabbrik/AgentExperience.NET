@@ -197,6 +197,20 @@ public sealed record ExperienceCandidate(
     /// </para>
     /// </summary>
     public ExperienceGrantDisclosure? GrantDisclosure { get; init; }
+
+    /// <summary>
+    /// The share of the query's distinct terms the record contains, in [0, 1], as the text search counted them, or
+    /// <see langword="null"/> when the source does not report it (a vector match, or a source written before it existed).
+    /// Unlike <see cref="Relevance"/>, which a source may weight by field, it is a plain count: three of a twelve-term
+    /// query's terms is 0.25 whichever fields hold them.
+    /// </summary>
+    /// <remarks>
+    /// Both shipped text sources report it: on PostgreSQL it equals <see cref="Relevance"/> (computed in single
+    /// precision), and in memory it is the share of whole-word terms, before the field weighting. Core's retrieval
+    /// carries it to <c>RankedExperience.TextCoverage</c>, falling back to <see cref="Relevance"/> when a text source
+    /// leaves it <see langword="null"/>; the injection provider's match floor reads it there.
+    /// </remarks>
+    public double? TermCoverage { get; init; }
 }
 
 /// <summary>

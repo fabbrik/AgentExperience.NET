@@ -1,0 +1,5 @@
+{
+  "description": "The heuristic engine itself, passed explicitly: the same as none.",
+  "operation": "rule",
+  "engine": "default"
+}

@@ -277,7 +277,10 @@ each lesson, newest first, it gives:
   page's `InjectionsTracked` is `true`); and not tracked (`InjectionsTracked` is `false`: a store that does not track
   injections, or a PostgreSQL schema whose application role has not been granted `0026`'s table yet), which the HTML
   shows as "not tracked" rather than "never". .NET, Python and Go agents all record their injections (the ports from
-  [contract 1.4](../../contract/README-1.4.md)), so in a mixed fleet "never" means no agent in the scope was shown it.
+  [contract 1.4](../../contract/README-1.4.md)), so in a mixed fleet "never" means no agent in the scope was shown it;
+- `ConsolidatedFrom`, for a lesson a consolidation pass merged (`ConsolidateAsync(identity)` on the same view): how
+  many source records it was merged from, each now superseded by it. See
+  [Consolidating repeated lessons](lifecycle.md#consolidating-repeated-lessons).
 
 `ExperienceLessonsQuery` narrows it: `Statuses`, `Limit` (the store's bounds, 1 to 500, default 50) and
 `IncludeIneligible` (default `true`). The page's `HasMore` says whether more lessons match than it shows (or may: the
@@ -286,6 +289,13 @@ page and each record's last injection in one bounded read; in PostgreSQL one sta
 authorization and scope, the boundary retrieval reads within, so lessons another scope lends through a sharing grant
 are not listed; a record the store answers from another scope is left out and counted in `OutOfScopeDropped`. It never
 writes. A store answer other than `Found` (`Denied`, say) is an empty page carrying that outcome, not an exception.
+
+With `IncludeMeasuredBenefit = true` (default `false`), each lesson also gets `MeasuredBenefit`: what the
+[injection holdout](injection.md#measuring-benefit-the-holdout) measured for it, from one benefit estimate for the
+page's scope over the context provider's benefit window and threshold (30 days and 20 runs per arm by default, whether
+or not the [benefit policy](injection.md#acting-on-the-estimate) is on). A `Hurts` verdict there is why the policy omits
+the lesson. It is `null` for a lesson no assigned run named, and for every lesson when the store does not record the
+holdout or refused the read. Left off, nothing more is read and the page is unchanged.
 
 **Where "last injected" comes from.** The context provider records it after it hands a block over, in the
 background, so the model is called without waiting: it calls `IExperienceRecordStore.RecordInjectionAsync` with the
@@ -345,6 +355,12 @@ var page = await provider.GetAgentExperienceLessons().ListForDevelopmentIdentity
 // or, with your own identity: .ListAsync(new ExperienceIdentity(authorization, scope))
 File.WriteAllText("lessons.html", ExperienceLessonsHtml.Render(page));
 ```
+
+Since contract 1.14 the Python and Go ports render the same page, byte for byte (`render_lessons_html(page)`,
+`ae.RenderLessonsHTML(page)`), and serve it idiomatically: Python's `lessons_html_response(lessons, identity)` returns
+a status, headers and body any ASGI or WSGI framework can send, and Go's `ae.LessonsHTMLHandler` is an `http.Handler`
+that takes the host's identity function. Both send the headers above. As in .NET, the authorization is yours: map the
+identity from your own authentication, and never expose the page publicly.
 
 When a lesson was last injected is not shown in this version.
 
@@ -552,6 +568,22 @@ combination of custody, so run it from a short-lived operator process, not from 
 timeout (30 seconds by default). On a large plaintext table, run the migrator in a maintenance window, or over a data
 source whose command timeout is raised for the migration; a script that times out rolls back and changes nothing.
 
+`0028` builds one index on `experience_records` (`ix_experience_records_source_run`, on `tenant_id, source_run_id`) with
+a plain `CREATE INDEX`: the migrator runs each script in a transaction, and `CREATE INDEX CONCURRENTLY` cannot run in
+one. The build takes a `SHARE` lock on `experience_records`, which blocks every write to it (reads go on) until the
+index is built: imperceptible on a small table, a write outage on a large one, and it can also run past the command
+timeout. On a large table, build the index out of band first, as the owner, and the script's own `IF NOT EXISTS` is then
+a no-op:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_experience_records_source_run
+    ON agent_experience.experience_records (tenant_id, source_run_id);
+```
+
+A concurrent build that fails leaves an invalid index under that name, which the script would accept: drop it
+(`DROP INDEX CONCURRENTLY agent_experience.ix_experience_records_source_run`) and build it again. `0028` changes no
+privilege.
+
 ## Using the store directly
 
 Records are normally written by Core's `ExperienceFinalizationService`, which creates the record and commits its
@@ -658,6 +690,44 @@ Validation messages never contain record payload content, and the store does not
 A create whose acknowledgement was lost (cancelled or timed out after PostgreSQL committed it) returns `Conflict`
 when retried. After a `Conflict`, call `GetAsync` in your own scope to check whether the stored record is yours.
 
+## SQLite: one local file
+
+For a single agent on one machine (a coding agent, a CLI, an MCP server), `AgentExperience.Storage.Sqlite` keeps
+everything in one database file, with no server and no roles:
+
+```csharp
+await ExperienceSqliteSchema.MigrateAsync("experience.db");   // journaled and idempotent: run it on every start
+
+builder.Services
+    .AddAgentExperience(options => { /* ... */ })
+    .UseSqlite("experience.db");
+```
+
+Or opt in to migrating on first use: `.UseSqlite("experience.db", o => o.MigrateSchemaOnFirstUse = true)`. Nothing
+migrates on its own otherwise: a store checks the schema version once, on its first operation, and refuses a missing or
+older schema (saying to migrate) and one newer than the package. The migrator creates a missing file **owner-only**: on
+Unix its directory `0700` and the file `0600`, and SQLite gives the `-wal` and `-shm` files the file's permissions. An
+existing file or directory keeps its permissions. The file is put in write-ahead-log mode, connections run with foreign keys on and a busy
+timeout, and every write is one `BEGIN IMMEDIATE` transaction, so several processes may share the file: two commits
+from the same revision still have exactly one winner, and a writer waits for another rather than failing.
+
+It registers the record store, the full-text candidate source (FTS5, Porter-stemmed: closer to PostgreSQL's matching
+than to the in-memory store's), the failure-signature source, the reuse-feedback ledger and the run store, each passing
+the same conformance suite as PostgreSQL. With the run store, the capture service keeps each completed run in the file,
+so a later process can finalize it when its verdict arrives ([Finalizing later](capture.md#finalizing-later)). `SqliteExperienceRecordStore.DeleteAsync` erases a record to a tombstone, removing its
+search text and every row that named it. Every connection runs with `secure_delete` on, so freed content is zeroed in
+the file; the full-text index is rewritten (FTS5 `optimize`) in the erasure's transaction, so the record's terms leave
+its segments at once; and the write-ahead log is checkpointed and truncated after the commit, best effort -- a reader
+still holding an older snapshot keeps the pre-erasure pages in the `-wal` file until a later checkpoint. Copies of the
+file (backups, snapshots) are outside its reach, and the tombstone keeps the ID, scope, status, counters, revision and
+instants, never content. A run save waits at most `SqliteStorageOptions.RunSaveBusyTimeout` (2 seconds) for a busy
+file, so a completion is never held up behind another process's write.
+
+**What it does not do.** No sharing grants or access log, no encryption or crypto-shredding, no row-level security or
+database roles (anything that can open the file can read and write all of it, so protect the file as you would the
+agent's other secrets), no vectors (retrieval is text and failure signature only) and no retention sweeps. For a team,
+a shared service or any of those, use PostgreSQL.
+
 ## Deploying with two roles
 
 This is the supported deployment, and the one every guarantee in these guides about append-only history and erasure
@@ -739,6 +809,10 @@ then grants exactly this:
 | `experience_grants` | `SELECT`, `INSERT`, and `UPDATE` on `revoked_at`, `revocation_reason` only |
 | `lifecycle_events`, `experience_grant_events`, `confidence_evidence`, `reuse_feedback`, `reuse_feedback_exposures`, `experience_grant_access` | `SELECT`, `INSERT` |
 | `experience_injections` (`0026`, when it exists) | `SELECT`, `INSERT`, and `UPDATE` on `last_injected_at`, `injection_count` only — the injection upsert; never its record ID or scope columns, and no `DELETE` (erasure removes a row through `0026`'s trigger, as the owner) |
+| `experience_holdout_assignments` (`0027`, when it exists) | `SELECT`, `INSERT` — the injection holdout's assignment rows; no `UPDATE` (the insert is `ON CONFLICT DO NOTHING`) and no `DELETE` (erasure removes rows through `0027`'s trigger, as the owner). Contract 1.8's `sql/application-role-privileges-1.8.sql` grants the same |
+| `experience_provider_holdout_assignments` (`0029`, when it exists) | `SELECT`, `INSERT` — a measured memory provider's holdout rows; no `UPDATE` and no `DELETE` (erasure removes rows through `0029`'s trigger, as the owner). Contract 1.11's `sql/application-role-privileges-1.11.sql` grants the same |
+| `experience_failure_signatures` (`0030`, when it exists) | `SELECT`, `INSERT` — each record's failure signatures, written with the record and searched by `PostgresExperienceSignatureSource`; no `UPDATE` and no `DELETE` (erasure removes rows through `0030`'s trigger, as the owner). .NET-only: no contract privileges file grants it |
+| `experience_runs` (`0032`, when it exists) | `SELECT`, `INSERT`, `DELETE`, and `UPDATE` on `finalized_at` only — the run store's staging rows, saved at completion, marked finalized, deleted after finalization or a retention; never the run or its scope columns. .NET-only: no contract privileges file grants it |
 | `experience_embeddings` (when the vectors package created it) | `SELECT`, `INSERT`, `DELETE`, and `UPDATE` on `model_id`, `dimension`, `content_hash`, `source_revision`, `embedding`, `updated_at` only — derived, rebuildable data, not a ledger, but never its record ID or scope columns |
 | `purge_experience_record`, `purge_expired_grants` | `EXECUTE` only with `AllowErasure` |
 | `purge_grant_access` | `EXECUTE` only with `AllowAccessLogPurge` |
@@ -849,7 +923,10 @@ await ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(
 3. runs `ALTER TABLE … ENABLE ROW LEVEL SECURITY` on every table the application role reads or writes by scope:
    `experience_records` (tombstones included), `lifecycle_events`, `confidence_evidence`, `experience_grants`,
    `experience_grant_events`, `experience_grant_access`, `reuse_feedback`, `reuse_feedback_exposures`,
-   `experience_injections`, and `experience_embeddings` when the vectors package created it;
+   `experience_injections`, `experience_holdout_assignments`, `experience_provider_holdout_assignments`,
+   `experience_failure_signatures`, `experience_runs`, and
+   `experience_embeddings` when the vectors package
+   created it;
 4. verifies the result like the privileges — each table enabled and not forced; each policy's name, command,
    permissiveness, roles (`PUBLIC`) and deparsed expressions the canonical ones; each helper's source, definition,
    volatility, settings and owner the canonical ones, and none `SECURITY DEFINER`; the text search function exactly

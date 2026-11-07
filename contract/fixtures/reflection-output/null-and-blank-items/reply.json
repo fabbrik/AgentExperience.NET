@@ -1,0 +1,18 @@
+{
+  "modelId": "gpt-4o-2024-08-06",
+  "messages": [
+    {
+      "role": "assistant",
+      "contents": [
+        {
+          "type": "text",
+          "text": "```\n{\"lesson\":\"Wait for the lock.\",\"successfulApproaches\":null,\"failedApproaches\":[null,\" \",\"Retried at once.\"],\"warnings\":[],\"reuseGuidance\":\"   \"}\n```",
+          "callId": null,
+          "name": null
+        }
+      ]
+    }
+  ],
+  "throws": false,
+  "delayMilliseconds": 0
+}

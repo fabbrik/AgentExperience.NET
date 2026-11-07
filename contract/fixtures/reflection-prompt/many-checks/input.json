@@ -1,0 +1,705 @@
+{
+  "description": "Forty required checks, one with two pieces of evidence: each header list names at most 32 IDs and counts the rest; a check ID is listed once.",
+  "options": {
+    "allowedArgumentNames": null
+  },
+  "run": {
+    "runId": "00000163-0000-4000-8000-000000000000",
+    "taskId": "export-catalog",
+    "taskDescription": "Export the whole catalog",
+    "scope": {
+      "tenantId": "contract-tenant",
+      "applicationId": "contract-app",
+      "projectId": "contract-project",
+      "teamId": null,
+      "agentId": "refund-agent",
+      "userId": null
+    },
+    "environment": {
+      "hostName": "contract-host",
+      "runtimeVersion": "runtime-1",
+      "operatingSystem": "linux",
+      "applicationVersion": "1.0.0",
+      "metadata": {
+        "region": "eu-west"
+      }
+    },
+    "provenance": {
+      "source": "contract-fixture",
+      "sourceVersion": "1",
+      "recordedAt": "2026-03-02T09:00:00+00:00",
+      "correlationId": null,
+      "exposedTo": []
+    },
+    "attempts": [
+      {
+        "attemptId": "00000163-0000-4000-8000-0000000000a0",
+        "sequenceNumber": 0,
+        "startedAt": "2026-03-02T09:00:01+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000163-0000-4000-8000-00000000c000",
+            "sequenceNumber": 0,
+            "toolName": "export_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T09:00:01+00:00",
+            "duration": "00:00:01.2500000",
+            "result": null,
+            "error": "System.TimeoutException: page 0 timed out after waiting for the export lock"
+          }
+        ],
+        "result": null,
+        "error": "System.TimeoutException: page 0 timed out after waiting for the export lock"
+      },
+      {
+        "attemptId": "00000163-0000-4000-8000-0000000000a1",
+        "sequenceNumber": 1,
+        "startedAt": "2026-03-02T09:00:02+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000163-0000-4000-8000-00000000c100",
+            "sequenceNumber": 0,
+            "toolName": "export_page",
+            "arguments": {},
+            "startedAt": "2026-03-02T09:00:02+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "exported",
+            "error": null
+          }
+        ],
+        "result": "Exported.",
+        "error": null
+      }
+    ],
+    "executionStatus": "Completed",
+    "outcome": null,
+    "startedAt": "2026-03-02T09:00:00+00:00",
+    "endedAt": "2026-03-02T09:00:20+00:00"
+  },
+  "completionEventId": "00000163-0000-4000-8000-0000000000e0",
+  "verification": {
+    "closedRound": {
+      "roundId": "0000007e-0000-4000-8000-000000000001",
+      "artifactRevision": "rev-1"
+    },
+    "requiredChecks": [
+      {
+        "checkId": "catalog-check-01",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-02",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-03",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-04",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-05",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-06",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-07",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-08",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-09",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-10",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-11",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-12",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-13",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-14",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-15",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-16",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-17",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-18",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-19",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-20",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-21",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-22",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-23",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-24",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-25",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-26",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-27",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-28",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-29",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-30",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-31",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-32",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-33",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-34",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-35",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-36",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-37",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-38",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-39",
+        "expectedKind": "integration-test"
+      },
+      {
+        "checkId": "catalog-check-40",
+        "expectedKind": "integration-test"
+      }
+    ],
+    "evidence": [
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e100",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-01",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e101",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-02",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e102",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-03",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e103",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-04",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e104",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-05",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e105",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-06",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e106",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-07",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e107",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-08",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e108",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-09",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e109",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-10",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e10a",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-11",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e10b",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-12",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e10c",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-13",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e10d",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-14",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e10e",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-15",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e10f",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-16",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e110",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-17",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e111",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-18",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e112",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-19",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e113",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-20",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e114",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-21",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e115",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-22",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e116",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-23",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e117",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-24",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e118",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-25",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e119",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-26",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e11a",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-27",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e11b",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-28",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e11c",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-29",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e11d",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-30",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e11e",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-31",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e11f",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-32",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e120",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-33",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e121",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-34",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e122",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-35",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e123",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-36",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e124",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-37",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e125",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-38",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e126",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-39",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e127",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-40",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      },
+      {
+        "evidenceId": "00000163-0000-4000-8000-00000000e1ff",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "catalog-check-01",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      }
+    ],
+    "currentArtifactRevision": "rev-1",
+    "finalizedAt": "2026-03-02T09:00:30+00:00"
+  }
+}

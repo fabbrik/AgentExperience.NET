@@ -1,0 +1,27 @@
+{
+  "pages": [
+    {
+      "after": null,
+      "rows": [
+        {
+          "runId": "00000084-0000-4000-8000-00000000010b",
+          "arm": "Treatment",
+          "experienceId": "00000084-0000-4000-8000-000000000001",
+          "assignedAt": "2026-03-02T09:01:00.123456+00:00",
+          "runOutcome": "Failed",
+          "runModel": "live-model",
+          "lessonModel": "lesson-a"
+        },
+        {
+          "runId": "00000084-0000-4000-8000-000000000900",
+          "arm": "Holdout",
+          "experienceId": "00000084-0000-4000-8000-000000000001",
+          "assignedAt": "2026-03-02T09:03:00.123456+00:00",
+          "runOutcome": null,
+          "runModel": null,
+          "lessonModel": "lesson-a"
+        }
+      ]
+    }
+  ]
+}

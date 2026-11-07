@@ -80,6 +80,17 @@ public sealed partial class ContributingWithoutDockerTests
         Assert.True(problems.Count == 0, string.Join("\n", problems));
     }
 
+    [Fact]
+    public void The_dogfood_verifier_runs_exactly_the_commands_listed_here()
+    {
+        var script = File.ReadAllText(Path.Combine(RepositoryRoot.Path, "dogfood", "verify.sh")).ReplaceLineEndings("\n");
+        var scripted = ScriptRun().Matches(script)
+            .Select(match => (match.Groups["project"].Value, match.Groups["filter"].Success ? match.Groups["filter"].Value : null))
+            .ToList();
+
+        Assert.Equal(RunCommands(Section()), scripted);
+    }
+
     /// <summary>The "Without Docker" part of CONTRIBUTING.md, up to the next heading.</summary>
     private static string Section()
     {
@@ -183,6 +194,10 @@ public sealed partial class ContributingWithoutDockerTests
 
     [GeneratedRegex(@"^dotnet test (?<project>[\w./-]+)(?: --filter ""(?<filter>[^""]+)"")?[ \t]*$", RegexOptions.Multiline)]
     private static partial Regex RunCommand();
+
+    // dogfood/verify.sh: one 'run <project> [--filter "..."]' line per CONTRIBUTING.md command.
+    [GeneratedRegex(@"^run (?<project>[\w./-]+)(?: --filter ""(?<filter>[^""]+)"")?[ \t]*$", RegexOptions.Multiline)]
+    private static partial Regex ScriptRun();
 
     [GeneratedRegex(@"`((?:tests|experiments|samples|benchmarks)/[\w./-]+)`")]
     private static partial Regex QuotedProject();

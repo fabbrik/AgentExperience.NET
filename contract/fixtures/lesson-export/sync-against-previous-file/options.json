@@ -1,0 +1,22 @@
+{
+  "description": "The file already holds an earlier export (previous.md): one lesson at an older revision (updated), one exactly as now (neither added nor updated), and one no longer in the set (removed); the lesson the earlier export lacked is added. The file is rewritten whole.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "authorizedScope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "now": "2026-03-03T09:00:00.1234567+00:00",
+  "minimumRunsPerArm": 3,
+  "hasPreviousFile": true
+}

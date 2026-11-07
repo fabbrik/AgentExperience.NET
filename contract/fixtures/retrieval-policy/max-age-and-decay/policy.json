@@ -1,0 +1,36 @@
+{
+  "description": "The cross-language test's policy: MaxAge 180 days, a 14-day recency half-life, and decay by domain (framework-api 30 days, security 90, math never, 365 for the rest). Expired records are excluded before anything is scored; the rest rank on decayed confidence, and a preferred environment grades them.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {
+    "region": "us-east"
+  },
+  "excludeModelAuthored": false,
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.5,
+    "maxAgeTicks": 155520000000000,
+    "recencyHalfLifeTicks": 12096000000000,
+    "candidateLimit": 50,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": null
+  },
+  "confidenceDecay": {
+    "domainKey": "domain",
+    "halfLivesTicks": {
+      "framework-api": 25920000000000,
+      "math": null,
+      "security": 77760000000000
+    },
+    "defaultHalfLifeTicks": 315360000000000
+  }
+}

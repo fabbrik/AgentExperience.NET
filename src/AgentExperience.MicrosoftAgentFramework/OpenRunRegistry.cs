@@ -649,6 +649,11 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
             return;
         }
 
+        if (completed.RunStoreFailure is { } runStoreFailure)
+        {
+            Report(new ExperienceCaptureFailure(ExperienceCaptureFailureStage.RunStore, runId, runStoreFailure, completed.RunStoreException));
+        }
+
         // Reported only once the completion has actually landed, and only for the close that landed
         // it, so this message is never emitted about a run that was never open at its bound.
         if (atBound)

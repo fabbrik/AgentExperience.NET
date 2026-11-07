@@ -35,8 +35,8 @@ import pytest
 pytest.importorskip("agent_framework")
 
 from _contract import FIXTURES, cases, json_difference, read_json
-from _maf import NEXT_TICKET, TICKET, ScriptedClient
-from _postgres import Server
+from _maf import NEXT_TICKET, TICKET, ScriptedClient, delivered
+from _postgres import PG_RETRIEVAL_POLICY, Server
 from _sync import run
 from agent_framework import Agent, tool
 from test_contract import assert_valid_record
@@ -153,6 +153,7 @@ def run_python_agent(store: ExperienceStore) -> tuple[list[Any], ScriptedClient,
     agent = use_agent_experience(
         Agent(client=client, name="Python Agent", tools=[tool(run_tests)]),
         store=store,
+        retrieval_policy=PG_RETRIEVAL_POLICY,
         identity=IDENTITY,
         verify=tool_succeeded("run_tests", artifact_revision="build-7"),
         classify_tool_result=exit_code("run_tests"),
@@ -317,8 +318,9 @@ def test_a_lesson_the_dotnet_library_finalized_is_injected_into_the_python_agent
     agent = use_agent_experience(
         Agent(client=client, name="refund-agent"),
         store=store,
+        retrieval_policy=PG_RETRIEVAL_POLICY,
         identity=ExperienceIdentity("python-principal", scope),
-        on_injected=injections.append,
+        on_injected=delivered(injections.append),
         on_injection_failure=problems.append,
         on_injection_recorded=recorded.append,
     )
@@ -359,8 +361,9 @@ def test_a_lesson_the_dotnet_library_finalized_is_injected_into_the_python_agent
     other_agent = use_agent_experience(
         Agent(client=other_client, name="other-agent"),
         store=store,
+        retrieval_policy=PG_RETRIEVAL_POLICY,
         identity=ExperienceIdentity("python-principal", replace(scope, agent_id="other-agent")),
-        on_injected=other.append,
+        on_injected=delivered(other.append),
         on_injection_failure=problems.append,
     )
     run(other_agent.run("Deploy service X to prod"))

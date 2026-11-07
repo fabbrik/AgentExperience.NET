@@ -382,6 +382,15 @@ internal sealed class ScriptedAgent : AIAgent
     private sealed class ScriptedSession : AgentSession;
 }
 
+internal sealed class NeverFiringTimeProvider : TimeProvider
+{
+    /// <summary>The system clock, with timers that never fire, so no real-clock bound can race work on a loaded machine.</summary>
+    public static readonly NeverFiringTimeProvider Instance = new();
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+        System.CreateTimer(static _ => { }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+}
+
 /// <summary>
 /// A <see cref="TimeProvider"/> whose open-run duration bounds fire only when a test fires them, so a
 /// bound can be driven into exactly the interleaving under test. Every other timer -- the finalization

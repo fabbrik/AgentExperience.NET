@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // The injected block: how stored records become the Historical Reference block an agent is shown. Records are
@@ -65,6 +67,9 @@ const (
 	callFailed             = "[failed]"
 	callFailedClassPrefix  = "[failed: "
 	callMarkerEnd          = "]"
+	callReturnedExcerpt    = "[returned: "
+	maxRecipeExcerptLength = 200
+	maxRecipeToolLength    = 256
 	workedSuffix           = " (the final attempt)"
 	maxTriedAttempts       = 4
 	maxErrorExcerptLength  = 120
@@ -155,10 +160,15 @@ type RankingComponent struct {
 	Kind   RankingComponentKind
 	Value  float64
 	Weight float64
+	// UndecayedValue is the stored confidence when a confidence decay half-life applied to the Confidence component
+	// (contract 1.12: Value is then the decayed value ranked on), and nil otherwise.
+	UndecayedValue *float64
 }
 
-// Contribution is the component's value times its weight.
-func (c RankingComponent) Contribution() float64 { return c.Value * c.Weight }
+// Contribution is the component's value times its weight, rounded to a float64. The explicit conversion keeps the
+// compiler from fusing the product into a sum it is added to (an FMA, which Go allows on arm64 and others): ranking
+// adds each contribution as .NET does, product rounded first (contract 1.18's ranking-near-tie).
+func (c RankingComponent) Contribution() float64 { return float64(c.Value * c.Weight) }
 
 // RankedRecord is a record as retrieval ranked it: its score and the components it was computed from.
 type RankedRecord struct {
@@ -179,6 +189,9 @@ type BlockOptions struct {
 	MaxBytes int
 	// ApproachArguments maps a tool name to the argument keys whose stored values its "Tried:" lines may show.
 	ApproachArguments map[string][]string
+	// RecipeExcerpts are the tool names (matched ordinally) whose stored recipe excerpts the Worked: attempt's
+	// "Tried:" line shows in place of their [returned] marker (contract 1.19). Empty shows none.
+	RecipeExcerpts []string
 }
 
 func (o BlockOptions) withDefaults() BlockOptions {
@@ -198,6 +211,10 @@ func (o BlockOptions) withDefaults() BlockOptions {
 }
 
 // Validate refuses options the block cannot honour.
+// BlockOverheadBytes is the UTF-8 size of the verbose block's fixed header and footer (.NET's
+// HistoricalReferenceWriter.BlockOverheadBytes, 754): an agent's byte budget must exceed it, or no record could ever fit.
+var BlockOverheadBytes = len(BlockBegin + "\n" + preamble + BlockEnd + "\n")
+
 func (o BlockOptions) Validate() error {
 	o = o.withDefaults()
 	if o.Rendering != RenderingCompact && o.Rendering != RenderingVerbose {
@@ -226,6 +243,17 @@ func (o BlockOptions) Validate() error {
 					"the line's own delimiters (%s)", tool, maxArgumentKeyLength, forbiddenKeyCharacters)
 			}
 		}
+	}
+	seen := map[string]bool{}
+	for _, tool := range o.RecipeExcerpts {
+		if isNullOrWhitespace(tool) || UTF16Len(tool) > maxRecipeToolLength || strings.IndexFunc(tool, unicode.IsControl) >= 0 {
+			return fmt.Errorf("a recipe-excerpt allowlist entry names a tool that is blank, longer than %d characters, "+
+				"or holds a control character", maxRecipeToolLength)
+		}
+		if seen[tool] {
+			return fmt.Errorf("the recipe-excerpt allowlist names tool '%s' twice", tool)
+		}
+		seen[tool] = true
 	}
 	return nil
 }
@@ -302,7 +330,6 @@ func RenderBlock(records []RankedRecord, options BlockOptions) (Block, error) {
 
 func renderVerbose(ranked *RankedRecord, ordinal int, options *BlockOptions) string {
 	record := &ranked.Record
-	reflection := record.Reflection
 	var text strings.Builder
 	fmt.Fprintf(&text, "\n--- RECORD %d ---\n", ordinal)
 	fmt.Fprintf(&text, "Source: experience %s; source run %s; task %s\n", record.ExperienceID, record.SourceRunID,
@@ -317,6 +344,15 @@ func renderVerbose(ranked *RankedRecord, ordinal int, options *BlockOptions) str
 	fmt.Fprintf(&text, "Verification: %s\n", record.Outcome.Status)
 	fmt.Fprintf(&text, "Evidence: %d evidence ID(s); no evidence detail is included.\n", evidenceCount(record))
 
+	text.WriteString(lessonLines(record, approach))
+	fmt.Fprintf(&text, "--- END RECORD %d ---\n", ordinal)
+	return text.String()
+}
+
+// lessonLines are the verbose layout's lesson lines: the lesson, the Tried: and Worked: lines (approach), reuse
+// guidance, preconditions and warnings, fenced as model-authored when a model wrote the reflection.
+func lessonLines(record *ExperienceRecord, approach string) string {
+	reflection := record.Reflection
 	var lesson, guidance string
 	var preconditions, warnings []string
 	if reflection != nil {
@@ -329,12 +365,9 @@ func renderVerbose(ranked *RankedRecord, ordinal int, options *BlockOptions) str
 	}
 	bulletText := bullets("Preconditions", preconditions) + bullets("Warnings", warnings)
 	if IsModelAuthored(reflection) {
-		text.WriteString(approach + modelAuthoredLine + "\n" + lesson + guidance + bulletText + modelAuthoredEndLine + "\n")
-	} else {
-		text.WriteString(lesson + approach + guidance + bulletText)
+		return approach + modelAuthoredLine + "\n" + lesson + guidance + bulletText + modelAuthoredEndLine + "\n"
 	}
-	fmt.Fprintf(&text, "--- END RECORD %d ---\n", ordinal)
-	return text.String()
+	return lesson + approach + guidance + bulletText
 }
 
 func renderCompact(ranked *RankedRecord, ordinal int, options *BlockOptions) string {
@@ -480,8 +513,10 @@ func environmentText(environment *EnvironmentFingerprint) string {
 	text := "host " + cleanBlockText(&environment.HostName) + "; runtime " +
 		cleanBlockText(&environment.RuntimeVersion) + "; os " + cleanBlockText(&environment.OperatingSystem) +
 		"; application version " + cleanBlockText(environment.ApplicationVersion)
-	for _, key := range sortedKeys(environment.Metadata) {
-		value := environment.Metadata[key]
+	// The run's model is bookkeeping (ModelMetadataKey): the block never shows it.
+	metadata := withoutModel(environment.Metadata)
+	for _, key := range sortedKeys(metadata) {
+		value := metadata[key]
 		text += "; " + cleanBlockText(&key) + " " + cleanBlockText(&value)
 	}
 	return text
@@ -510,6 +545,7 @@ func attemptLines(record *ExperienceRecord, options *BlockOptions) string {
 		}
 		fmt.Fprintf(&text, "  - %d %s\n", first, noun)
 	}
+	worked := record.Outcome.Status == VerificationVerified && attempts[len(attempts)-1].Error == nil
 	for i := first; i < len(attempts); i++ {
 		attempt := &attempts[i]
 		calls, clamped := orderedCalls(attempt)
@@ -517,10 +553,14 @@ func attemptLines(record *ExperienceRecord, options *BlockOptions) string {
 		if attempt.Error != nil {
 			outcome = failure(*attempt.Error, options.FailureDetail)
 		}
-		fmt.Fprintf(&text, "  - attempt %d: %s%s%s\n", attempt.SequenceNumber, callsText(calls, clamped, options),
-			outcomeSeparator, outcome)
+		var recipe []string // Only the attempt the Worked: line names shows recipe excerpts (contract 1.19).
+		if worked && i == len(attempts)-1 {
+			recipe = options.RecipeExcerpts
+		}
+		fmt.Fprintf(&text, "  - attempt %d: %s%s%s\n", attempt.SequenceNumber,
+			callsText(calls, clamped, options, recipe), outcomeSeparator, outcome)
 	}
-	if record.Outcome.Status == VerificationVerified && attempts[len(attempts)-1].Error == nil {
+	if worked {
 		fmt.Fprintf(&text, "Worked: attempt %d%s\n", attempts[len(attempts)-1].SequenceNumber, workedSuffix)
 	}
 	return text.String()
@@ -556,7 +596,7 @@ type argumentBudget struct {
 	exhausted bool
 }
 
-func callsText(calls []ToolCall, clamped bool, options *BlockOptions) string {
+func callsText(calls []ToolCall, clamped bool, options *BlockOptions, recipe []string) string {
 	if len(calls) == 0 {
 		return noToolCalled
 	}
@@ -570,7 +610,11 @@ func callsText(calls []ToolCall, clamped bool, options *BlockOptions) string {
 				step += "(" + shown + ")"
 			}
 		}
-		steps[i] = step + " " + callOutcome(call.Error, options.FailureDetail)
+		marker, ok := recipeMarker(call, recipe)
+		if !ok {
+			marker = callOutcome(call.Error, options.FailureDetail)
+		}
+		steps[i] = step + " " + marker
 	}
 	text := strings.Join(steps, toolSeparator)
 	if clamped {
@@ -580,6 +624,22 @@ func callsText(calls []ToolCall, clamped bool, options *BlockOptions) string {
 		text += attemptArgsClamped
 	}
 	return text
+}
+
+// recipeMarker is a call's [returned: "<excerpt>"] marker (contract 1.19): only for a call that recorded no error,
+// whose tool the recipe allowlist names and whose stored excerpt is not blank, quoted like an argument string value but
+// cut to maxRecipeExcerptLength.
+func recipeMarker(call *ToolCall, recipe []string) (string, bool) {
+	if call.Error != nil || call.RecipeExcerpt == nil || isNullOrWhitespace(*call.RecipeExcerpt) ||
+		!slices.Contains(recipe, call.ToolName) {
+		return "", false
+	}
+	q := quoted(*call.RecipeExcerpt, maxRecipeExcerptLength)
+	// An excerpt of only invisible characters is empty once cleaned: the call keeps its [returned] marker.
+	if q == `""` {
+		return "", false
+	}
+	return callReturnedExcerpt + q + callMarkerEnd, true
 }
 
 func callOutcome(err *string, detail FailureDetail) string {

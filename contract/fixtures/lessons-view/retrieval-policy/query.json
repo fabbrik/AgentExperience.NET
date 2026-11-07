@@ -1,0 +1,17 @@
+{
+  "description": "A retrieval policy with a 0.7 confidence floor and a 30-day MaxAge: a lesson below the floor is BelowConfidenceFloor, naming the floor; one whose last activity is more than 30 days before the page's clock is Expired; status comes first, then the floor, then the age; exactly at the floor and exactly 30 days old is eligible.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "statuses": null,
+  "limit": 50,
+  "includeIneligible": true,
+  "now": "2026-03-02T15:00:00+00:00",
+  "minimumConfidence": 0.7,
+  "maxAgeTicks": 25920000000000
+}

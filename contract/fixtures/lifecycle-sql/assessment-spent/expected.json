@@ -1,0 +1,144 @@
+{
+  "results": [
+    {
+      "outcome": "Committed",
+      "revision": 2,
+      "currentStatus": null,
+      "errors": [],
+      "appliedConfidence": {
+        "evidenceId": "00001162-0000-4000-8000-000000005101",
+        "kind": "Supporting",
+        "source": "Human",
+        "runId": "00001162-0000-4000-8000-000000005a01",
+        "verificationRoundId": null,
+        "reviewerIdentity": "reviewer-1",
+        "ruleVersion": "1.0.0",
+        "priorReuseConfidence": 0.6666666666666666,
+        "newReuseConfidence": 0.75,
+        "priorSupportingValidations": 1,
+        "newSupportingValidations": 2,
+        "priorContradictions": 0,
+        "newContradictions": 0,
+        "detail": null,
+        "assessmentId": "00001162-0000-4000-8000-000000005c01",
+        "admission": "Verified",
+        "counted": true
+      }
+    },
+    {
+      "outcome": "Conflict",
+      "revision": 0,
+      "currentStatus": null,
+      "errors": [
+        {
+          "path": "Confidence.AssessmentId",
+          "message": "this assessment has already landed evidence for this record under another evidence ID."
+        }
+      ],
+      "appliedConfidence": null
+    },
+    {
+      "outcome": "Committed",
+      "revision": 2,
+      "currentStatus": "Validated",
+      "errors": [],
+      "appliedConfidence": {
+        "evidenceId": "00001162-0000-4000-8000-000000005101",
+        "kind": "Supporting",
+        "source": "Human",
+        "runId": "00001162-0000-4000-8000-000000005a01",
+        "verificationRoundId": null,
+        "reviewerIdentity": "reviewer-1",
+        "ruleVersion": "1.0.0",
+        "priorReuseConfidence": 0.6666666666666666,
+        "newReuseConfidence": 0.75,
+        "priorSupportingValidations": 1,
+        "newSupportingValidations": 2,
+        "priorContradictions": 0,
+        "newContradictions": 0,
+        "detail": null,
+        "assessmentId": "00001162-0000-4000-8000-000000005c01",
+        "admission": "Verified",
+        "counted": true
+      }
+    }
+  ],
+  "experience_records": [
+    {
+      "experience_id": "00001162-0000-4000-8000-000000000050",
+      "status": "Validated",
+      "reuse_confidence": "0.75",
+      "supporting_validations": "2",
+      "contradictions": "0",
+      "revision": "2",
+      "updated_at": "2026-03-02 11:00:00+00",
+      "deleted_at": null
+    }
+  ],
+  "lifecycle_events": [
+    {
+      "event_id": "00001162-0000-4000-8000-000000005001",
+      "experience_id": "00001162-0000-4000-8000-000000000050",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "refund-agent",
+      "user_id": null,
+      "prior_status": "Validated",
+      "current_status": "Validated",
+      "reason": "Validated to Validated.",
+      "producer": "governance-review/1.0",
+      "occurred_at": "2026-03-02 09:00:00+00",
+      "recorded_at": "2026-03-02 11:00:00+00",
+      "expected_revision": "1",
+      "applied_revision": "2",
+      "replacement_experience_id": null,
+      "actor": "reviewer-1",
+      "confidence_evidence_id": "00001162-0000-4000-8000-000000005101",
+      "confidence_kind": "Supporting",
+      "confidence_source": "Human",
+      "confidence_run_id": "00001162-0000-4000-8000-000000005a01",
+      "confidence_verification_round_id": null,
+      "confidence_reviewer_identity": "reviewer-1",
+      "confidence_rule_version": "1.0.0",
+      "confidence_detail": null,
+      "prior_reuse_confidence": "0.6666666666666666",
+      "new_reuse_confidence": "0.75",
+      "prior_supporting_validations": "1",
+      "new_supporting_validations": "2",
+      "prior_contradictions": "0",
+      "new_contradictions": "0",
+      "confidence_assessment_id": "00001162-0000-4000-8000-000000005c01",
+      "confidence_admission": "Verified"
+    }
+  ],
+  "confidence_evidence": [
+    {
+      "evidence_id": "00001162-0000-4000-8000-000000005101",
+      "experience_id": "00001162-0000-4000-8000-000000000050",
+      "event_id": "00001162-0000-4000-8000-000000005001",
+      "kind": "Supporting",
+      "source": "Human",
+      "run_id": "00001162-0000-4000-8000-000000005a01",
+      "verification_round_id": null,
+      "reviewer_identity": "reviewer-1",
+      "counted": "true",
+      "actor": "reviewer-1",
+      "rule_version": "1.0.0",
+      "detail": null,
+      "recorded_at": "2026-03-02 11:00:00+00",
+      "applied_revision": "2",
+      "applied_status": "Validated",
+      "prior_reuse_confidence": "0.6666666666666666",
+      "new_reuse_confidence": "0.75",
+      "prior_supporting_validations": "1",
+      "new_supporting_validations": "2",
+      "prior_contradictions": "0",
+      "new_contradictions": "0",
+      "assessment_id": "00001162-0000-4000-8000-000000005c01",
+      "admission": "Verified",
+      "independence_key": "human:reviewer-1:00001162-0000-4000-8000-000000005a01"
+    }
+  ]
+}

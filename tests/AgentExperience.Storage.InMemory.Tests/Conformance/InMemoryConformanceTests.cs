@@ -42,3 +42,16 @@ public sealed class InMemoryEmbeddingIndexConformanceTests : EmbeddingIndexConfo
 
     protected override IExperienceEmbeddingIndex CreateEmbeddingIndex() => new InMemoryExperienceEmbeddingIndex(_records);
 }
+
+/// <summary>
+/// Story 28.2: <see cref="InMemoryExperienceSignatureSource"/> passes the signature-source conformance suite, over the very
+/// <see cref="InMemoryExperienceRecordStore"/> the suite seeds through.
+/// </summary>
+public sealed class InMemorySignatureSourceConformanceTests : SignatureSourceConformanceTests
+{
+    private readonly InMemoryExperienceRecordStore _records = new();
+
+    protected override IExperienceRecordStore CreateRecordStore() => _records;
+
+    protected override IExperienceSignatureSource CreateSignatureSource() => new InMemoryExperienceSignatureSource(_records);
+}

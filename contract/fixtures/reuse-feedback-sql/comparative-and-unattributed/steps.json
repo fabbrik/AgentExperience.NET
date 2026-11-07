@@ -1,0 +1,294 @@
+{
+  "description": "A comparative submission stores its evaluator, round and evidence IDs (in the order given); an unattributed one stores benefit Unknown, source None and every attribution column NULL, the caller's claim beside it. Each is replayed by resubmitting it.",
+  "steps": [
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001172-0000-4000-8000-00000000f011",
+          "runId": "00001172-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Failed",
+          "claimedBenefit": "Unknown",
+          "benefit": "Harmed",
+          "attributionSource": "ComparativeEvaluation",
+          "reviewerIdentity": null,
+          "evaluatorId": "comparative-evaluator/2.0",
+          "verificationRoundId": "00001172-0000-4000-8000-000000005200",
+          "assessmentId": null,
+          "rationale": "Runs with the lesson needed more tool calls.",
+          "evidenceIds": [
+            "00001172-0000-4000-8000-00000000e002",
+            "00001172-0000-4000-8000-00000000e001"
+          ],
+          "attributedAt": "2026-03-02T09:40:00+00:00",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 12
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000022",
+              "attributed": true,
+              "evidenceId": "016ffe26-6ef9-87b7-bcc5-ae8f33c15d43"
+            },
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000020",
+              "attributed": true,
+              "evidenceId": "6d7d5de7-5f26-8165-be76-d81da3e6d795"
+            },
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000021",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T13:00:00+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001172-0000-4000-8000-00000000f012",
+          "runId": "00001172-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Unknown",
+          "claimedBenefit": "Harmed",
+          "benefit": "Unknown",
+          "attributionSource": "None",
+          "reviewerIdentity": null,
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": null,
+          "rationale": null,
+          "evidenceIds": [],
+          "attributedAt": null,
+          "measure": {
+            "kind": "wall-clock-ms",
+            "value": -0.125
+          },
+          "trialLabel": "memory-disabled",
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000020",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T13:01:00.0000003+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001172-0000-4000-8000-00000000f011",
+          "runId": "00001172-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Failed",
+          "claimedBenefit": "Unknown",
+          "benefit": "Harmed",
+          "attributionSource": "ComparativeEvaluation",
+          "reviewerIdentity": null,
+          "evaluatorId": "comparative-evaluator/2.0",
+          "verificationRoundId": "00001172-0000-4000-8000-000000005200",
+          "assessmentId": null,
+          "rationale": "Runs with the lesson needed more tool calls.",
+          "evidenceIds": [
+            "00001172-0000-4000-8000-00000000e002",
+            "00001172-0000-4000-8000-00000000e001"
+          ],
+          "attributedAt": "2026-03-02T09:40:00+00:00",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 12
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000021",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000020",
+              "attributed": true,
+              "evidenceId": "6d7d5de7-5f26-8165-be76-d81da3e6d795"
+            },
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000022",
+              "attributed": true,
+              "evidenceId": "016ffe26-6ef9-87b7-bcc5-ae8f33c15d43"
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T13:02:00.0000006+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001172-0000-4000-8000-00000000f012",
+          "runId": "00001172-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Unknown",
+          "claimedBenefit": "Harmed",
+          "benefit": "Unknown",
+          "attributionSource": "None",
+          "reviewerIdentity": null,
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": null,
+          "rationale": null,
+          "evidenceIds": [],
+          "attributedAt": null,
+          "measure": {
+            "kind": "wall-clock-ms",
+            "value": -0.125
+          },
+          "trialLabel": "memory-disabled",
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000020",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T13:03:00.0000009+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001172-0000-4000-8000-00000000f011",
+          "runId": "00001172-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Failed",
+          "claimedBenefit": "Unknown",
+          "benefit": "Harmed",
+          "attributionSource": "ComparativeEvaluation",
+          "reviewerIdentity": null,
+          "evaluatorId": "comparative-evaluator/2.0",
+          "verificationRoundId": "00001172-0000-4000-8000-000000005200",
+          "assessmentId": null,
+          "rationale": "Runs with the lesson needed more tool calls.",
+          "evidenceIds": [
+            "00001172-0000-4000-8000-00000000e001",
+            "00001172-0000-4000-8000-00000000e002"
+          ],
+          "attributedAt": "2026-03-02T09:40:00+00:00",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 12
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000022",
+              "attributed": true,
+              "evidenceId": "016ffe26-6ef9-87b7-bcc5-ae8f33c15d43"
+            },
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000020",
+              "attributed": true,
+              "evidenceId": "6d7d5de7-5f26-8165-be76-d81da3e6d795"
+            },
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000021",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T13:04:00.0000012+00:00"
+    }
+  ]
+}

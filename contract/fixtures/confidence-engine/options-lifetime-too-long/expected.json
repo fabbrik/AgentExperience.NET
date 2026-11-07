@@ -1,0 +1,8 @@
+{
+  "accepted": false,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "options",
+    "message": "ExperienceIndependenceOptions.AssessmentTokenLifetime must be strictly positive and at most 30.00:00:00."
+  }
+}

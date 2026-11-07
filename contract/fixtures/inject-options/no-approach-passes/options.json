@@ -1,0 +1,28 @@
+{
+  "description": "A record with no approach has nothing to gate and passes: one that did not verify, one whose final attempt failed, and one whose attempt numbers repeat. A verified approach calling an unavailable tool is still omitted.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": {
+    "availableTools": [
+      "read_ledger"
+    ],
+    "maxRiskClass": null,
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": false,
+    "gatedRetrievalWindowMultiplier": 4
+  },
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
+}

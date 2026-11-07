@@ -299,10 +299,13 @@ public class ContractShapeTests
     {
         var methods = typeof(IExperienceRecordStore).GetMethods().Where(m => !m.IsSpecialName).OrderBy(m => m.Name, StringComparer.Ordinal).ToList();
 
-        // The one property: whether the store tracks injections, false unless a store says otherwise (story 21.8).
-        var tracks = Assert.Single(typeof(IExperienceRecordStore).GetProperties());
-        Assert.Equal(nameof(IExperienceRecordStore.TracksInjections), tracks.Name);
-        Assert.False(tracks.GetMethod!.IsAbstract);
+        // The three properties: whether the store tracks injections (story 21.8), holdout assignments (story 25.1) and
+        // another memory provider's holdout assignments (story 25.8), false unless a store says otherwise.
+        var properties = typeof(IExperienceRecordStore).GetProperties().OrderBy(p => p.Name, StringComparer.Ordinal).ToList();
+        Assert.Equal(
+            [nameof(IExperienceRecordStore.TracksHoldout), nameof(IExperienceRecordStore.TracksInjections), nameof(IExperienceRecordStore.TracksProviderHoldout)],
+            properties.Select(p => p.Name));
+        Assert.All(properties, property => Assert.False(property.GetMethod!.IsAbstract));
 
         // Two GetAsync overloads: the plain read, and the one that also says what the caller will do
         // with the record. Only auditing looks at the difference, so the second has a default
@@ -310,13 +313,18 @@ public class ContractShapeTests
         Assert.Equal(
             [
                 "CheckSupersessionAsync", "CommitLifecycleEventAsync", "CreateAsync", "GetAsync", "GetAsync", "GetHistoryAsync", "GetManyAsync",
-                "QueryAsync", "QueryWithInjectionsAsync", "RecordInjectionAsync",
+                "QueryAsync", "QueryHoldoutOutcomesAsync", "QueryProviderHoldoutOutcomesAsync", "QueryWithInjectionsAsync",
+                "RecordHoldoutAssignmentAsync", "RecordInjectionAsync", "RecordProviderHoldoutAssignmentAsync",
             ],
             methods.Select(m => m.Name));
 
         // The lessons view's injection read and the provider's injection write both have default implementations, so an
-        // existing store keeps compiling (and reads as not tracking injections); override all three or none.
-        Assert.All(methods.Where(m => m.Name is "QueryWithInjectionsAsync" or "RecordInjectionAsync"), method => Assert.False(method.IsAbstract));
+        // existing store keeps compiling (and reads as not tracking injections); override all three or none. The holdout's
+        // write and read (stories 25.1 and 25.2), and the provider holdout's (story 25.8), have defaults for the same reason.
+        Assert.All(
+            methods.Where(m => m.Name is "QueryWithInjectionsAsync" or "RecordInjectionAsync" or "RecordHoldoutAssignmentAsync" or "QueryHoldoutOutcomesAsync"
+                or "RecordProviderHoldoutAssignmentAsync" or "QueryProviderHoldoutOutcomesAsync"),
+            method => Assert.False(method.IsAbstract));
         Assert.All(methods, method =>
         {
             var parameters = method.GetParameters();
@@ -357,6 +365,32 @@ public class ContractShapeTests
 
         Assert.Equal(typeof(Task<ExperienceRecordQueryResult>), methods[7].ReturnType);
         Assert.Equal([typeof(AuthorizationContext), typeof(ExperienceRecordQuery), typeof(CancellationToken)], methods[7].GetParameters().Select(p => p.ParameterType));
+
+        Assert.Equal(typeof(Task<HoldoutOutcomeQueryResult>), methods[8].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(HoldoutOutcomeQuery), typeof(CancellationToken)], methods[8].GetParameters().Select(p => p.ParameterType));
+
+        Assert.Equal(typeof(Task<ProviderHoldoutOutcomeQueryResult>), methods[9].ReturnType);
+        Assert.Equal([typeof(AuthorizationContext), typeof(ProviderHoldoutOutcomeQuery), typeof(CancellationToken)], methods[9].GetParameters().Select(p => p.ParameterType));
+        Assert.Equal(typeof(Task<ExperienceHoldoutRecordResult>), methods[13].ReturnType);
+        Assert.Equal(
+            [typeof(AuthorizationContext), typeof(Scope), typeof(ProviderHoldoutAssignment), typeof(CancellationToken)],
+            methods[13].GetParameters().Select(p => p.ParameterType));
+    }
+
+    // Story 25.8: the provider key's shape, which the wrapper, the stores and 0029's check constraint all enforce.
+    [Theory]
+    [InlineData("mem0", true)]
+    [InlineData("Zep_v2.1-eu", true)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    [InlineData("a b", false)]
+    [InlineData("mem0/v2", false)]
+    [InlineData("mémoire", false)]
+    public void A_provider_key_is_ascii_letters_digits_dots_underscores_and_hyphens(string? key, bool valid)
+    {
+        Assert.Equal(valid, ProviderHoldoutAssignment.IsValidProviderKey(key));
+        Assert.True(ProviderHoldoutAssignment.IsValidProviderKey(new string('k', ProviderHoldoutAssignment.MaxProviderKeyLength)));
+        Assert.False(ProviderHoldoutAssignment.IsValidProviderKey(new string('k', ProviderHoldoutAssignment.MaxProviderKeyLength + 1)));
     }
 
     // Story 5.6: the embedding port's batch call is additive, so a generator written before it still compiles.

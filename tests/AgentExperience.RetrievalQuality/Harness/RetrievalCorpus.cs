@@ -52,6 +52,34 @@ internal sealed record CorpusRecord(
 internal sealed record CorpusQuery(string Id, string Category, string Text, IReadOnlyList<string> Expected);
 
 /// <summary>
+/// Story 28.2: one failed tool call a corpus record holds, as <c>Corpus/signatures.json</c> states it. The record's run
+/// was verified; when <paramref name="Resolved"/> a second attempt's call to the same tool succeeded after it.
+/// </summary>
+/// <param name="Record">The corpus record that holds the failure.</param>
+/// <param name="Tool">The failed call's tool name.</param>
+/// <param name="Error">The failed call's error text, as a sanitized capture would hold it.</param>
+/// <param name="Resolved">Whether a later call succeeded.</param>
+internal sealed record CorpusFailure(string Record, string Tool, string Error, bool Resolved);
+
+/// <summary>
+/// Story 28.2: one labelled signature query: a failure seen in a sibling run, with its own paths, numbers and IDs, and
+/// the records that hold the same failure.
+/// </summary>
+/// <param name="Id">The query's name in the report.</param>
+/// <param name="Tool">The failed call's tool name.</param>
+/// <param name="Error">The failed call's error text.</param>
+/// <param name="Expected">The records holding the same failure. Empty when no record does: then any hit is a false positive.</param>
+internal sealed record CorpusSignatureQuery(string Id, string Tool, string Error, IReadOnlyList<string> Expected)
+{
+    /// <summary>The signature the query looks up.</summary>
+    public ExperienceFailureSignature Signature => ExperienceFailureSignature.From(Tool, Error)
+        ?? throw new InvalidDataException($"signature query {Id} has no signature");
+
+    /// <summary>The query as a text query, for the shared metrics: its tool and error's first line, and its labels.</summary>
+    public CorpusQuery AsQuery() => new(Id, "signature", Tool + ": " + Error.Split('\n')[0], Expected);
+}
+
+/// <summary>
 /// The checked-in corpus: experience records in five task families, distractors that share some of their words, and
 /// ineligible records no search may return, with queries labelled by category and by the records they should find.
 /// </summary>
@@ -84,11 +112,23 @@ internal sealed class RetrievalCorpus
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
 
-    private RetrievalCorpus(IReadOnlyList<CorpusRecord> records, IReadOnlyList<CorpusQuery> queries)
+    private RetrievalCorpus(
+        IReadOnlyList<CorpusRecord> records,
+        IReadOnlyList<CorpusQuery> queries,
+        IReadOnlyList<CorpusFailure> failures,
+        IReadOnlyList<CorpusSignatureQuery> signatureQueries)
     {
         Records = records;
         Queries = queries;
+        Failures = failures;
+        SignatureQueries = signatureQueries;
     }
+
+    /// <summary>Story 28.2: the failed calls corpus records hold, in file order.</summary>
+    public IReadOnlyList<CorpusFailure> Failures { get; }
+
+    /// <summary>Story 28.2: the signature queries, in file order.</summary>
+    public IReadOnlyList<CorpusSignatureQuery> SignatureQueries { get; }
 
     /// <summary>The records, in file order.</summary>
     public IReadOnlyList<CorpusRecord> Records { get; }
@@ -111,7 +151,11 @@ internal sealed class RetrievalCorpus
         var queries = Read<QueriesFile>("AgentExperience.RetrievalQuality.Corpus.queries.json").Queries
             ?? throw new InvalidDataException("queries.json has no \"queries\" array.");
 
-        var corpus = new RetrievalCorpus(records, queries);
+        var signatures = Read<SignaturesFile>("AgentExperience.RetrievalQuality.Corpus.signatures.json");
+        var failures = signatures.Failures ?? throw new InvalidDataException("signatures.json has no \"failures\" array.");
+        var signatureQueries = signatures.Queries ?? throw new InvalidDataException("signatures.json has no \"queries\" array.");
+
+        var corpus = new RetrievalCorpus(records, queries, failures, signatureQueries);
         corpus.Check();
         return corpus;
     }
@@ -169,6 +213,24 @@ internal sealed class RetrievalCorpus
             problems.AddRange(query.Expected.GroupBy(id => id).Where(g => g.Count() > 1).Select(g => $"query {query.Id} expects {g.Key} twice"));
         }
 
+        var ids = Records.Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
+        problems.AddRange(Failures.Where(f => !ids.Contains(f.Record)).Select(f => $"failure of {f.Record} names no record"));
+        problems.AddRange(Failures.GroupBy(f => f.Record).Where(g => g.Count() > 1).Select(g => $"record {g.Key} holds {g.Count()} failures"));
+        problems.AddRange(Failures.Where(f => ExperienceFailureSignature.From(f.Tool, f.Error) is null).Select(f => $"failure of {f.Record} has no signature"));
+        problems.AddRange(SignatureQueries.GroupBy(q => q.Id).Where(g => g.Count() > 1).Select(g => $"signature query {g.Key} appears {g.Count()} times"));
+        foreach (var query in SignatureQueries)
+        {
+            if (ExperienceFailureSignature.From(query.Tool, query.Error) is null || query.Expected is null)
+            {
+                problems.Add($"signature query {query.Id} has no signature or no labels");
+                continue;
+            }
+
+            problems.AddRange(query.Expected
+                .Where(id => !eligible.Contains(id) || !Failures.Any(f => f.Record == id && f.Tool == query.Tool))
+                .Select(id => $"signature query {query.Id} expects {id}, which is not an eligible record holding a {query.Tool} failure"));
+        }
+
         if (problems.Count > 0)
         {
             throw new InvalidDataException("The retrieval-quality corpus is malformed:\n" + string.Join("\n", problems));
@@ -186,4 +248,6 @@ internal sealed class RetrievalCorpus
     private sealed record RecordsFile(IReadOnlyList<CorpusRecord>? Records);
 
     private sealed record QueriesFile(IReadOnlyList<CorpusQuery>? Queries);
+
+    private sealed record SignaturesFile(IReadOnlyList<CorpusFailure>? Failures, IReadOnlyList<CorpusSignatureQuery>? Queries);
 }

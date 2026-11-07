@@ -1,0 +1,23 @@
+{
+  "providerKey": "zep",
+  "minimumRunsPerArm": 20,
+  "overall": {
+    "treatment": {
+      "runs": 17,
+      "successes": 11,
+      "rate": 0.6470588235294118
+    },
+    "holdout": {
+      "runs": 17,
+      "successes": 12,
+      "rate": 0.7058823529411765
+    },
+    "difference": -0.05882352941176472,
+    "lower": -0.34308616874411146,
+    "upper": 0.23885763730167436,
+    "verdict": "NoEvidence",
+    "unverified": 9,
+    "pending": 7,
+    "mixedArm": 0
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "minimumRunsPerArm": 20,
+  "overall": {
+    "treatment": {
+      "runs": 1,
+      "successes": 0,
+      "rate": 0
+    },
+    "holdout": {
+      "runs": 1,
+      "successes": 1,
+      "rate": 1
+    },
+    "difference": -1,
+    "lower": -1,
+    "upper": 0.12210872068194178,
+    "verdict": "NoEvidence",
+    "unverified": 1,
+    "pending": 0,
+    "mixedArm": 0
+  },
+  "lessons": [
+    {
+      "experienceId": "0000009d-0000-4000-8000-000000000001",
+      "comparison": {
+        "treatment": {
+          "runs": 1,
+          "successes": 0,
+          "rate": 0
+        },
+        "holdout": {
+          "runs": 1,
+          "successes": 1,
+          "rate": 1
+        },
+        "difference": -1,
+        "lower": -1,
+        "upper": 0.12210872068194178,
+        "verdict": "NoEvidence",
+        "unverified": 1,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": null
+    },
+    {
+      "experienceId": "0000009d-0000-4000-8000-000000000002",
+      "comparison": {
+        "treatment": {
+          "runs": 1,
+          "successes": 0,
+          "rate": 0
+        },
+        "holdout": {
+          "runs": 0,
+          "successes": 0,
+          "rate": null
+        },
+        "difference": null,
+        "lower": null,
+        "upper": null,
+        "verdict": "NoEvidence",
+        "unverified": 1,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": null
+    },
+    {
+      "experienceId": "0000009d-0000-4000-8000-000000000003",
+      "comparison": {
+        "treatment": {
+          "runs": 1,
+          "successes": 0,
+          "rate": 0
+        },
+        "holdout": {
+          "runs": 1,
+          "successes": 1,
+          "rate": 1
+        },
+        "difference": -1,
+        "lower": -1,
+        "upper": 0.12210872068194178,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": null
+    }
+  ],
+  "byConsumingModel": null
+}

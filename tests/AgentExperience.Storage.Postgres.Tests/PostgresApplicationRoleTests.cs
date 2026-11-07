@@ -48,6 +48,9 @@ public sealed class PostgresApplicationRoleTests
         "reuse_feedback_exposures",
         "experience_grant_access",
         "experience_injections",
+        "experience_holdout_assignments",
+        "experience_provider_holdout_assignments",
+        "experience_failure_signatures",
     ];
 
     private static readonly string[] PurgeSignatures =
@@ -96,8 +99,10 @@ public sealed class PostgresApplicationRoleTests
         var tableGrants = await OwnerRowsAsync(
             "SELECT table_name || ':' || privilege_type FROM information_schema.role_table_grants " +
             $"WHERE grantee = '{App}' AND table_schema = 'agent_experience' ORDER BY 1");
+        // Story 28.7: the run store's table is not a ledger: a stored run is deleted after finalization or a retention.
         var expectedTableGrants = GuardedTables
             .SelectMany(t => new[] { $"{t}:INSERT", $"{t}:SELECT" })
+            .Concat(["experience_runs:DELETE", "experience_runs:INSERT", "experience_runs:SELECT"])
             .Order(StringComparer.Ordinal);
         Assert.Equal(expectedTableGrants, tableGrants.Order(StringComparer.Ordinal));
 
@@ -117,6 +122,7 @@ public sealed class PostgresApplicationRoleTests
                 "experience_records.status",
                 "experience_records.supporting_validations",
                 "experience_records.updated_at",
+                "experience_runs.finalized_at",
             ],
             updatable.Order(StringComparer.Ordinal));
 

@@ -1,0 +1,185 @@
+{
+  "description": "The erasure trigger: erasing a record removes the rows of the run it was captured from (its source_run_id), in its own tenant only, and only when no live record of that run remains there. Erasing one of run A's two records keeps its rows (run D ends that way); erasing the second removes them, every key. Erasing another tenant's record of run B removes that tenant's row only. Erasing a record that is no run's leaves every row. The late-write guard: a write for a run whose own record is being erased waits for the erasure, then records nothing.",
+  "steps": [
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d5-0000-4000-8000-000000000901",
+        "providerKey": "mem0",
+        "arm": "Treatment",
+        "assignedAt": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d5-0000-4000-8000-000000000901",
+        "providerKey": "zep",
+        "arm": "Holdout",
+        "assignedAt": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d5-0000-4000-8000-000000000902",
+        "providerKey": "mem0",
+        "arm": "Holdout",
+        "assignedAt": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant-2",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d5-0000-4000-8000-000000000902",
+        "providerKey": "mem0",
+        "arm": "Treatment",
+        "assignedAt": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "000000d5-0000-4000-8000-000000000904",
+        "providerKey": "mem0",
+        "arm": "Treatment",
+        "assignedAt": "2026-03-02T10:00:00+00:00"
+      }
+    },
+    {
+      "erase": {
+        "experienceId": "000000d5-0000-4000-8000-000000000001",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "deletedAt": "2026-03-02T11:00:00+00:00"
+      }
+    },
+    {
+      "erase": {
+        "experienceId": "000000d5-0000-4000-8000-000000000006",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "deletedAt": "2026-03-02T11:00:00+00:00"
+      }
+    },
+    {
+      "erase": {
+        "experienceId": "000000d5-0000-4000-8000-000000000004",
+        "scope": {
+          "tenantId": "contract-tenant-2",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "deletedAt": "2026-03-02T11:00:00+00:00"
+      }
+    },
+    {
+      "erase": {
+        "experienceId": "000000d5-0000-4000-8000-000000000007",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "deletedAt": "2026-03-02T11:00:00+00:00"
+      }
+    },
+    {
+      "erase": {
+        "experienceId": "000000d5-0000-4000-8000-000000000002",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "deletedAt": "2026-03-02T12:00:00+00:00"
+      }
+    },
+    {
+      "eraseDuringRecord": {
+        "erase": {
+          "experienceId": "000000d5-0000-4000-8000-000000000005",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "deletedAt": "2026-03-02T13:00:00+00:00"
+        },
+        "record": {
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runId": "000000d5-0000-4000-8000-000000000903",
+          "providerKey": "mem0",
+          "arm": "Treatment",
+          "assignedAt": "2026-03-02T13:00:00+00:00"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "description": "FailureDetail Excerpt: the failed attempt adds the error's first line, quoted; the failed call's marker is still the class's first token.",
+  "rendering": "Compact",
+  "failureDetail": "Excerpt",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": null,
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
+}

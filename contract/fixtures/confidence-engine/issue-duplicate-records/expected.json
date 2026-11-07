@@ -1,0 +1,11 @@
+{
+  "assessmentId": null,
+  "token": null,
+  "issuedAtUnixMs": null,
+  "expiresAtUnixMs": null,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "experienceIds",
+    "message": "The records must be distinct and non-empty."
+  }
+}

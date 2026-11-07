@@ -1,0 +1,18 @@
+{
+  "modelId": "gpt-4o-2024-08-06",
+  "messages": [
+    {
+      "role": "assistant",
+      "contents": [
+        {
+          "type": "text",
+          "text": "{\"lesson\":\"Wait for the refund lock.\",\"preconditions\":[\"Model precondition 1.\",\"Model precondition 2.\",\"Model precondition 3.\",\"Model precondition 4.\",\"Model precondition 5.\",\"Model precondition 6.\",\"Model precondition 7.\",\"Model precondition 8.\",\"Model precondition 9.\",\"Model precondition 10.\",\"Model precondition 11.\",\"Model precondition 12.\",\"Model precondition 13.\",\"Model precondition 14.\",\"Model precondition 15.\",\"Model precondition 16.\",\"Model precondition 17.\",\"Model precondition 18.\",\"Model precondition 19.\",\"Model precondition 20.\",\"Model precondition 21.\",\"Model precondition 22.\",\"Model precondition 23.\",\"Model precondition 24.\",\"Model precondition 25.\",\"Model precondition 26.\",\"Model precondition 27.\",\"Model precondition 28.\",\"Model precondition 29.\",\"Model precondition 30.\",\"Model precondition 31.\",\"Model precondition 32.\"],\"warnings\":[\"Model warning 1.\",\"Model warning 2.\",\"Model warning 3.\",\"Model warning 4.\",\"Model warning 5.\",\"Model warning 6.\",\"Model warning 7.\",\"Model warning 8.\",\"Model warning 9.\",\"Model warning 10.\",\"Model warning 11.\",\"Model warning 12.\",\"Model warning 13.\",\"Model warning 14.\",\"Model warning 15.\",\"Model warning 16.\",\"Model warning 17.\",\"Model warning 18.\",\"Model warning 19.\",\"Model warning 20.\",\"Model warning 21.\",\"Model warning 22.\",\"Model warning 23.\",\"Model warning 24.\",\"Model warning 25.\",\"Model warning 26.\",\"Model warning 27.\",\"Model warning 28.\",\"Model warning 29.\",\"Model warning 30.\",\"Model warning 31.\"]}",
+          "callId": null,
+          "name": null
+        }
+      ]
+    }
+  ],
+  "throws": false,
+  "delayMilliseconds": 0
+}

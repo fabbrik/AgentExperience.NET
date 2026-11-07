@@ -1,0 +1,15 @@
+{
+  "outcome": "Injected",
+  "messageRole": "User",
+  "retrievalRequest": {
+    "limit": null,
+    "excludeModelAuthored": true
+  },
+  "decisions": [],
+  "injected": [
+    "000000e1-0000-4000-8000-000000000001",
+    "000000e1-0000-4000-8000-000000000005"
+  ],
+  "byteCount": 1021,
+  "omitted": []
+}

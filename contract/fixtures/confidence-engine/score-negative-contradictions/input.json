@@ -1,0 +1,6 @@
+{
+  "description": "A negative contradiction count is refused, naming contradictions.",
+  "operation": "score",
+  "supportingValidations": 0,
+  "contradictions": -1
+}

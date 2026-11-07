@@ -50,13 +50,20 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     internal const string EventsTable = "agent_experience.experience_grant_events";
 
     /// <summary>
-    /// The grant columns every read selects, in the order <see cref="DecodeGrant"/> expects (ordinals 0-21).
+    /// The grant columns every insert names, and every read selects first, in the order <see cref="DecodeGrant"/>
+    /// expects (ordinals 0-21).
     /// </summary>
     private const string GrantColumns =
         "grant_id, experience_id, tenant_id, application_id, project_id, team_id, agent_id, user_id, " +
         "recipient_tenant_id, recipient_application_id, recipient_project_id, " +
         "recipient_team_id, recipient_agent_id, recipient_user_id, " +
         "reason, administrator_principal_id, issued_at, expires_at, revoked_at, revocation_reason, disclosure, approach_arguments";
+
+    /// <summary>
+    /// What every read of a grant row aliased <c>g</c> selects: <see cref="GrantColumns"/>, then (ordinal 22) its
+    /// recipe-excerpt consent (<c>0031</c>), read through <c>to_jsonb</c> so a schema without the column reads none.
+    /// </summary>
+    private const string GrantReadColumns = GrantColumns + ", " + GrantRecipeExcerptsCodec.Column;
 
     /// <summary>
     /// The conditional insert. The source row is the canonical record, matched on the exact owner
@@ -74,13 +81,22 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     /// column and is reported on the field the caller got wrong. Nothing is written either way.
     /// </para>
     /// </summary>
-    private static readonly string InsertGrantSql =
-        $"INSERT INTO {ExperienceRecordSql.GrantsTable} ({GrantColumns}) " +
+    private static readonly string InsertGrantSql = InsertGrant(withRecipeExcerpts: false);
+
+    /// <summary>
+    /// <see cref="InsertGrantSql"/> for a request that names recipe excerpts: the one statement that names <c>0031</c>'s
+    /// column, so every other grant is issued on a schema that has not reached it.
+    /// </summary>
+    private static readonly string InsertGrantWithRecipeExcerptsSql = InsertGrant(withRecipeExcerpts: true);
+
+    private static string InsertGrant(bool withRecipeExcerpts) =>
+        $"INSERT INTO {ExperienceRecordSql.GrantsTable} AS g ({GrantColumns}{(withRecipeExcerpts ? ", recipe_excerpts" : string.Empty)}) " +
         "SELECT @grant_id, r.experience_id, r.tenant_id, r.application_id, r.project_id, r.team_id, r.agent_id, r.user_id, " +
         "@recipient_tenant_id, @recipient_application_id, @recipient_project_id, " +
         "@recipient_team_id, @recipient_agent_id, @recipient_user_id, " +
         "@reason, @administrator_principal_id, now(), " +
-        "(CASE WHEN @expires_at <= now() + @max_lifetime::interval THEN @expires_at END), NULL, NULL, @disclosure, @approach_arguments " +
+        "(CASE WHEN @expires_at <= now() + @max_lifetime::interval THEN @expires_at END), NULL, NULL, @disclosure, @approach_arguments" +
+        (withRecipeExcerpts ? ", @recipe_excerpts " : " ") +
         $"FROM {ExperienceRecordSql.Table} r " +
         $"WHERE r.experience_id = @experience_id AND {ExperienceRecordSql.RecordScopePredicate} " +
         // An erased record is not a record a grant can name: there is nothing left to share, and a grant
@@ -91,7 +107,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         // See ExperienceRecordSql.RecordKeyShareLock.
         $"AND {ExperienceRecordSql.RecordLivePredicate} " +
         $"{ExperienceRecordSql.RecordKeyShareLock} " +
-        $"RETURNING {GrantColumns}";
+        $"RETURNING {GrantReadColumns}";
 
     /// <summary>
     /// The revocation. The <c>revoked_at IS NULL</c> guard and the owner-scope predicate live in the
@@ -99,12 +115,12 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
     /// and neither can rewrite history.
     /// </summary>
     private static readonly string RevokeGrantSql =
-        $"UPDATE {ExperienceRecordSql.GrantsTable} SET revoked_at = now(), revocation_reason = @reason " +
+        $"UPDATE {ExperienceRecordSql.GrantsTable} g SET revoked_at = now(), revocation_reason = @reason " +
         $"WHERE grant_id = @grant_id AND revoked_at IS NULL AND {ExperienceRecordSql.ScopePredicate} " +
-        $"RETURNING {GrantColumns}";
+        $"RETURNING {GrantReadColumns}";
 
     private static readonly string SelectGrantSql =
-        $"SELECT {GrantColumns} FROM {ExperienceRecordSql.GrantsTable} " +
+        $"SELECT {GrantReadColumns} FROM {ExperienceRecordSql.GrantsTable} g " +
         $"WHERE grant_id = @grant_id AND {ExperienceRecordSql.ScopePredicate}";
 
     /// <summary>
@@ -121,7 +137,7 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         "g.recipient_tenant_id, g.recipient_application_id, g.recipient_project_id, " +
         "g.recipient_team_id, g.recipient_agent_id, g.recipient_user_id, " +
         "g.reason, g.administrator_principal_id, g.issued_at, g.expires_at, g.revoked_at, g.revocation_reason, g.disclosure, " +
-        "g.approach_arguments";
+        "g.approach_arguments, " + GrantRecipeExcerptsCodec.Column;
 
     /// <summary>
     /// The grants over one record, driven from the record itself so that "no such record here" and
@@ -262,7 +278,11 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
 
         // The owner's allowlist is copied once, so what is validated is exactly what is serialized: a caller's
         // collection that changes, or enumerates differently, between the two passes cannot store unvalidated keys.
-        request = request with { ApproachArguments = GrantApproachArgumentsCodec.Snapshot(request.ApproachArguments) };
+        request = request with
+        {
+            ApproachArguments = GrantApproachArgumentsCodec.Snapshot(request.ApproachArguments),
+            RecipeExcerpts = GrantRecipeExcerptsCodec.Snapshot(request.RecipeExcerpts),
+        };
 
         var errors = ExperienceRecordValidator.ValidateGrantRequest(request, _policy, _timeProvider.GetUtcNow());
         if (errors.Count > 0)
@@ -313,7 +333,10 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
             ExperienceGrant? grant;
             try
             {
-                await using var insert = new NpgsqlCommand(InsertGrantSql, connection, transaction);
+                await using var insert = new NpgsqlCommand(
+                    request.RecipeExcerpts is null ? InsertGrantSql : InsertGrantWithRecipeExcerptsSql,
+                    connection,
+                    transaction);
                 var parameters = insert.Parameters;
                 parameters.Add(new NpgsqlParameter<Guid>("grant_id", request.GrantId));
                 parameters.Add(new NpgsqlParameter<Guid>("experience_id", request.ExperienceId));
@@ -341,6 +364,11 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
                         ? GrantApproachArgumentsCodec.Serialize(allowlist)
                         : DBNull.Value,
                 });
+                if (request.RecipeExcerpts is { } recipeExcerpts)
+                {
+                    // Story 28.4: the owner's recipe-excerpt consent, names only, so not sealed either.
+                    parameters.Add(new NpgsqlParameter("recipe_excerpts", NpgsqlDbType.Jsonb) { Value = GrantRecipeExcerptsCodec.Serialize(recipeExcerpts) });
+                }
 
                 grant = Open(await ReadOneAsync(insert, cancellationToken).ConfigureAwait(false), key);
             }
@@ -1027,5 +1055,11 @@ public sealed class PostgresExperienceGrantStore : IExperienceGrantStore
         ApproachArguments: reader.IsDBNull(21)
             ? null
             : GrantApproachArgumentsCodec.Parse(reader.GetString(21))
-                ?? throw new ExperienceStoreException("Stored sharing grant has a malformed argument allowlist."));
+                ?? throw new ExperienceStoreException("Stored sharing grant has a malformed argument allowlist."))
+    {
+        RecipeExcerpts = reader.FieldCount <= 22 || reader.IsDBNull(22)
+            ? null
+            : GrantRecipeExcerptsCodec.Parse(reader.GetString(22))
+                ?? throw new ExperienceStoreException("Stored sharing grant has a malformed recipe-excerpt consent."),
+    };
 }

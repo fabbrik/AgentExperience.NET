@@ -8,7 +8,7 @@ expected did not reach the agent, [Troubleshooting](troubleshooting.md) is the o
 AgentExperience.NET is a **preview**. Read [Known limits and documented boundaries](../known-limits.md) before you
 rely on any guarantee described here.
 
-These pages describe the `main` branch, which the published `0.1.0-preview.16` packages match; anything added to
+These pages describe the `main` branch, which the published `0.1.0-preview.17` packages match; anything added to
 `main` after that release is listed in the [changelog's Unreleased section](../../CHANGELOG.md#unreleased). Code snippets use
 placeholder variables (`authorization`, `scope`, `hostScope`, `sanitizationOptions`, `captureLimits`, `logger`, …)
 for values you build as in the [explicit wiring](deployment.md#explicit-wiring). The [quick start](../../README.md#quick-start)
@@ -37,6 +37,8 @@ And around the loop:
 | Making erasure reach backups, replicas and WAL | [Crypto-shredding](crypto-shredding.md) |
 | Why a lesson you expected never reached the agent | [Troubleshooting](troubleshooting.md) |
 | Wiring the services, the two database roles, and the trust boundary | [Deployment](deployment.md) |
+| Using the loop from any agent (a shell, or an MCP client) with the `aexp` tool | [CLI and MCP](cli-and-mcp.md) |
+| Learning from Claude Code sessions through hooks, with lessons synced into `CLAUDE.md` or `AGENTS.md` | [Claude Code](claude-code.md) |
 | The PostgreSQL schema, script by script, and how it is applied | [PostgreSQL schema](postgres-schema.md) |
 | What a Python or Go port must match to share lessons: the record format, the block, the task text and the search, with conformance fixtures | [The language-neutral contract](../../contract/README.md) |
 | Spans and metrics | [Telemetry contract](../telemetry.md) |

@@ -1,0 +1,12 @@
+{
+  "acceptsEvidence": true,
+  "statusAfter": "Contested",
+  "update": null,
+  "recordedOnly": null,
+  "independenceKey": null,
+  "refusal": {
+    "exception": "ArgumentOutOfRangeException",
+    "parameter": "record",
+    "message": null
+  }
+}

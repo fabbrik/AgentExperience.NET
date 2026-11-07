@@ -1,0 +1,9 @@
+{
+  "outcome": "Quarantined",
+  "reflectionFailure": {
+    "kind": "ToolCallAttempted",
+    "causeType": null,
+    "message": "The model's answer to the reflection request carried a tool call or tool result; a reflection never uses tools."
+  },
+  "screening": null
+}

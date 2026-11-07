@@ -1,0 +1,26 @@
+{
+  "description": "Near ties pinned to the bit: lesson 2 outranks lesson 1, and lesson 4 lesson 3, by one ulp of the score, against the experience-ID tie-break. A port reproduces the order only with .NET's arithmetic: recency 2^(-age / halfLife) as .NET's Math.Pow gives it for these inputs, each component's value times its weight rounded before it is added, and the five added in component order (relevance, confidence, recency, status, environment) starting from 0.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {},
+  "excludeModelAuthored": false,
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.5,
+    "maxAgeTicks": null,
+    "recencyHalfLifeTicks": 25920000000000,
+    "candidateLimit": 50,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": null
+  },
+  "confidenceDecay": null
+}

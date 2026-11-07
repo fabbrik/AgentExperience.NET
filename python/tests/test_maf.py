@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("agent_framework")
 
-from _maf import NEXT_TICKET, TICKET, ScriptedClient
+from _maf import NEXT_TICKET, TICKET, ScriptedClient, delivered
 from _sync import run
 from agent_framework import Agent, tool
 
@@ -62,7 +62,7 @@ class Host:
             agent,
             on_capture_failure=self.capture_failures.append,
             on_injection_failure=self.injection_failures.append,
-            on_injected=self.injections.append,
+            on_injected=delivered(self.injections.append),
             on_finalized=self.finalized.append,
             **options,
         )

@@ -1,0 +1,12 @@
+{
+  "acceptsEvidence": true,
+  "statusAfter": "Validated",
+  "update": null,
+  "recordedOnly": null,
+  "independenceKey": null,
+  "refusal": {
+    "exception": "InvalidOperationException",
+    "parameter": null,
+    "message": "The confidence engine 'low/1' returned -0.5, which is not a score in [0, 1]. Nothing was written."
+  }
+}

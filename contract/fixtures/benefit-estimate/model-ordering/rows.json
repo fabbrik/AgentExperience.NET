@@ -1,0 +1,293 @@
+{
+  "description": "Models are ordered ordinally by UTF-16 code unit: upper case before lower case, and an astral character (a surrogate pair) before a BMP character above U+D7FF such as U+FF41.",
+  "rows": [
+    {
+      "runId": "0000009f-0000-4000-8000-000000000101",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "alpha",
+      "lessonModel": "\uD83D\uDE00-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000101",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "alpha",
+      "lessonModel": "Zeta"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000102",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "\uD83D\uDE00-model",
+      "lessonModel": "Zeta"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000102",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "\uD83D\uDE00-model",
+      "lessonModel": "ａ-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000103",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "Zeta",
+      "lessonModel": "ａ-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000103",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "Zeta",
+      "lessonModel": "alpha"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000104",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:04:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "ａ-model",
+      "lessonModel": "alpha"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000104",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:04:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "ａ-model",
+      "lessonModel": "\uD83D\uDE00-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000105",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:05:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "alpha",
+      "lessonModel": "\uD83D\uDE00-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000105",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:05:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "alpha",
+      "lessonModel": "Zeta"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000106",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:06:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "\uD83D\uDE00-model",
+      "lessonModel": "Zeta"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000106",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:06:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "\uD83D\uDE00-model",
+      "lessonModel": "ａ-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000107",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:07:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "Zeta",
+      "lessonModel": "ａ-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000107",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:07:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "Zeta",
+      "lessonModel": "alpha"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000108",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:08:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "ａ-model",
+      "lessonModel": "alpha"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000108",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:08:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "ａ-model",
+      "lessonModel": "\uD83D\uDE00-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000109",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:09:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "alpha",
+      "lessonModel": "\uD83D\uDE00-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000109",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:09:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "alpha",
+      "lessonModel": "Zeta"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010a",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:10:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "\uD83D\uDE00-model",
+      "lessonModel": "Zeta"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010a",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:10:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "\uD83D\uDE00-model",
+      "lessonModel": "ａ-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010b",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:11:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "Zeta",
+      "lessonModel": "ａ-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010b",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:11:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "Zeta",
+      "lessonModel": "alpha"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010c",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:12:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "ａ-model",
+      "lessonModel": "alpha"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010c",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:12:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "ａ-model",
+      "lessonModel": "\uD83D\uDE00-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010d",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:13:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "alpha",
+      "lessonModel": "\uD83D\uDE00-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010d",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:13:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "alpha",
+      "lessonModel": "Zeta"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010e",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:14:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "\uD83D\uDE00-model",
+      "lessonModel": "Zeta"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010e",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:14:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "\uD83D\uDE00-model",
+      "lessonModel": "ａ-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010f",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:15:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "Zeta",
+      "lessonModel": "ａ-model"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-00000000010f",
+      "arm": "Holdout",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:15:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": "Zeta",
+      "lessonModel": "alpha"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000110",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:16:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "ａ-model",
+      "lessonModel": "alpha"
+    },
+    {
+      "runId": "0000009f-0000-4000-8000-000000000110",
+      "arm": "Treatment",
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:16:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": "ａ-model",
+      "lessonModel": "\uD83D\uDE00-model"
+    }
+  ]
+}

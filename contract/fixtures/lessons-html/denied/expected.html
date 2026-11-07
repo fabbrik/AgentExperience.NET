@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Agent experience lessons</title>
+<style>
+:root{color-scheme:light dark;--bg:#ffffff;--fg:#1b1f24;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--banner:#fff8c5;--banner-line:#d4a72c;--ok:#1a7f37;--warn:#9a6700;--bad:#cf222e}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--banner:#2e2a14;--banner-line:#9e7a1d;--ok:#3fb950;--warn:#d29922;--bad:#f85149}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:960px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:16px 0 4px}
+h2{font-size:1.05rem;margin:0;word-break:break-all}
+.banner{background:var(--banner);border:1px solid var(--banner-line);border-radius:6px;padding:8px 12px;margin-top:8px}
+.muted{color:var(--muted)}
+.lesson{border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:16px 0}
+.meta{display:flex;flex-wrap:wrap;gap:4px 16px;margin:6px 0;font-size:.9rem}
+.badge{display:inline-block;border:1px solid currentColor;border-radius:999px;padding:0 8px;font-size:.8rem}
+.eligible{color:var(--ok)}.ineligible,.warn{color:var(--warn)}.failed{color:var(--bad)}
+table{border-collapse:collapse;font-size:.9rem;margin:6px 0}
+th,td{border:1px solid var(--line);padding:2px 8px;text-align:left;word-break:break-all}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;font-size:.82rem}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}</style>
+</head>
+<body>
+<main>
+<p class="banner" role="note"><strong>Development view: these are the lessons stored in this scope. It discloses them, so serve it only behind your own authorization.</strong></p>
+<h1>What it learned</h1>
+<p class="muted">Scope: <code>tenant contract-tenant / application contract-app / project contract-project / team payments / agent refund-agent / user user-17</code> · read 2026-03-03 09:00:00 UTC</p>
+<p class="failed">The store answered <strong>Denied</strong>, so nothing is listed.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,72 @@
+{
+  "description": "One row per run and record: a run recorded again keeps its first rows (arm, revision and instant), whatever the later statement names; another run gets rows of its own. The instant is stored truncated to whole microseconds.",
+  "steps": [
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "00000070-0000-4000-8000-000000000901",
+        "arm": "Treatment",
+        "records": [
+          {
+            "experienceId": "00000070-0000-4000-8000-000000000001",
+            "revision": 1
+          },
+          {
+            "experienceId": "00000070-0000-4000-8000-000000000002",
+            "revision": 1
+          }
+        ],
+        "assignedAt": "2026-03-02T10:00:00.1234567+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "00000070-0000-4000-8000-000000000901",
+        "arm": "Holdout",
+        "records": [
+          {
+            "experienceId": "00000070-0000-4000-8000-000000000001",
+            "revision": 1
+          }
+        ],
+        "assignedAt": "2026-03-02T11:00:00+00:00"
+      }
+    },
+    {
+      "record": {
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runId": "00000070-0000-4000-8000-000000000902",
+        "arm": "Holdout",
+        "records": [
+          {
+            "experienceId": "00000070-0000-4000-8000-000000000001",
+            "revision": 1
+          }
+        ],
+        "assignedAt": "2026-03-02T09:30:00+00:00"
+      }
+    }
+  ]
+}

@@ -22,6 +22,10 @@ permissions:
 # ("toomanyrequests"), which fails every container-backed test at once. The images are the same as on Docker Hub.
 env:
   TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX: mirror.gcr.io
+  # The cross-language contract tests need all three toolchains, so only the cross-language-lifecycle job runs them
+  # (it sets both to 1). Everywhere else they are skipped on purpose: unset in CI, they fail rather than pass unrun.
+  AGENTEXPERIENCE_CROSS_LANGUAGE_RACE: '0'
+  AGENTEXPERIENCE_CROSS_LANGUAGE_REUSE_FEEDBACK: '0'
 
 jobs:
   build-and-test:
@@ -105,8 +109,8 @@ jobs:
           diff -u "$out/run-1.txt" "$out/run-2.txt"
           diff -u tests/AgentExperience.Sample.EndToEnd.Tests/GoldenTranscript.txt "$out/run-1.txt"
 
-  # Packs the six packages and asserts, from the built .nupkg and .snupkg files rather than from the csproj
-  # files: twelve artifacts at 0.1.0-preview.N, license/readme/tags/repository metadata, the exact dependency set
+  # Packs the eight packages (seven libraries and the aexp tool) and asserts, from the built .nupkg and .snupkg files rather than from the csproj
+  # files: sixteen artifacts at 0.1.0-preview.N, license/readme/tags/repository metadata, the exact dependency set
   # of each package (so Abstractions and Core carry no adapter dependency), and SourceLink-carrying,
   # deterministic symbols. The packages are uploaded as a workflow artifact for inspection. NOT published.
   pack:
@@ -441,7 +445,7 @@ jobs:
           test -n "$floor"
           uv pip install "agent-framework-core==$floor"
           uv run --no-sync python -c "import importlib.metadata as m; v = m.version('agent-framework-core'); assert v == '$floor', v; print('agent-framework-core', v)"
-          uv run --no-sync pytest -m "not postgres" tests/test_maf.py tests/test_quickstart.py tests/test_cross_language.py
+          uv run --no-sync pytest -m "not postgres" tests/test_maf.py tests/test_maf_holdout.py tests/test_maf_benefit.py tests/test_quickstart.py tests/test_cross_language.py tests/test_cross_language_holdout.py tests/test_maf_provider_holdout.py tests/test_cross_language_provider.py tests/test_maf_injection_options.py tests/test_chat_reflector.py tests/test_maf_reflection.py
 
       # The maf extra's ceiling: the same tests on the newest agent-framework-core PyPI serves, so a MAF release that breaks
       # the integration is seen in the next CI run (or the weekly one) and not by a user. The extra claims every later
@@ -452,7 +456,7 @@ jobs:
           set -euo pipefail
           uv pip install --upgrade "agent-framework-core"
           uv run --no-sync python -c "import importlib.metadata as m; print('agent-framework-core', m.version('agent-framework-core'))"
-          uv run --no-sync pytest -m "not postgres" tests/test_maf.py tests/test_quickstart.py tests/test_cross_language.py
+          uv run --no-sync pytest -m "not postgres" tests/test_maf.py tests/test_maf_holdout.py tests/test_maf_benefit.py tests/test_quickstart.py tests/test_cross_language.py tests/test_cross_language_holdout.py tests/test_maf_provider_holdout.py tests/test_cross_language_provider.py tests/test_maf_injection_options.py tests/test_chat_reflector.py tests/test_maf_reflection.py
 
       # The wheel, not the source tree: built, installed into a clean environment outside the checkout, and imported,
       # so the packaged SQL files and py.typed are proven to ship.
@@ -643,3 +647,85 @@ jobs:
           for module in ${{ matrix.modules }}; do
             (cd "$module" && go test -race -tags postgres ./...)
           done
+
+  # Story 27.6b (contract 1.16): the cross-language lifecycle race. A .NET, a Python and a Go writer commit a transition
+  # on the same record at the same revision, in one PostgreSQL database, all released together behind an advisory lock;
+  # exactly one commits per revision, the others are StaleRevision, and all three read the same history. It needs all
+  # three toolchains, so it is a job of its own; AgentExperience.Contract.Tests' CrossLanguageLifecycleRacePostgresTests
+  # runs only when AGENTEXPERIENCE_CROSS_LANGUAGE_RACE is 1, and passes without doing anything elsewhere.
+  cross-language-lifecycle:
+    runs-on: ubuntu-24.04
+    env:
+      AGENTEXPERIENCE_CROSS_LANGUAGE_RACE: '1'
+      AGENTEXPERIENCE_CROSS_LANGUAGE_REUSE_FEEDBACK: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Local development may roll forward (global.json: latestFeature). CI may not: the runner image ships
+      # newer SDK bands, which would otherwise win. Disabling roll-forward here makes setup-dotnet install,
+      # and the host select, exactly the pinned SDK. The working copy is the runner's; nothing is committed.
+      - name: Pin the SDK exactly (CI only)
+        run: |
+          sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
+          grep -q '"rollForward": "disable"' global.json
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      # Belt and braces after the pin above: a different SDK fails here instead of silently winning.
+      - name: Assert the exact pinned SDK
+        run: |
+          pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
+          actual="$(dotnet --version)"
+          test "$actual" = "$pinned" || { echo "::error::SDK $actual is in use, but global.json pins $pinned"; exit 1; }
+          echo "SDK $actual, as pinned"
+
+      - name: Setup uv and Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
+
+      - name: Install the Python package (locked)
+        working-directory: python
+        run: uv sync --locked --extra postgres
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+          cache-dependency-path: go/postgres/go.sum
+
+      - name: Build the Go writers
+        working-directory: go/postgres
+        run: go build ./internal/lifecyclerace ./internal/reusefeedback
+
+      - name: Restore
+        run: dotnet restore tests/AgentExperience.Contract.Tests --locked-mode
+
+      - name: Build
+        run: dotnet build tests/AgentExperience.Contract.Tests --no-restore --configuration Release
+
+      # Contract 1.16's race on one revision, and contract 1.17's reuse feedback from all three agents.
+      - name: Race .NET, Python and Go writers on one revision, and record their reuse feedback
+        run: >-
+          dotnet test tests/AgentExperience.Contract.Tests --no-build --configuration Release
+          --filter "FullyQualifiedName~CrossLanguageLifecycleRace|FullyQualifiedName~CrossLanguageReuseFeedback"
+          --logger "trx;LogFileName=race.trx" --results-directory race-results
+
+      # A filter that matches nothing exits 0, so both tests must be seen to have run and passed.
+      - name: Assert the race and the reuse feedback ran and passed
+        run: |
+          set -euo pipefail
+          trx="race-results/race.trx"
+          test -f "$trx" || { echo "::error::no test results at $trx"; exit 1; }
+          passed="$(grep -o '<Counters [^>]*' "$trx" | grep -o ' passed="[0-9]*"' | grep -o '[0-9]\+')"
+          test "${passed:-0}" -ge 2 || { echo "::error::the cross-language tests did not both run"; exit 1; }
+          echo "cross-language tests: $passed passed"

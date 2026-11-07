@@ -99,6 +99,8 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     private readonly ISanitizer _sanitizer;
     private readonly CaptureLimits _limits;
     private readonly TimeProvider _timeProvider;
+    private readonly IExperienceRunStore? _runStore;
+    private readonly ExperienceRunStoreOptions _runStoreOptions;
     private readonly ConcurrentDictionary<Guid, RunState> _runs = new();
 
     // Completed runs still held, earliest completion first. Guarded by _retentionGate, which is only ever
@@ -136,6 +138,50 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     /// <param name="limits">The positive capture limits this instance enforces.</param>
     /// <param name="timeProvider">The clock a completed run's age is measured on, against <see cref="CaptureLimits.CompletedRunRetention"/>.</param>
     public InMemoryExperienceCaptureService(ISanitizer sanitizer, CaptureLimits limits, TimeProvider timeProvider)
+        : this(sanitizer, limits, timeProvider, runStore: null)
+    {
+    }
+
+    /// <summary>Creates an <see cref="InMemoryExperienceCaptureService"/> that also keeps every run it completes in a run store.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Write-through, at completion.</b> When <see cref="CompleteRunAsync"/> records a completion -- or is called again
+    /// with the same completion event -- the completed run, already sanitized, is saved to <paramref name="runStore"/>
+    /// before the call returns, so a process that ends right after completing a run has kept it, and finalization can read
+    /// it in a later process. Nothing is written on the path of a tool call or an attempt. The save runs under an
+    /// authorization bounded to exactly the run's own scope.
+    /// </para>
+    /// <para>
+    /// <b>It never fails the run.</b> A save that throws or is refused leaves the completion standing and is reported on
+    /// the result (<see cref="CompleteRunResult.RunStoreFailure"/>); the MAF adapter reports it through its capture failure
+    /// callback. A run this service completes itself because it stayed open past <see cref="CaptureLimits.MaxOpenRunAge"/>
+    /// is not saved: it was abandoned, and has no verdict to wait for.
+    /// </para>
+    /// </remarks>
+    /// <param name="sanitizer">The port every raw tool-call/attempt field is sanitized through before storage.</param>
+    /// <param name="limits">The positive capture limits this instance enforces.</param>
+    /// <param name="timeProvider">The clock a completed run's age is measured on, against <see cref="CaptureLimits.CompletedRunRetention"/>.</param>
+    /// <param name="runStore">Where completed runs are kept; <see langword="null"/> keeps them in memory only, as the other constructors do.</param>
+    public InMemoryExperienceCaptureService(ISanitizer sanitizer, CaptureLimits limits, TimeProvider timeProvider, IExperienceRunStore? runStore)
+        : this(sanitizer, limits, timeProvider, runStore, runStoreOptions: null)
+    {
+    }
+
+    /// <summary>
+    /// Creates an <see cref="InMemoryExperienceCaptureService"/> that keeps the runs it completes in a run store, under
+    /// <paramref name="runStoreOptions"/>: which runs are kept, and how long a completion waits for a save.
+    /// </summary>
+    /// <param name="sanitizer">The port every raw tool-call/attempt field is sanitized through before storage.</param>
+    /// <param name="limits">The positive capture limits this instance enforces.</param>
+    /// <param name="timeProvider">The clock a completed run's age is measured on, against <see cref="CaptureLimits.CompletedRunRetention"/>.</param>
+    /// <param name="runStore">Where completed runs are kept; <see langword="null"/> keeps them in memory only.</param>
+    /// <param name="runStoreOptions">Which runs are kept and the save timeout; <see langword="null"/> keeps every run, with <see cref="ExperienceRunStoreOptions.DefaultSaveTimeout"/>.</param>
+    public InMemoryExperienceCaptureService(
+        ISanitizer sanitizer,
+        CaptureLimits limits,
+        TimeProvider timeProvider,
+        IExperienceRunStore? runStore,
+        ExperienceRunStoreOptions? runStoreOptions)
     {
         ArgumentNullException.ThrowIfNull(sanitizer);
         ArgumentNullException.ThrowIfNull(limits);
@@ -144,6 +190,8 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
         _sanitizer = sanitizer;
         _limits = limits;
         _timeProvider = timeProvider;
+        _runStore = runStore;
+        _runStoreOptions = runStoreOptions ?? new ExperienceRunStoreOptions();
     }
 
     /// <inheritdoc />
@@ -557,6 +605,30 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
                 return new AppendAttemptResult(AppendAttemptOutcome.SanitizationRejected, [], toolError.RejectionReason);
             }
 
+            // The recipe excerpt (story 28.4): only for a call that returned, sanitized as a result is, then cut.
+            string? recipeExcerpt = null;
+            if (rawToolCall.RecipeExcerpt is not null && toolError.Value is null && rawToolCall.Error is null)
+            {
+                var excerpt = await SanitizeTextAsync(
+                    rawToolCall.RecipeExcerpt,
+                    $"ToolCalls[{sequenceNumber}].RecipeExcerpt",
+                    ToolResultKind,
+                    int.MaxValue,
+                    truncatedFields,
+                    cancellationToken).ConfigureAwait(false);
+                if (excerpt.Rejected)
+                {
+                    // An optional addition never costs the attempt: a refused excerpt is dropped, fail closed, alone.
+                    truncatedFields.Add(new TruncatedField(
+                        $"ToolCalls[{sequenceNumber}].RecipeExcerpt",
+                        "The sanitizer rejected the recipe excerpt, so it was not kept; the tool call is recorded without one."));
+                }
+                else
+                {
+                    recipeExcerpt = CutExcerpt(excerpt.Value, _limits.MaxRecipeExcerptLength, $"ToolCalls[{sequenceNumber}].RecipeExcerpt", truncatedFields);
+                }
+            }
+
             toolCalls.Add(new ToolCallRecord(
                 ToolCallId: rawToolCall.ToolCallId,
                 SequenceNumber: sequenceNumber,
@@ -565,7 +637,10 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
                 StartedAt: rawToolCall.StartedAt,
                 Duration: rawToolCall.Duration,
                 Result: toolResult.Value,
-                Error: toolError.Value));
+                Error: toolError.Value)
+            {
+                RecipeExcerpt = recipeExcerpt,
+            });
         }
 
         if (truncatedToolCallCount > 0)
@@ -635,14 +710,12 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     }
 
     /// <summary>The body of <see cref="CompleteRunAsync"/>, unchanged by instrumentation: it neither reads nor writes a span.</summary>
-#pragma warning disable CS1998 // Deliberately async with no internal await: this captures a synchronous ThrowIfCancellationRequested() throw into the returned Task (matching AppendAttemptAsync's contract) instead of letting it escape synchronously at the call site.
     private async Task<CompleteRunResult> CompleteRunCoreAsync(
         Guid runId,
         Guid completionEventId,
         RunExecutionStatus executionStatus,
         DateTimeOffset endedAt,
         CancellationToken cancellationToken)
-#pragma warning restore CS1998
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -653,6 +726,8 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
             return new CompleteRunResult(CompleteRunOutcome.RunNotFound, $"No run with RunId '{runId}' exists.");
         }
 
+        CompleteRunResult result;
+        ExperienceRun completed;
         lock (state.Gate)
         {
             if (state.Completion is { } existing)
@@ -662,16 +737,96 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
                     return new CompleteRunResult(CompleteRunOutcome.Conflict, "The run was already finalized by a different completion event.");
                 }
 
-                return existing.Status == executionStatus && existing.EndedAt == endedAt
-                    ? new CompleteRunResult(CompleteRunOutcome.DuplicateNoOp, Reason: null)
-                    : new CompleteRunResult(CompleteRunOutcome.Conflict, "This completion event was already recorded with different content.");
+                if (existing.Status != executionStatus || existing.EndedAt != endedAt)
+                {
+                    return new CompleteRunResult(CompleteRunOutcome.Conflict, "This completion event was already recorded with different content.");
+                }
+
+                result = new CompleteRunResult(CompleteRunOutcome.DuplicateNoOp, Reason: null);
+            }
+            else
+            {
+                MarkCompleted(runId, state, completionEventId, executionStatus, endedAt);
+                result = new CompleteRunResult(CompleteRunOutcome.Recorded, Reason: null);
             }
 
-            MarkCompleted(runId, state, completionEventId, executionStatus, endedAt);
+            completed = state.Run;
+        }
 
-            return new CompleteRunResult(CompleteRunOutcome.Recorded, Reason: null);
+        // Outside the run's lock: the completed run is immutable from here on, and the save never holds up another call.
+        return _runStore is null ? result : await SaveCompletedRunAsync(completed, completionEventId, result, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Saves a completed run to the run store, under an authorization bounded to exactly its own scope, and reports a failure
+    /// on the result instead of throwing: the completion already stands.
+    /// </summary>
+    private async Task<CompleteRunResult> SaveCompletedRunAsync(ExperienceRun run, Guid completionEventId, CompleteRunResult result, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (_runStoreOptions.ShouldPersistRun is { } shouldPersist && !shouldPersist(run))
+            {
+                return result;
+            }
+        }
+        catch (Exception ex)
+        {
+            return result with
+            {
+                RunStoreFailure = $"ShouldPersistRun threw {ex.GetType().FullName}; the run was not saved.",
+                RunStoreException = ex,
+            };
+        }
+
+        var scope = run.Scope;
+        var authorization = new AuthorizationContext(
+            scope.TenantId,
+            RunStorePrincipal,
+            [],
+            _timeProvider.GetUtcNow(),
+            scope.ApplicationId,
+            scope.ProjectId,
+            scope.TeamId,
+            scope.AgentId,
+            scope.UserId);
+
+        // Off the caller's thread, and bounded: a store that blocks (a busy file, a slow database) never holds the
+        // completion past SaveTimeout. A save abandoned at the timeout may still land, and is reported as not kept.
+        var save = Task.Run(() => _runStore!.SaveAsync(authorization, run, completionEventId, cancellationToken), CancellationToken.None);
+        try
+        {
+            var saved = await save.WaitAsync(_runStoreOptions.SaveTimeout, _timeProvider, cancellationToken).ConfigureAwait(false);
+            return saved?.Outcome is ExperienceRunStoreOutcome.Saved or ExperienceRunStoreOutcome.AlreadySaved
+                ? result
+                : result with
+                {
+                    RunStoreFailure = $"The run store did not keep the run: {saved?.Outcome.ToString() ?? "no result"}"
+                        + (saved is { Errors.Count: > 0 } ? $" ({string.Join(", ", saved.Errors.Select(error => error.Path))})." : "."),
+                };
+        }
+        catch (TimeoutException)
+        {
+            _ = save.ContinueWith(static task => _ = task.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+            return result with { RunStoreFailure = $"The run store did not save the run within {_runStoreOptions.SaveTimeout}." };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller's own cancellation, as everywhere on this API. The completion itself already stands.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return result with
+            {
+                RunStoreFailure = $"The run store threw {ex.GetType().FullName} saving the run.",
+                RunStoreException = ex,
+            };
         }
     }
+
+    /// <summary>The principal a run store save is attributed to: the capture service itself, never a caller.</summary>
+    private const string RunStorePrincipal = "agentexperience-capture";
 
     /// <summary>
     /// The one transition from open to completed, whether the host completes the run or the open-run age
@@ -946,6 +1101,65 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
     }
 
     /// <summary>
+    /// A sanitized recipe excerpt cut to <paramref name="maxLength"/> characters, never between a surrogate pair (a cut
+    /// that would split one keeps the high surrogate out too), with the cut reported. An empty excerpt is none.
+    /// </summary>
+    internal static string? CutExcerpt(string? excerpt, int maxLength, string diagnosticFieldPath, List<TruncatedField> truncatedFields)
+    {
+        if (string.IsNullOrEmpty(excerpt))
+        {
+            return null;
+        }
+
+        // A host may slice its excerpt mid-pair: a lone surrogate has no UTF-8 form, so signing would refuse the record and
+        // finalization would store nothing. Each one becomes U+FFFD, as a lossy decoder would show it.
+        excerpt = WithoutLoneSurrogates(excerpt);
+        if (excerpt.Length <= maxLength)
+        {
+            return excerpt;
+        }
+
+        var length = maxLength;
+        if (char.IsHighSurrogate(excerpt[length - 1]) && char.IsLowSurrogate(excerpt[length]))
+        {
+            length--;
+        }
+
+        truncatedFields.Add(new TruncatedField(
+            diagnosticFieldPath,
+            $"Sanitized recipe excerpt exceeded the configured limit of {maxLength} characters and was cut to it."));
+        return length == 0 ? null : excerpt[..length];
+    }
+
+    /// <summary><paramref name="value"/> with every lone surrogate replaced by U+FFFD; the same instance when it has none.</summary>
+    internal static string WithoutLoneSurrogates(string value)
+    {
+        System.Text.StringBuilder? fixedUp = null;
+        for (var index = 0; index < value.Length; index++)
+        {
+            var c = value[index];
+            var paired = char.IsHighSurrogate(c) && index + 1 < value.Length && char.IsLowSurrogate(value[index + 1]);
+            if (paired)
+            {
+                fixedUp?.Append(c).Append(value[index + 1]);
+                index++;
+                continue;
+            }
+
+            if (char.IsSurrogate(c))
+            {
+                fixedUp ??= new System.Text.StringBuilder(value, 0, index, value.Length);
+                fixedUp.Append('\uFFFD');
+                continue;
+            }
+
+            fixedUp?.Append(c);
+        }
+
+        return fixedUp?.ToString() ?? value;
+    }
+
+    /// <summary>
     /// Deep value equality between two <see cref="AppendAttemptRequest"/>s submitted under the same
     /// <c>AttemptId</c>, to distinguish an identical resubmission (no-op) from a conflicting one.
     /// </summary>
@@ -991,6 +1205,7 @@ public sealed class InMemoryExperienceCaptureService : IExperienceCaptureService
         && a.Duration == b.Duration
         && a.Result == b.Result
         && a.Error == b.Error
+        && a.RecipeExcerpt == b.RecipeExcerpt
         && AreValuesEquivalent(a.Arguments, b.Arguments);
 
     /// <summary>

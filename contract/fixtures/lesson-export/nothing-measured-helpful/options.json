@@ -1,0 +1,22 @@
+{
+  "description": "The same lessons at the default minimum of 20 runs per arm: no verdict is Helps, so the set is empty; the sink is still called and writes a file with no lesson.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "authorizedScope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "now": "2026-03-03T09:00:00.1234567+00:00",
+  "minimumRunsPerArm": null,
+  "hasPreviousFile": false
+}

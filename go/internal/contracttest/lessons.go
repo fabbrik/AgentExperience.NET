@@ -41,12 +41,41 @@ type LessonsCase struct {
 	IncludeIneligible bool
 	Now               ae.Instant
 	Expected          *ae.Object
+
+	// Contract 1.10: the holdout's assignment rows seeded (as the owner), and the measured benefit's query members.
+	Assignments            []AssignmentRow
+	IncludeMeasuredBenefit bool
+	// MinimumRunsPerArm is 0 when the query names none (the default).
+	MinimumRunsPerArm int
+	PerModel          bool
+	// HoldoutReadRevoked: before listing, the owner revokes the application role's SELECT on the assignments; the list
+	// must fail, with expected.json's errorClass (ExpectedErrorClass).
+	HoldoutReadRevoked bool
+	// Policy is contract 1.12's retrieval policy the view runs with: query.json's minimumConfidence and maxAgeTicks
+	// (the default when absent).
+	Policy ae.RetrievalPolicy
 }
 
 // Query is the case's query.
 func (c *LessonsCase) Query() ae.LessonQuery {
 	include := c.IncludeIneligible
-	return ae.LessonQuery{Statuses: c.Statuses, Limit: c.Limit, IncludeIneligible: &include}
+	return ae.LessonQuery{Statuses: c.Statuses, Limit: c.Limit, IncludeIneligible: &include,
+		IncludeMeasuredBenefit: c.IncludeMeasuredBenefit}
+}
+
+// Options are the lessons view's options for the case: its clock, and the benefit policy it reads the measured
+// benefit with.
+func (c *LessonsCase) Options() ae.LessonsOptions {
+	now := c.Now
+	return ae.LessonsOptions{Clock: func() ae.Instant { return now },
+		Benefit:         ae.BenefitPolicy{MinimumRunsPerArm: c.MinimumRunsPerArm, PerModel: c.PerModel},
+		RetrievalPolicy: c.Policy}
+}
+
+// ExpectedErrorClass is the error class a case whose list must fail names; "" for a case that lists a page.
+func (c *LessonsCase) ExpectedErrorClass() string {
+	class, _ := get(c.Expected, "errorClass").(string)
+	return class
 }
 
 var timestamp = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)([+-]\d{2})(?::?(\d{2}))?$`)
@@ -125,14 +154,31 @@ func LoadLessonsCase(name string) (*LessonsCase, error) {
 	}
 	c.Limit = int(integer(get(query, "limit")))
 	c.IncludeIneligible, _ = get(query, "includeIneligible").(bool)
+	c.IncludeMeasuredBenefit, _ = get(query, "includeMeasuredBenefit").(bool)
+	c.PerModel, _ = get(query, "perModel").(bool)
+	c.HoldoutReadRevoked, _ = get(query, "holdoutReadRevoked").(bool)
+	if floor := get(query, "minimumConfidence"); floor != nil {
+		f := Number(floor)
+		c.Policy.MinimumConfidence = &f
+	}
+	if maxAge := get(query, "maxAgeTicks"); maxAge != nil {
+		c.Policy.MaxAge = ticks(maxAge)
+	}
+	if minimum := get(query, "minimumRunsPerArm"); minimum != nil {
+		c.MinimumRunsPerArm = int(integer(minimum))
+	}
+	if c.Assignments, err = assignmentRows(get(seed, "assignments")); err != nil {
+		return nil, err
+	}
 	if c.Now, err = ae.ParseInstant(text(get(query, "now"))); err != nil {
 		return nil, err
 	}
 	return c, nil
 }
 
-// LessonsPageJSON is a page in the fixtures' form.
-func LessonsPageJSON(page ae.LessonsPage) *ae.Object {
+// LessonsPageJSON is a page in the fixtures' form. With includeMeasuredBenefit (contract 1.10) each lesson also holds
+// measuredBenefit: null, or one lesson of an estimate (LessonBenefitJSON).
+func LessonsPageJSON(page ae.LessonsPage, includeMeasuredBenefit bool) *ae.Object {
 	instant := func(i ae.Instant) any { return i.String() }
 	lessons := []any{}
 	for _, lesson := range page.Lessons {
@@ -149,7 +195,7 @@ func LessonsPageJSON(page ae.LessonsPage) *ae.Object {
 		if lesson.LastInjectedAt != nil {
 			injected = instant(*lesson.LastInjectedAt)
 		}
-		lessons = append(lessons, ae.NewObject(
+		o := ae.NewObject(
 			ae.Member{Key: "experienceId", Value: lesson.ExperienceID.String()},
 			ae.Member{Key: "taskId", Value: lesson.TaskID},
 			ae.Member{Key: "status", Value: string(lesson.Status)},
@@ -163,7 +209,15 @@ func LessonsPageJSON(page ae.LessonsPage) *ae.Object {
 			ae.Member{Key: "ineligibleReason", Value: reason},
 			ae.Member{Key: "lastInjectedAt", Value: injected},
 			ae.Member{Key: "injectionCount", Value: json.Number(strconv.FormatInt(lesson.InjectionCount, 10))},
-		))
+		)
+		if includeMeasuredBenefit {
+			var measured any
+			if lesson.MeasuredBenefit != nil {
+				measured = LessonBenefitJSON(*lesson.MeasuredBenefit)
+			}
+			o.Set("measuredBenefit", measured)
+		}
+		lessons = append(lessons, o)
 	}
 	return ae.NewObject(
 		ae.Member{Key: "outcome", Value: string(page.Outcome)},
@@ -206,8 +260,111 @@ func canonicalInstants(value any) any {
 
 // LessonsDifference is the first difference between a case's expected page and the page the port answered; "" when
 // they are equal. Instants compare as instants, a confidence exactly, a block text byte for byte.
+//
+// Contract 1.10: each lesson's measuredBenefit compares as an estimate does (rates, differences and bounds within
+// BenefitTolerance, everything else exactly); the rest of the page as before.
 func LessonsDifference(c *LessonsCase, page ae.LessonsPage) string {
 	expected := canonicalInstants(c.Expected)
-	actual := canonicalInstants(AsWritten(LessonsPageJSON(page)))
-	return Difference(expected, actual, "$", Options{IgnoreKind: true})
+	actual := canonicalInstants(AsWritten(LessonsPageJSON(page, c.IncludeMeasuredBenefit)))
+	expectedBenefit, expectedPage := splitBenefit(expected)
+	actualBenefit, actualPage := splitBenefit(actual)
+	if d := Difference(expectedPage, actualPage, "$", Options{IgnoreKind: true}); d != "" {
+		return d
+	}
+	return Difference(expectedBenefit, actualBenefit, "$.lessons[*].measuredBenefit",
+		Options{Tolerance: BenefitTolerance, IgnoreKind: true})
+}
+
+// splitBenefit is a page's lessons' measuredBenefit members, in order (an absent one as the string "absent"), and the
+// page without them.
+func splitBenefit(page any) ([]any, any) {
+	o, ok := page.(*ae.Object)
+	if !ok {
+		return nil, page
+	}
+	benefits := []any{}
+	copied := ae.NewObject()
+	for _, m := range o.Members() {
+		if m.Key != "lessons" {
+			copied.Set(m.Key, m.Value)
+			continue
+		}
+		lessons := []any{}
+		for _, item := range list(m.Value) {
+			lesson, ok := item.(*ae.Object)
+			if !ok {
+				lessons = append(lessons, item)
+				continue
+			}
+			without := ae.NewObject()
+			benefit := any("absent")
+			for _, member := range lesson.Members() {
+				if member.Key == "measuredBenefit" {
+					benefit = member.Value
+					continue
+				}
+				without.Set(member.Key, member.Value)
+			}
+			benefits = append(benefits, benefit)
+			lessons = append(lessons, without)
+		}
+		copied.Set("lessons", lessons)
+	}
+	return benefits, copied
+}
+
+// ---- Contract 1.14's lessons-html fixtures -------------------------------------------------------------------------
+
+// LessonsPageOf reads a lessons page in the lessons-view expected.json form with its scope (a lessons-html
+// page.json).
+func LessonsPageOf(value any) (ae.LessonsPage, error) {
+	o := object(value)
+	at := func(v any) (ae.Instant, error) { return ae.ParseInstant(text(v)) }
+	generated, err := at(get(o, "generatedAt"))
+	if err != nil {
+		return ae.LessonsPage{}, err
+	}
+	page := ae.LessonsPage{Scope: ScopeOf(get(o, "scope")), Outcome: ae.LessonsOutcome(text(get(o, "outcome"))),
+		Lessons: []ae.Lesson{}, GeneratedAt: generated, OutOfScopeDropped: int(integer(get(o, "outOfScopeDropped")))}
+	page.HasMore, _ = get(o, "hasMore").(bool)
+	page.InjectionsTracked, _ = get(o, "injectionsTracked").(bool)
+	for _, item := range list(get(o, "lessons")) {
+		l := object(item)
+		id, err := ae.ParseUUID(text(get(l, "experienceId")))
+		if err != nil {
+			return ae.LessonsPage{}, err
+		}
+		created, err := at(get(l, "createdAt"))
+		if err != nil {
+			return ae.LessonsPage{}, err
+		}
+		updated, err := at(get(l, "updatedAt"))
+		if err != nil {
+			return ae.LessonsPage{}, err
+		}
+		lesson := ae.Lesson{ExperienceID: id, TaskID: text(get(l, "taskId")), Status: ae.ExperienceStatus(text(get(l, "status"))),
+			Confidence: Number(get(l, "confidence")), CreatedAt: created, UpdatedAt: updated, Checks: []ae.LessonCheck{},
+			BlockText: text(get(l, "blockText")), InjectionCount: integer(get(l, "injectionCount"))}
+		lesson.IsEligible, _ = get(l, "isEligible").(bool)
+		if code := optionalText(get(l, "ineligibility")); code != nil {
+			lesson.Ineligibility = ae.LessonIneligibility(*code)
+		}
+		if reason := optionalText(get(l, "ineligibleReason")); reason != nil {
+			lesson.IneligibleReason = *reason
+		}
+		if injected := get(l, "lastInjectedAt"); injected != nil {
+			instant, err := at(injected)
+			if err != nil {
+				return ae.LessonsPage{}, err
+			}
+			lesson.LastInjectedAt = &instant
+		}
+		for _, c := range list(get(l, "checks")) {
+			check := object(c)
+			lesson.Checks = append(lesson.Checks, ae.LessonCheck{CheckID: text(get(check, "checkId")),
+				EvidenceKind: text(get(check, "evidenceKind")), Result: ae.CheckResult(text(get(check, "result")))})
+		}
+		page.Lessons = append(page.Lessons, lesson)
+	}
+	return page, nil
 }

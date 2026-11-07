@@ -29,7 +29,8 @@ out of tree — a different store, index, sanitizer or key store — and want no
 | Identity and authority | `Scope` (where a record lives), `AuthorizationContext` (what the host authorized — always established by the host, never taken from model output) |
 | A durable lesson | `ExperienceRecord`, `Reflection`, `ExperienceStatus`, `LifecycleEvent`, `StoredLifecycleEvent`, `ConfidenceUpdate` |
 | Sanitization port | `ISanitizer`, `RawPayload`, `SanitizedPayload`, `SanitizationDecision` |
-| Storage ports | `IExperienceRecordStore`, `IExperienceCandidateSource`, `IExperienceGrantStore`, `IExperienceGrantAccessLog`, `IExperienceReuseFeedbackStore` |
+| Storage ports | `IExperienceRecordStore`, `IExperienceCandidateSource`, `IExperienceSignatureSource` (optional: find records by a failed call's signature), `IExperienceGrantStore`, `IExperienceGrantAccessLog`, `IExperienceReuseFeedbackStore` |
+| Failure signatures | `ExperienceFailureSignature` (tool, error class, fingerprint of a failed call), `ExperienceFailureSignatures.Of(record)` |
 | Derived-data ports | `IExperienceEmbeddingIndex`, `IExperienceEmbeddingGenerator` |
 | Key custody | `IExperienceKeyStore`, for crypto-shredding |
 | Reuse feedback | `ExperienceReuseFeedback`, `HumanReuseAssessment`, `ComparativeEvaluationResult`, `ReuseMeasure` |

@@ -647,6 +647,8 @@ public sealed class ExperienceVerifiersTests
                 .AddAgentExperience(options =>
                 {
                     options.UseDevelopmentIdentity();
+                    // No real timer fires: a loaded machine must not time out a retrieval that would have finished.
+                    options.TimeProvider = NeverFiringTimeProvider.Instance;
                     configure(options);
                     options.Capture = capture =>
                     {

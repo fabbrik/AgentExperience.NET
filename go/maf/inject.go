@@ -2,6 +2,7 @@ package maf
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 
@@ -32,11 +33,16 @@ type ContextProvider struct {
 	running   int
 	idle      chan struct{}
 	abandoned atomic.Int64
+	// searches counts the text searches retrieval abandoned (past the policy's Timeout, or on the caller's
+	// cancellation) that are still running against the store: at the policy's MaxAbandonedSearches no new one starts.
+	searches atomic.Int64
 }
 
 var _ agent.ContextProvider = (*ContextProvider)(nil)
 
-// Invoking adds the block, when one applies. It never returns an error.
+// Invoking adds the block, when one applies. It returns no error but the caller's own cancellation during retrieval
+// (ctx.Err(), context.Canceled), which propagates as .NET's OperationCanceledException does; every failure is reported
+// and leaves the invocation without a block.
 func (p *ContextProvider) Invoking(ctx context.Context, invoking agent.InvokingContext) (messages []*message.Message,
 	options []agent.Option, err error) {
 	messages, options = withoutBlocks(invoking.Messages), invoking.Options
@@ -47,14 +53,15 @@ func (p *ContextProvider) Invoking(ctx context.Context, invoking agent.InvokingC
 			messages, options, err = withoutBlocks(invoking.Messages), invoking.Options, nil
 		}
 	}()
-	return p.inject(ctx, messages, options), options, nil
+	messages, err = p.inject(ctx, messages, options)
+	return messages, options, err
 }
 
 // Invoked does nothing: capture is the agent middleware's.
 func (p *ContextProvider) Invoked(context.Context, agent.InvokedContext) error { return nil }
 
 func (p *ContextProvider) inject(ctx context.Context, messages []*message.Message,
-	options []agent.Option) []*message.Message {
+	options []agent.Option) ([]*message.Message, error) {
 	ctx, op := ae.Observe(ctx, "inject", false)
 	defer op.End()
 	s := p.settings
@@ -71,82 +78,141 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 		identity, err = s.resolveIdentity(ctx, IdentityContext{Agent: running, Session: session})
 		if err != nil {
 			s.reportInjection(InjectionFailure{Reason: "Resolving the identity failed; no block was added.", Err: err})
-			op.Done("Failed")
-			return messages
+			s.nothing(op, "Failed")
+			return messages, nil
 		}
 	}
 	if identity == nil {
-		op.Done("Skipped")
-		return messages
+		s.nothing(op, "Skipped")
+		return messages, nil
 	}
 
-	taskText, ok, err := ae.DeriveTaskText(taskMessages(messages), ae.DefaultTaskTextMaxLength, ae.FollowUpThreshold)
+	taskText, derived, err := ae.DeriveTaskText(taskMessages(messages), ae.DefaultTaskTextMaxLength, ae.FollowUpThreshold)
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "Deriving the task text failed; no block was added.", Err: err})
-		op.Done("Failed")
-		return messages
+		s.nothing(op, "Failed")
+		return messages, nil
 	}
+	// The capability gate for this invocation (contract 1.13): with UseRunTools, over the tools it offers, taken once.
+	gate := s.gate
+	if gate.UsesRunTools() {
+		gate = gate.ForInvocation(runTools(options))
+	}
+	if !gate.CanReject() {
+		gate = nil
+	}
+	q := query{taskText: taskText, preferred: s.PreferredEnvironment, exclude: s.ExcludeModelAuthored}
+	requestLimit := 0
+	if s.ResolveRequest != nil {
+		// Contract 1.13: the host's request resolver.
+		running, _ := agent.AgentFromContext(ctx)
+		session, _ := agent.GetOption(options, agent.WithSession)
+		request, err := s.resolveRequest(ctx, RequestContext{Agent: running, Session: session, Messages: messages,
+			DerivedTaskText: taskText, HasDerivedTaskText: derived, Identity: *identity})
+		if err != nil && ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			// The caller's own cancellation propagates, as it does from retrieval (.NET: an OperationCanceledException
+			// while the invocation's token is cancelled); any other error is a failure.
+			op.Fail(ctx.Err())
+			return messages, ctx.Err()
+		}
+		if err != nil {
+			s.reportInjection(InjectionFailure{Reason: "The injection request resolver (ResolveRequest) failed; no block was added.",
+				Err: err})
+			s.nothing(op, "Failed")
+			return messages, nil
+		}
+		if request == nil {
+			s.nothing(op, "Skipped")
+			return messages, nil
+		}
+		if request.CorrelationID != "" && op != nil {
+			op.Set(ae.AttributeCorrelationID, request.CorrelationID)
+		}
+		if err := validateRequest(request, s.retrieval.CandidateLimit); err != nil {
+			s.reportInjection(InjectionFailure{Reason: "Retrieval refused the injection request; no block was added.", Err: err})
+			s.nothing(op, "RetrievalFailed")
+			return messages, nil
+		}
+		q = query{taskText: request.TaskText, preferred: s.PreferredEnvironment,
+			exclude: s.ExcludeModelAuthored || request.ExcludeModelAuthored,
+			limit:   ae.GatedWindow(requestLimitOf(request), gate, s.BlockOptions.MaxRecords, s.retrieval.CandidateLimit)}
+		if request.PreferredEnvironment != nil {
+			q.preferred = request.PreferredEnvironment
+		}
+		if request.Limit != nil {
+			requestLimit = *request.Limit
+		}
+	} else if !derived {
+		s.nothing(op, "NothingToInject")
+		return messages, nil
+	}
+	retrieved, ok, err := p.retrieve(ctx, op, identity, q)
 	if !ok {
-		op.Done("NothingToInject")
-		return messages
+		// err is only ever the caller's own cancellation, which propagates (as .NET's does).
+		return messages, err
 	}
-	parameters := ae.NewSearchParameters(identity.Scope, taskText)
-	parameters.ExcludeModelAuthored = s.ExcludeModelAuthored
-	// Both channels run together; the vector channel never fails (it answers with a fallback instead), and is bounded
-	// by VectorTimeout, so waiting for it after the text search is bounded too.
-	type vectorAnswer struct {
-		rows     []ae.SearchRow
-		fallback *ae.VectorFallback
+	ranked, vector, now := retrieved.ranked, retrieved.vector, retrieved.now
+	// Contract 1.10: acting on measured benefit (off by default), from the cached view, which never waits on the store.
+	var view *ae.BenefitView
+	if s.benefit != nil {
+		view = s.benefit.current(ctx, identity, s.invokingModel(captured))
 	}
-	vectorDone := make(chan vectorAnswer, 1)
-	if _, fallback := s.indexOf(); fallback != nil {
-		vectorDone <- vectorAnswer{fallback: fallback}
-	} else {
-		go func() {
-			vectorRows, fallback := s.vectorChannel(ctx, identity, taskText)
-			vectorDone <- vectorAnswer{vectorRows, fallback}
-		}()
+	selected, omitted := ae.SelectCandidates(ranked.Ranked, view, ae.SelectOptions{
+		MaxRecords: s.BlockOptions.MaxRecords, RequestLimit: requestLimit, ExcludeModelAuthored: q.exclude,
+		PreferMeasuredHelpful: s.Benefit.PreferMeasuredHelpful, Gate: gate})
+	// Contract 1.13: the host's decision on each selected record, before the block (and its byte budget).
+	if s.DecideInjection != nil {
+		var denied []ae.OmittedRecord
+		selected, denied = ae.ApplyHostDecisions(selected, s.decideOne)
+		omitted = append(omitted, denied...)
 	}
-	retrieveCtx, retrieval := ae.Observe(ctx, "retrieve", false)
-	defer retrieval.End()
-	rows, err := s.Store.Search(retrieveCtx, identity.Authorization(), parameters)
-	vector := <-vectorDone
-	s.reportVectorFallback(vector.fallback)
-	if err != nil {
-		// Retrieval reports its failure as its outcome, as .NET does; it is not an error it raised.
-		retrieval.Done("Failed")
-		s.reportInjection(InjectionFailure{Reason: "The search failed; no block was added.", Err: err})
-		op.Done("RetrievalFailed")
-		return messages
-	}
-	// The instant the block is built at: ranking's "now", and the injection's instant.
-	now := s.Clock()
-	var ranked ae.RankedResult
-	if len(vector.rows) > 0 {
-		ranked, err = ae.RankHybrid(rows, vector.rows, identity.Scope, now, s.PreferredEnvironment,
-			s.MinVectorRelevance, s.ExcludeModelAuthored)
-	} else {
-		ranked, err = ae.Rank(rows, identity.Scope, now, s.PreferredEnvironment, s.ExcludeModelAuthored)
-	}
-	if err != nil {
-		retrieval.Fail(err)
-		s.reportInjection(InjectionFailure{Reason: "Ranking failed; no block was added.", Err: err})
-		op.Done("Failed")
-		return messages
-	}
-	retrieval.Done("Completed")
-	block, err := ae.RenderBlock(ranked.Ranked, s.BlockOptions)
+	block, err := ae.RenderBlock(selected, s.BlockOptions)
 	if err != nil {
 		s.reportInjection(InjectionFailure{Reason: "Rendering the block failed; no block was added.", Err: err})
+		if op != nil {
+			op.Set(ae.AttributeOmittedCount, len(omitted))
+		}
+		s.reportInjected(InjectionResult{Outcome: "Failed", Omitted: omitted})
 		op.Done("Failed")
-		return messages
+		return messages, nil
 	}
+	omitted = append(omitted, ae.ByteBudgetOmissions(block, s.BlockOptions)...)
 	if op != nil {
-		op.Set(ae.AttributeOmittedCount, len(block.Omitted))
+		op.Set(ae.AttributeOmittedCount, len(omitted))
 	}
 	if block.IsEmpty() {
+		// As .NET reports it: nothing injected, and every omission (a scope measured Hurts omits them all).
+		s.reportInjected(InjectionResult{Outcome: "NothingToInject", Truncated: ranked.Truncated,
+			VectorFallback: vector.fallback, Omitted: omitted, Excluded: ranked.Excluded})
 		op.Done("NothingToInject")
-		return messages
+		return messages, nil
+	}
+
+	// The records this block delivers, at the revision each was rendered from.
+	ids := make([]ae.UUID, len(block.Included))
+	exposures := make([]ae.RunExposure, len(block.Included))
+	for i, record := range block.Included {
+		ids[i] = record.ExperienceID
+		exposures[i] = ae.RunExposure{ExperienceID: record.ExperienceID, Revision: record.Revision}
+	}
+
+	// Contract 1.8: the injection holdout. Decided once the block is built, so what a held-out run is denied is exactly
+	// what it would have been given, and before anything is handed over. Only a run this agent's own capture captures
+	// takes part, and only with records to deliver; everything else is injected as it always was, and records nothing.
+	var assignment *ae.HoldoutAssignment
+	if s.Holdout.Rate > 0 && len(exposures) > 0 && captured {
+		if runID, ok := scope.run(); ok {
+			assignment = &ae.HoldoutAssignment{RunID: runID, Arm: ae.AssignHoldout(runID, s.Holdout.Salt, s.Holdout.Rate),
+				Records: exposures, AssignedAt: now}
+		}
+	}
+	if assignment != nil && assignment.Arm == ae.HoldoutWithheld {
+		s.reportWithheld(InjectionResult{Outcome: "Withheld", Truncated: ranked.Truncated, VectorFallback: vector.fallback,
+			Excluded:              ranked.Excluded,
+			WithheldExperienceIDs: append([]ae.UUID(nil), ids...), Omitted: omitted})
+		p.startHoldout(ctx, identity, *assignment)
+		op.Done("Withheld")
+		return messages, nil
 	}
 	injected := &message.Message{
 		Role:                 s.MessageRole,
@@ -160,32 +226,25 @@ func (p *ContextProvider) inject(ctx context.Context, messages []*message.Messag
 	out = append(out, injected)
 	out = append(out, messages[at:]...)
 
-	// The records this block delivers, at the revision each was rendered from, on the run the invocation is captured
-	// as. Recorded last, once nothing that could fail remains.
-	ids := make([]ae.UUID, len(block.Included))
-	exposures := make([]ae.RunExposure, len(block.Included))
-	for i, record := range block.Included {
-		ids[i] = record.ExperienceID
-		exposures[i] = ae.RunExposure{ExperienceID: record.ExperienceID, Revision: record.Revision}
-	}
+	// The records this block delivers, on the run the invocation is captured as. Recorded last, once nothing that could
+	// fail remains.
 	if captured {
 		scope.recordExposures(exposures)
 	}
-	if s.OnInjected != nil {
-		func() {
-			defer func() { _ = recover() }()
-			s.OnInjected(InjectionResult{ExperienceIDs: ids, ByteCount: block.ByteCount, Truncated: ranked.Truncated,
-				VectorFallback: vector.fallback})
-		}()
-	}
+	s.reportInjected(InjectionResult{Outcome: "Injected", ExperienceIDs: ids, ByteCount: block.ByteCount,
+		Truncated: ranked.Truncated, VectorFallback: vector.fallback, Omitted: omitted, Excluded: ranked.Excluded})
 
 	// When each delivered record was injected, for the .NET lessons view: started last, in the background, so the
 	// block is handed over and the model called without waiting for the store.
 	if len(ids) > 0 {
 		p.startRecording(ctx, identity, append([]ae.UUID(nil), ids...), now)
 	}
+	// Contract 1.8: the treatment arm's assignment, recorded the same way.
+	if assignment != nil {
+		p.startHoldout(ctx, identity, *assignment)
+	}
 	op.Done("Injected")
-	return out
+	return out, nil
 }
 
 // isBlock reports whether a message is stamped as carrying an injected block.

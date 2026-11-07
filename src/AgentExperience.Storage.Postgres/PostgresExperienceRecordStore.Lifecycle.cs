@@ -197,9 +197,12 @@ public sealed partial class PostgresExperienceRecordStore
     /// which is what makes the replacement checks below atomic with the write: a concurrent transition
     /// of the replacement either lands before this lock (and is therefore seen by the check) or blocks
     /// behind it (and is therefore decided against a record this commit has already moved).
+    /// Only rows in the caller's exact scope are locked: a replacement ID naming another scope's record
+    /// takes no lock on it (it reads as not found in the check that follows, exactly as before), so one
+    /// tenant cannot hold or wait on another tenant's row through a supersession.
     /// </summary>
     private const string LockSupersessionRowsSql =
-        $"SELECT experience_id FROM {Table} WHERE experience_id = ANY(@lock_ids) ORDER BY experience_id FOR UPDATE";
+        $"SELECT experience_id FROM {Table} WHERE experience_id = ANY(@lock_ids) AND {ScopePredicate} ORDER BY experience_id FOR UPDATE";
 
     /// <inheritdoc />
     public async Task<ExperienceLifecycleCommitResult> CommitLifecycleEventAsync(
@@ -452,6 +455,7 @@ public sealed partial class PostgresExperienceRecordStore
             {
                 TypedValue = [experienceId, replacementId],
             });
+            AddScopeParameters(locks.Parameters, scope);
             await locks.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 

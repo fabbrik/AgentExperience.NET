@@ -124,6 +124,23 @@ public enum InjectionOmissionReason
     /// Decided where <see cref="ModelAuthored"/> is. The omission carries no detail.
     /// </summary>
     UnconfirmedContent,
+
+    /// <summary>
+    /// Acting on measured benefit (<see cref="ExperienceInjectionOptions.Benefit"/>): the injection holdout measured this
+    /// lesson as hurting (<see cref="AgentExperience.Core.Holdout.ExperienceBenefitVerdict.Hurts"/>: runs given it verified
+    /// less often than runs it was withheld from), or measured the scope's lessons together as hurting, in which case every
+    /// record is omitted with this reason. Decided on the ranked candidate before every other check, so it takes no slot. The
+    /// record itself is unchanged; the verdict can reverse as new evidence arrives and old evidence leaves the window.
+    /// </summary>
+    MeasuredHarmful,
+
+    /// <summary>
+    /// The match-strength floor (<see cref="ExperienceInjectionOptions.MinimumMatch"/>): the record's match was too weak to
+    /// be worth the context -- no exact failure-signature match on the current run, too small a share of the request's
+    /// terms, and too little semantic similarity. Decided on the ranked candidate before the capability gate and the record
+    /// limit, so it takes no slot. The detail names the strengths and the floor, never record content.
+    /// </summary>
+    WeakMatch,
 }
 
 /// <summary>
@@ -181,6 +198,13 @@ public enum InjectionOutcome
     /// otherwise the records that survived are omitted as <see cref="InjectionOmissionReason.OverSessionBudget"/>.
     /// </summary>
     SessionBudgetExhausted,
+
+    /// <summary>
+    /// The injection holdout (<see cref="ExperienceInjectionOptions.Holdout"/>) assigned this captured run to its holdout
+    /// arm: a block was built and then withheld. Nothing was injected, staged in the session or recorded as the run's
+    /// exposure; <see cref="ExperienceInjectionResult.WithheldExperienceIds"/> names what the block would have delivered.
+    /// </summary>
+    Withheld,
 }
 
 /// <summary>
@@ -275,6 +299,13 @@ public sealed record ExperienceInjectionResult(
     /// reports the invocation succeeded.
     /// </summary>
     public ExperienceInjectionSessionUsage? Session { get; init; }
+
+    /// <summary>
+    /// The injection holdout: the records the withheld block would have delivered, in rank order, when
+    /// <see cref="Outcome"/> is <see cref="InjectionOutcome.Withheld"/>; otherwise empty. IDs only, as everywhere on this
+    /// result.
+    /// </summary>
+    public IReadOnlyList<Guid> WithheldExperienceIds { get; init; } = [];
 }
 
 /// <summary>

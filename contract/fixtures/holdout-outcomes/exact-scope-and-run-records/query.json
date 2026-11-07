@@ -1,0 +1,12 @@
+{
+  "description": "Only rows in exactly the scope read are returned, in (run, record) order. Each carries its run's outcome: the run's own live record in exactly that scope (Verified, Failed or Unknown), the earliest created when there are two; null when the run's only record is in another scope, or it has none.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "limit": 1000
+}

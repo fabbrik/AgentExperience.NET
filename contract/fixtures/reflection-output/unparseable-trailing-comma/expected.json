@@ -1,0 +1,9 @@
+{
+  "outcome": "Quarantined",
+  "reflectionFailure": {
+    "kind": "Unparseable",
+    "causeType": null,
+    "message": "The model's answer to the reflection request held no JSON object of the requested shape."
+  },
+  "screening": null
+}

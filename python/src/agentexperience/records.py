@@ -92,6 +92,10 @@ class ToolCall:
     duration: Duration
     result: str | None
     error: str | None
+    recipe_excerpt: str | None = None
+    """A short excerpt of what the call returned, vouched for by the host at capture (contract 1.19): read, kept and
+    written back exactly, absent when absent. The block may show it on the ``Worked:`` attempt only, for a tool its
+    ``recipe_excerpts`` names."""
 
 
 @dataclass(frozen=True)
@@ -263,22 +267,27 @@ def _attempt_json(attempt: Attempt) -> dict[str, Any]:
         "sequenceNumber": attempt.sequence_number,
         "startedAt": attempt.started_at.format(),
         "duration": attempt.duration.format(),
-        "toolCalls": [
-            {
-                "toolCallId": format_uuid(call.tool_call_id),
-                "sequenceNumber": call.sequence_number,
-                "toolName": call.tool_name,
-                "arguments": json_value(dict(call.arguments)),
-                "startedAt": call.started_at.format(),
-                "duration": call.duration.format(),
-                "result": call.result,
-                "error": call.error,
-            }
-            for call in attempt.tool_calls
-        ],
+        "toolCalls": [_tool_call_json(call) for call in attempt.tool_calls],
         "result": attempt.result,
         "error": attempt.error,
     }
+
+
+def _tool_call_json(call: ToolCall) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "toolCallId": format_uuid(call.tool_call_id),
+        "sequenceNumber": call.sequence_number,
+        "toolName": call.tool_name,
+        "arguments": json_value(dict(call.arguments)),
+        "startedAt": call.started_at.format(),
+        "duration": call.duration.format(),
+        "result": call.result,
+        "error": call.error,
+    }
+    if call.recipe_excerpt is not None:
+        # Contract 1.19: written only when set, never as null, so a record without one is unchanged.
+        value["recipeExcerpt"] = call.recipe_excerpt
+    return value
 
 
 def _evidence_json(evidence: Evidence) -> dict[str, Any]:
@@ -504,6 +513,7 @@ def _attempt(value: Mapping[str, Any]) -> Attempt:
                 duration=Duration.parse(call["duration"]),
                 result=call.get("result"),
                 error=call.get("error"),
+                recipe_excerpt=call.get("recipeExcerpt"),
             )
             for call in value["toolCalls"]
         ),

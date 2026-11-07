@@ -1,0 +1,188 @@
+{
+  "results": [
+    {
+      "thrown": null,
+      "outcome": "Applied",
+      "event": {
+        "eventId": "00001161-0000-4000-8000-000000001001",
+        "experienceRecordId": "00001161-0000-4000-8000-000000000010",
+        "priorStatus": "Validated",
+        "currentStatus": "Validated",
+        "reason": "the lesson was reused and the checks passed",
+        "producer": "verification-aggregator/1.0.0",
+        "occurredAt": "2026-03-02T09:00:00+00:00",
+        "expectedRevision": 1,
+        "replacementExperienceId": null,
+        "confidence": {
+          "evidenceId": "00001161-0000-4000-8000-000000001101",
+          "kind": "Supporting",
+          "source": "Machine",
+          "runId": "00001161-0000-4000-8000-000000005100",
+          "verificationRoundId": "00001161-0000-4000-8000-000000005200",
+          "reviewerIdentity": null,
+          "ruleVersion": "1.0.0",
+          "priorReuseConfidence": 0.6666666666666666,
+          "newReuseConfidence": 0.75,
+          "priorSupportingValidations": 1,
+          "newSupportingValidations": 2,
+          "priorContradictions": 0,
+          "newContradictions": 0,
+          "detail": "the retry-after-lock lesson held",
+          "assessmentId": null,
+          "admission": "HostTrusted",
+          "counted": true
+        }
+      },
+      "update": {
+        "evidenceId": "00001161-0000-4000-8000-000000001101",
+        "kind": "Supporting",
+        "source": "Machine",
+        "runId": "00001161-0000-4000-8000-000000005100",
+        "verificationRoundId": "00001161-0000-4000-8000-000000005200",
+        "reviewerIdentity": null,
+        "ruleVersion": "1.0.0",
+        "priorReuseConfidence": 0.6666666666666666,
+        "newReuseConfidence": 0.75,
+        "priorSupportingValidations": 1,
+        "newSupportingValidations": 2,
+        "priorContradictions": 0,
+        "newContradictions": 0,
+        "detail": "the retry-after-lock lesson held",
+        "assessmentId": null,
+        "admission": "HostTrusted",
+        "counted": true
+      },
+      "revision": 2,
+      "status": "Validated",
+      "errors": [],
+      "reason": null,
+      "refusal": null,
+      "counted": true
+    }
+  ],
+  "records": [
+    {
+      "columns": {
+        "experience_id": "00001161-0000-4000-8000-000000000010",
+        "source_run_id": "00001161-0000-4000-8000-000000000110",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.75,
+        "supporting_validations": 2,
+        "contradictions": 0,
+        "revision": 2,
+        "created_at": "2026-02-20T09:00:00+00:00",
+        "updated_at": "2026-03-02T10:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "00001161-0000-4000-8000-000000000e10",
+              "verificationRoundId": "00001161-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "00001161-0000-4000-8000-000000000210",
+          "experienceRunId": "00001161-0000-4000-8000-000000000110",
+          "lesson": "Verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "00001161-0000-4000-8000-000000000e10"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        },
+        "origin": "Finalized"
+      }
+    }
+  ],
+  "histories": [
+    {
+      "experienceId": "00001161-0000-4000-8000-000000000010",
+      "events": [
+        {
+          "event_id": "00001161-0000-4000-8000-000000001001",
+          "experience_id": "00001161-0000-4000-8000-000000000010",
+          "tenant_id": "contract-tenant",
+          "application_id": "contract-app",
+          "project_id": "contract-project",
+          "team_id": null,
+          "agent_id": "refund-agent",
+          "user_id": null,
+          "prior_status": "Validated",
+          "current_status": "Validated",
+          "reason": "the lesson was reused and the checks passed",
+          "producer": "verification-aggregator/1.0.0",
+          "occurred_at": "2026-03-02T09:00:00+00:00",
+          "recorded_at": "2026-03-02T10:00:00+00:00",
+          "expected_revision": 1,
+          "applied_revision": 2,
+          "replacement_experience_id": null,
+          "actor": "contract-principal",
+          "confidence_evidence_id": "00001161-0000-4000-8000-000000001101",
+          "confidence_kind": "Supporting",
+          "confidence_source": "Machine",
+          "confidence_run_id": "00001161-0000-4000-8000-000000005100",
+          "confidence_verification_round_id": "00001161-0000-4000-8000-000000005200",
+          "confidence_reviewer_identity": null,
+          "confidence_rule_version": "1.0.0",
+          "confidence_detail": "the retry-after-lock lesson held",
+          "prior_reuse_confidence": 0.6666666666666666,
+          "new_reuse_confidence": 0.75,
+          "prior_supporting_validations": 1,
+          "new_supporting_validations": 2,
+          "prior_contradictions": 0,
+          "new_contradictions": 0,
+          "confidence_assessment_id": null,
+          "confidence_admission": "HostTrusted"
+        }
+      ]
+    }
+  ]
+}

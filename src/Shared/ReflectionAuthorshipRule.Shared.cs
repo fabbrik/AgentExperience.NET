@@ -14,8 +14,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Reflections;
 namespace AgentExperience.Storage.Postgres;
 #elif AGENTEXPERIENCE_INMEMORY
 namespace AgentExperience.Storage.InMemory;
+#elif AGENTEXPERIENCE_SQLITE
+namespace AgentExperience.Storage.Sqlite;
 #else
-#error Define AGENTEXPERIENCE_CORE, AGENTEXPERIENCE_MAF, AGENTEXPERIENCE_POSTGRES or AGENTEXPERIENCE_INMEMORY to select the namespace of the shared authorship rule.
+#error Define AGENTEXPERIENCE_CORE, AGENTEXPERIENCE_MAF, AGENTEXPERIENCE_POSTGRES, AGENTEXPERIENCE_INMEMORY or AGENTEXPERIENCE_SQLITE to select the namespace of the shared authorship rule.
 #endif
 
 /// <summary>

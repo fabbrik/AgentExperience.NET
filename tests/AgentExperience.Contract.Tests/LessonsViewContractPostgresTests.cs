@@ -1,7 +1,10 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using AgentExperience.Abstractions;
+using AgentExperience.Core.Holdout;
+using AgentExperience.Core.Retrieval;
 using AgentExperience.MicrosoftAgentFramework;
+using AgentExperience.MicrosoftAgentFramework.Injection;
 using AgentExperience.Storage.Postgres;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -47,8 +50,30 @@ public sealed class LessonsViewContractPostgresTests(ContractPostgresDatabase da
                 await InjectionRecordContractPostgresTests.InsertInjectionAsync(owner, row!.AsObject());
             }
 
+            // Contract 1.10: the holdout's rows, as the owner, when the case has any.
+            foreach (var row in seed["assignments"]?.AsArray() ?? [])
+            {
+                await HoldoutOutcomesContractPostgresTests.InsertAssignmentAsync(owner, row!.AsObject());
+            }
+
+            if (query.HoldoutReadRevoked)
+            {
+                await using (var revoke = owner.CreateCommand(
+                    $"REVOKE SELECT ON agent_experience.experience_holdout_assignments FROM \"{ContractPostgresDatabase.ApplicationRole}\""))
+                {
+                    await revoke.ExecuteNonQueryAsync();
+                }
+
+                var failure = await Record.ExceptionAsync(() => ListAsync(application, query));
+                Assert.IsType<ExperienceStoreException>(failure);
+                ContractFiles.Verify($"{directory}/expected.json", ContractJson.Write(LessonsViewContract.FailureJson(LessonsViewContract.ReadFailedErrorClass)), drift);
+                application.Clear();
+                owner.Clear();
+                continue;
+            }
+
             var page = await ListAsync(application, query);
-            ContractFiles.Verify($"{directory}/expected.json", ContractJson.Write(LessonsViewContract.PageJson(page)), drift);
+            ContractFiles.Verify($"{directory}/expected.json", ContractJson.Write(LessonsViewContract.PageJson(page, query.IncludeMeasuredBenefit)), drift);
 
             // The statements as written, against what the .NET store read for the same probe.
             var store = new PostgresExperienceRecordStore(application);
@@ -69,6 +94,9 @@ public sealed class LessonsViewContractPostgresTests(ContractPostgresDatabase da
             {
                 drift.Add($"{directory}: the contract statement without injections reads {Describe(without)}, not {Describe(plain)}.");
             }
+
+            application.Clear();
+            owner.Clear();
         }
 
         ContractFiles.VerifyNoStray(
@@ -126,16 +154,45 @@ public sealed class LessonsViewContractPostgresTests(ContractPostgresDatabase da
     private static async Task<ExperienceLessonsPage> ListAsync(NpgsqlDataSource application, LessonsViewQuery query)
     {
         var services = new ServiceCollection();
+        if (query.MinimumConfidence is not null || query.MaxAgeTicks is not null)
+        {
+            // Contract 1.12: the host's own retrieval service, under its policy, registered before the one-call setup, which
+            // keeps it; the view's eligibility is that service's.
+            var policy = RetrievalPolicy.Default with
+            {
+                MinimumConfidence = query.MinimumConfidence ?? RetrievalPolicy.DefaultMinimumConfidence,
+                MaxAge = query.MaxAgeTicks is { } ticks ? TimeSpan.FromTicks(ticks) : null,
+            };
+            services.AddSingleton(provider => new ExperienceRetrievalService(
+                provider.GetRequiredService<IExperienceCandidateSource>(),
+                policy,
+                RankingWeights.Default,
+                provider.GetRequiredService<TimeProvider>()));
+        }
+
         services.AddAgentExperience(options =>
             {
                 options.ResolveIdentity = (_, _) => ValueTask.FromResult<ExperienceIdentity?>(null);
                 options.TimeProvider = new LessonsViewContract.FixedClock(query.Now);
+
+                // Contract 1.10: the benefit policy's window (the default) and minimum, whether or not the policy is on.
+                options.Injection = injection => injection.Benefit = new ExperienceBenefitPolicy
+                {
+                    MinimumRunsPerArm = query.MinimumRunsPerArm ?? ExperienceBenefitOptions.DefaultMinimumRunsPerArm,
+                    PerModel = query.PerModel,
+                };
             })
             .UsePostgres(application);
         await using var provider = services.BuildServiceProvider();
         return await provider.GetAgentExperienceLessons().ListAsync(
             new ExperienceIdentity(SearchContractPostgresTests.Authorization(query.Scope), query.Scope),
-            new ExperienceLessonsQuery { Statuses = query.Statuses, Limit = query.Limit, IncludeIneligible = query.IncludeIneligible });
+            new ExperienceLessonsQuery
+            {
+                Statuses = query.Statuses,
+                Limit = query.Limit,
+                IncludeIneligible = query.IncludeIneligible,
+                IncludeMeasuredBenefit = query.IncludeMeasuredBenefit,
+            });
     }
 
     /// <summary>

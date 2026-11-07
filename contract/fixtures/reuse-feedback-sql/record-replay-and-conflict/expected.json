@@ -1,0 +1,254 @@
+{
+  "results": [
+    {
+      "outcome": "Recorded",
+      "feedback": {
+        "feedbackId": "00001172-0000-4000-8000-00000000f001",
+        "runId": "00001172-0000-4000-8000-000000005100",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runOutcome": "Verified",
+        "claimedBenefit": "Improved",
+        "benefit": "Improved",
+        "attributionSource": "HumanAssessment",
+        "reviewerIdentity": "reviewer-ü",
+        "evaluatorId": null,
+        "verificationRoundId": "00001172-0000-4000-8000-000000005200",
+        "assessmentId": "00001172-0000-4000-8000-00000000a001",
+        "rationale": "The reviewer saw the lesson applied.",
+        "evidenceIds": [],
+        "attributedAt": "2026-03-02T09:30:00.1234567+00:00",
+        "measure": {
+          "kind": "tool-calls",
+          "value": 7
+        },
+        "trialLabel": "memory-enabled",
+        "observedAt": "2026-03-02T09:30:00.7654321+00:00",
+        "exposures": [
+          {
+            "experienceId": "00001172-0000-4000-8000-000000000010",
+            "attributed": false,
+            "evidenceId": null
+          },
+          {
+            "experienceId": "00001172-0000-4000-8000-000000000011",
+            "attributed": true,
+            "evidenceId": "5637a1c8-5ee3-890f-9cd7-d17ebaf37643"
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "outcome": "AlreadyRecorded",
+      "feedback": {
+        "feedbackId": "00001172-0000-4000-8000-00000000f001",
+        "runId": "00001172-0000-4000-8000-000000005100",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runOutcome": "Verified",
+        "claimedBenefit": "Improved",
+        "benefit": "Improved",
+        "attributionSource": "HumanAssessment",
+        "reviewerIdentity": "reviewer-ü",
+        "evaluatorId": null,
+        "verificationRoundId": "00001172-0000-4000-8000-000000005200",
+        "assessmentId": "00001172-0000-4000-8000-00000000a001",
+        "rationale": "The reviewer saw the lesson applied.",
+        "evidenceIds": [],
+        "attributedAt": "2026-03-02T09:30:00.123456+00:00",
+        "measure": {
+          "kind": "tool-calls",
+          "value": 7
+        },
+        "trialLabel": "memory-enabled",
+        "observedAt": "2026-03-02T09:30:00.765432+00:00",
+        "exposures": [
+          {
+            "experienceId": "00001172-0000-4000-8000-000000000010",
+            "attributed": false,
+            "evidenceId": null
+          },
+          {
+            "experienceId": "00001172-0000-4000-8000-000000000011",
+            "attributed": true,
+            "evidenceId": "5637a1c8-5ee3-890f-9cd7-d17ebaf37643"
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "outcome": "AlreadyRecorded",
+      "feedback": {
+        "feedbackId": "00001172-0000-4000-8000-00000000f001",
+        "runId": "00001172-0000-4000-8000-000000005100",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runOutcome": "Verified",
+        "claimedBenefit": "Improved",
+        "benefit": "Improved",
+        "attributionSource": "HumanAssessment",
+        "reviewerIdentity": "reviewer-ü",
+        "evaluatorId": null,
+        "verificationRoundId": "00001172-0000-4000-8000-000000005200",
+        "assessmentId": "00001172-0000-4000-8000-00000000a001",
+        "rationale": "The reviewer saw the lesson applied.",
+        "evidenceIds": [],
+        "attributedAt": "2026-03-02T09:30:00.123456+00:00",
+        "measure": {
+          "kind": "tool-calls",
+          "value": 7
+        },
+        "trialLabel": "memory-enabled",
+        "observedAt": "2026-03-02T09:30:00.765432+00:00",
+        "exposures": [
+          {
+            "experienceId": "00001172-0000-4000-8000-000000000010",
+            "attributed": false,
+            "evidenceId": null
+          },
+          {
+            "experienceId": "00001172-0000-4000-8000-000000000011",
+            "attributed": true,
+            "evidenceId": "5637a1c8-5ee3-890f-9cd7-d17ebaf37643"
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "outcome": "Conflict",
+      "feedback": {
+        "feedbackId": "00001172-0000-4000-8000-00000000f001",
+        "runId": "00001172-0000-4000-8000-000000005100",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "runOutcome": "Verified",
+        "claimedBenefit": "Improved",
+        "benefit": "Improved",
+        "attributionSource": "HumanAssessment",
+        "reviewerIdentity": "reviewer-ü",
+        "evaluatorId": null,
+        "verificationRoundId": "00001172-0000-4000-8000-000000005200",
+        "assessmentId": "00001172-0000-4000-8000-00000000a001",
+        "rationale": "The reviewer saw the lesson applied.",
+        "evidenceIds": [],
+        "attributedAt": "2026-03-02T09:30:00.123456+00:00",
+        "measure": {
+          "kind": "tool-calls",
+          "value": 7
+        },
+        "trialLabel": "memory-enabled",
+        "observedAt": "2026-03-02T09:30:00.765432+00:00",
+        "exposures": [
+          {
+            "experienceId": "00001172-0000-4000-8000-000000000010",
+            "attributed": false,
+            "evidenceId": null
+          },
+          {
+            "experienceId": "00001172-0000-4000-8000-000000000011",
+            "attributed": true,
+            "evidenceId": "5637a1c8-5ee3-890f-9cd7-d17ebaf37643"
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "outcome": "Conflict",
+      "feedback": null,
+      "errors": []
+    },
+    {
+      "outcome": "Invalid",
+      "feedback": null,
+      "errors": [
+        {
+          "path": "FeedbackId",
+          "message": "must not be an empty GUID."
+        },
+        {
+          "path": "Rationale",
+          "message": "must not be empty or whitespace."
+        }
+      ]
+    },
+    {
+      "outcome": "Denied",
+      "feedback": null,
+      "errors": []
+    }
+  ],
+  "reuse_feedback": [
+    {
+      "feedback_id": "00001172-0000-4000-8000-00000000f001",
+      "run_id": "00001172-0000-4000-8000-000000005100",
+      "tenant_id": "contract-tenant",
+      "application_id": "contract-app",
+      "project_id": "contract-project",
+      "team_id": null,
+      "agent_id": "refund-agent",
+      "user_id": null,
+      "run_outcome": "Verified",
+      "claimed_benefit": "Improved",
+      "benefit": "Improved",
+      "attribution_source": "HumanAssessment",
+      "reviewer_identity": "reviewer-ü",
+      "evaluator_id": null,
+      "verification_round_id": "00001172-0000-4000-8000-000000005200",
+      "assessment_id": "00001172-0000-4000-8000-00000000a001",
+      "rationale": "The reviewer saw the lesson applied.",
+      "evidence_ids": null,
+      "attributed_at": "2026-03-02 09:30:00.123456+00",
+      "measure_kind": "tool-calls",
+      "measure_value": "7",
+      "trial_label": "memory-enabled",
+      "observed_at": "2026-03-02 09:30:00.765432+00",
+      "recorded_at": "2026-03-02 13:00:00+00"
+    }
+  ],
+  "reuse_feedback_exposures": [
+    {
+      "feedback_id": "00001172-0000-4000-8000-00000000f001",
+      "experience_id": "00001172-0000-4000-8000-000000000010",
+      "ordinal": "0",
+      "attributed": "false",
+      "evidence_id": null,
+      "rationale_sealed": null
+    },
+    {
+      "feedback_id": "00001172-0000-4000-8000-00000000f001",
+      "experience_id": "00001172-0000-4000-8000-000000000011",
+      "ordinal": "1",
+      "attributed": "true",
+      "evidence_id": "5637a1c8-5ee3-890f-9cd7-d17ebaf37643",
+      "rationale_sealed": null
+    }
+  ]
+}

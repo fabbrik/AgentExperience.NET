@@ -23,7 +23,8 @@ import (
 const (
 	// SourceCore is the source of the core operations.
 	SourceCore = "AgentExperience.Core"
-	// SourceMAF is the source of inject and record_injection.
+	// SourceMAF is the source of inject, record_injection, record_holdout, record_provider_holdout and
+	// benefit_refresh.
 	SourceMAF = "AgentExperience.MicrosoftAgentFramework"
 )
 
@@ -59,17 +60,31 @@ var observedOperations = map[string]OperationSpec{
 	"verify":               {SourceCore, true, []string{"Unknown", "Verified", "Failed"}},
 	"reflect":              {SourceCore, true, []string{"Unknown", "Verified", "Failed"}},
 	"finalize":             {SourceCore, true, []string{"Validated", "Quarantined"}},
-	"retrieve":             {SourceCore, true, []string{"Completed", "Failed"}},
+	"retrieve":             {SourceCore, true, []string{"Completed", "TimedOut", "Denied", "Failed"}},
 	"index": {SourceCore, true,
 		[]string{"Indexed", "Stale", "Missing", "ProviderFailed", "IndexFailed"}},
 	"inject": {SourceMAF, true,
-		[]string{"Injected", "NothingToInject", "Skipped", "RetrievalFailed", "Failed"}},
+		[]string{"Injected", "NothingToInject", "Skipped", "RetrievalTimedOut", "RetrievalDenied", "RetrievalFailed",
+			"Failed", "Withheld"}},
 	"record_injection": {SourceMAF, false, []string{"Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"}},
+	"record_holdout":   {SourceMAF, false, []string{"Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"}},
+	"record_provider_holdout": {SourceMAF, false,
+		[]string{"Recorded", "NotTracked", "NotRecorded", "OutcomeUnknown"}},
+	"benefit_refresh": {SourceMAF, false, []string{"Refreshed", "NotRefreshed", "OutcomeUnknown"}},
+	// Contract 1.16's lifecycle: LifecycleService.Commit and ApplyEvidence.
+	"lifecycle.commit": {SourceCore, true,
+		[]string{"Committed", "TransitionNotAllowed", "ReplacementNotAllowed", "StaleRevision", "StatusMismatch",
+			"Conflict", "NotFound", "Denied", "Invalid", "Deleted"}},
+	"confidence.apply": {SourceCore, true,
+		[]string{"Applied", "Ineligible", "StaleRevision", "StatusMismatch", "Conflict", "NotFound", "Denied",
+			"Invalid", "Deleted", "Unverified"}},
+	// Contract 1.17's reuse feedback: ReuseFeedbackService.Record.
+	"reuse_feedback": {SourceCore, true, []string{"Recorded", "AlreadyRecorded", "Conflict", "Denied", "Invalid"}},
 }
 
 // ObservedOperations is every operation this port reports, by its operation value. The port reports no other: not
-// retention.sweep, delete, grants, seal, backfill, lifecycle, confidence, reuse-feedback, deindex or reindex. A
-// new map is returned each time.
+// retention.sweep, delete, grants, seal, backfill, deindex or reindex. A new map is returned each
+// time.
 func ObservedOperations() map[string]OperationSpec {
 	result := make(map[string]OperationSpec, len(observedOperations))
 	for name, spec := range observedOperations {
@@ -95,12 +110,25 @@ const (
 	AttributeReflectionID = "agentexperience.reflection_id"
 	AttributeStage        = "agentexperience.stage"
 	AttributeOmittedCount = "agentexperience.omitted_count"
+	// AttributeCorrelationID is the host's correlation ID, on the inject operation when the request carries one
+	// (contract 1.13).
+	AttributeCorrelationID = "agentexperience.correlation_id"
+	// AttributeScreeningRefusal is why screening refused a reflection, on the finalize operation (contract 1.14).
+	AttributeScreeningRefusal = "agentexperience.reflection.screening_refusal"
+	// AttributeEventID is the lifecycle event's ID, on lifecycle.commit and confidence.apply (contract 1.16).
+	AttributeEventID = "agentexperience.event_id"
+	// AttributeConfidenceAdmission is the admission applied evidence was stored with, on confidence.apply when it
+	// was Applied and the update carries one.
+	AttributeConfidenceAdmission = "agentexperience.confidence.admission"
+	// AttributeIndependenceRefusal is why confidence.apply refused the evidence's identifiers (Unverified).
+	AttributeIndependenceRefusal = "agentexperience.independence.refusal"
 )
 
 // ObservedAttributes are the span attributes this port sets beyond the common ones, sorted.
 func ObservedAttributes() []string {
-	attributes := []string{AttributeAttemptID, AttributeExperienceID, AttributeOmittedCount, AttributeReflectionID,
-		AttributeRunID, AttributeStage}
+	attributes := []string{AttributeAttemptID, AttributeCorrelationID, AttributeExperienceID, AttributeOmittedCount,
+		AttributeReflectionID, AttributeScreeningRefusal, AttributeRunID, AttributeStage, AttributeEventID,
+		AttributeConfidenceAdmission, AttributeIndependenceRefusal, AttributeFeedbackID}
 	sort.Strings(attributes)
 	return attributes
 }
@@ -167,7 +195,8 @@ type Operation struct {
 
 // Observe opens operation (a key of ObservedOperations) for the registered observer and returns the context it runs
 // in. With no observer registered it returns ctx and nil, and allocates nothing. nested says another instrumented
-// operation of the same source called this one; inject and record_injection are never nested.
+// operation of the same source called this one; inject, record_injection, record_holdout, record_provider_holdout and
+// benefit_refresh are never nested.
 func Observe(ctx context.Context, operation string, nested bool) (context.Context, *Operation) {
 	box := registered.Load()
 	if box == nil {

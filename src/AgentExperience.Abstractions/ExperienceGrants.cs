@@ -90,6 +90,17 @@ public sealed record ExperienceGrant(
     /// <summary>The most characters one argument key (or dotted path) in a grant's <see cref="ApproachArguments"/> may have.</summary>
     public const int MaxApproachArgumentKeyLength = 64;
 
+    /// <summary>The most tool names one grant's <see cref="RecipeExcerpts"/> may name.</summary>
+    public const int MaxRecipeExcerptTools = 32;
+
+    /// <summary>
+    /// The tool names whose recipe excerpts (<see cref="ToolCallRecord.RecipeExcerpt"/>) the owner consented to show
+    /// the recipient's model, under a level that shows the approach; <see langword="null"/> (the default) consents to
+    /// none. Fixed for the life of the grant, like <see cref="Disclosure"/>. See
+    /// <see cref="ExperienceGrantRequest.RecipeExcerpts"/>.
+    /// </summary>
+    public IReadOnlyList<string>? RecipeExcerpts { get; init; }
+
     /// <summary>The smallest permitted <see cref="IExperienceGrantStore.ListAsync"/> limit.</summary>
     public const int MinListLimit = 1;
 
@@ -167,7 +178,23 @@ public sealed record ExperienceGrantRequest(
     string Reason,
     DateTimeOffset ExpiresAt,
     ExperienceGrantDisclosure Disclosure = ExperienceGrantDisclosure.LessonOnly,
-    IReadOnlyDictionary<string, IReadOnlyList<string>>? ApproachArguments = null);
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? ApproachArguments = null)
+{
+    /// <summary>
+    /// Optional, and only under <see cref="ExperienceGrantDisclosure.LessonAndApproach"/> or
+    /// <see cref="ExperienceGrantDisclosure.LessonApproachAndArguments"/>: the tool names whose recipe excerpts
+    /// (<see cref="ToolCallRecord.RecipeExcerpt"/>, the short part of a working call's result its host vouched for) the
+    /// owner consents to show the recipient's model on the record's working attempt. <see langword="null"/> (the
+    /// default) consents to none. It is the owner's ceiling: an excerpt is shown only when the recipient's own
+    /// <c>ExperienceInjectionOptions.RecipeExcerpts</c> names the tool too. It must name at least one tool, at most
+    /// <see cref="ExperienceGrant.MaxRecipeExcerptTools"/>, each non-blank, at most
+    /// <see cref="ExperienceGrant.MaxApproachArgumentToolNameLength"/> characters, free of control characters and not
+    /// listed twice. Under <see cref="ExperienceGrantDisclosure.LessonOnly"/>, or otherwise malformed, it is
+    /// <see cref="ExperienceGrantOutcome.Invalid"/> on this field, and nothing is written. Immutable once issued; names
+    /// only, stored in the clear in every mode.
+    /// </summary>
+    public IReadOnlyList<string>? RecipeExcerpts { get; init; }
+}
 
 /// <summary>
 /// How much of a shared record a grant lets injection show the recipient's model. It governs only

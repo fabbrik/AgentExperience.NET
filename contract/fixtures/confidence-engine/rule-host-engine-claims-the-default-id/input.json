@@ -1,0 +1,9 @@
+{
+  "description": "A host engine may not use the heuristic's RuleId, even with the heuristic's version.",
+  "operation": "rule",
+  "engine": {
+    "ruleId": "reuse-heuristic",
+    "ruleVersion": "1.0.0",
+    "score": "bayes"
+  }
+}

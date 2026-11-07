@@ -1,0 +1,11 @@
+{
+  "description": "The policy is off: nothing is omitted or reordered, whatever the estimate says.",
+  "enabled": false,
+  "preferMeasuredHelpful": true,
+  "perModel": false,
+  "model": null,
+  "requestLimit": null,
+  "maxRecords": 3,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

@@ -1,0 +1,29 @@
+{
+  "description": "AvailableTools without retry_refund and issue_refund: approaches calling either are omitted as ToolUnavailable. Only the verified final attempt's tools are checked, so a failed earlier attempt's tool (drop_ledger) does not gate, and an approach calling no tool always passes.",
+  "rendering": "Compact",
+  "failureDetail": "ErrorClass",
+  "messageRole": "User",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {},
+  "modelAuthoredLessons": "Include",
+  "requestLimit": null,
+  "receivingAgent": {
+    "availableTools": [
+      "read_ledger",
+      "wait_for_lock"
+    ],
+    "maxRiskClass": null,
+    "toolRiskClasses": {
+      "read_ledger": "Low",
+      "wait_for_lock": "Low",
+      "retry_refund": "Medium",
+      "issue_refund": "High"
+    },
+    "useRunTools": false,
+    "gatedRetrievalWindowMultiplier": 4
+  },
+  "runTools": null,
+  "hostDecisions": null,
+  "preferMeasuredHelpful": false
+}

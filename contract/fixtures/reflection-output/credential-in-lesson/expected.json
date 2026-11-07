@@ -1,0 +1,8 @@
+{
+  "outcome": "Quarantined",
+  "reflectionFailure": null,
+  "screening": {
+    "refusal": "UnsafeContent",
+    "reason": "its Lesson contains credential-shaped text"
+  }
+}

@@ -14,13 +14,19 @@ const (
 	ExperienceIDTag   byte = 1
 	InitialEventIDTag byte = 2
 	ReflectionIDTag   byte = 3
+	// ReuseEvidenceIDTag and ReuseEventIDTag are contract 1.16's: the reuse evidence finalization submits about a
+	// record its run was given, and the event that carries it.
+	ReuseEvidenceIDTag byte = 4
+	ReuseEventIDTag    byte = 5
 )
 
 // DeriveID is SHA-256 over the namespace's 16 bytes, the run ID's 16 bytes, the tag byte and, with a scope, each
 // scope field (0x00 when unset; else 0x01, its UTF-8 length as a 4-byte big-endian integer, and its UTF-8 bytes),
 // cut to 16 bytes and stamped with version 8 and the RFC 4122 variant. UTF-8 is as .NET encodes it: anything that
 // is not a valid character (a lone surrogate, in .NET) is U+FFFD.
-func DeriveID(runID UUID, tag byte, scope *Scope) UUID {
+func DeriveID(runID UUID, tag byte, scope *Scope) UUID { return deriveID(runID, tag, scope, nil) }
+
+func deriveID(runID UUID, tag byte, scope *Scope, suffix []byte) UUID {
 	hash := sha256.New()
 	hash.Write(idNamespace[:])
 	hash.Write(runID[:])
@@ -39,6 +45,7 @@ func DeriveID(runID UUID, tag byte, scope *Scope) UUID {
 			hash.Write(encoded)
 		}
 	}
+	hash.Write(suffix)
 	var id UUID
 	copy(id[:], hash.Sum(nil)[:16])
 	id[6] = id[6]&0x0F | 0x80
@@ -56,3 +63,24 @@ func InitialEventIDFor(runID UUID, scope Scope) UUID {
 
 // ReflectionIDFor is a finalized record's reflectionId.
 func ReflectionIDFor(runID UUID) UUID { return DeriveID(runID, ReflectionIDTag, nil) }
+
+// ReuseEvidenceIDFor is the evidence ID of the reuse evidence finalizing runID in scope submits about experienceID
+// (.NET's ExperienceFinalizationService.ReuseEvidenceIdFor): DeriveID's input with tag 4 and the scope, then the
+// record's 16 bytes and the kind's byte (0 supporting, 1 contradicting). An undefined kind is refused (naming kind).
+func ReuseEvidenceIDFor(runID UUID, scope Scope, experienceID UUID, kind ConfidenceEvidenceKind) (UUID, error) {
+	return deriveReuseID(runID, ReuseEvidenceIDTag, scope, experienceID, kind)
+}
+
+// ReuseEventIDFor is the event ID of that evidence (.NET's ReuseEventIdFor), derived like ReuseEvidenceIDFor with
+// tag 5.
+func ReuseEventIDFor(runID UUID, scope Scope, experienceID UUID, kind ConfidenceEvidenceKind) (UUID, error) {
+	return deriveReuseID(runID, ReuseEventIDTag, scope, experienceID, kind)
+}
+
+func deriveReuseID(runID UUID, tag byte, scope Scope, experienceID UUID, kind ConfidenceEvidenceKind) (UUID, error) {
+	value := kindByte(kind)
+	if value < 0 {
+		return UUID{}, outOfRange("kind", "Not a defined ConfidenceEvidenceKind.")
+	}
+	return deriveID(runID, tag, &scope, append(experienceID[:], byte(value))), nil
+}

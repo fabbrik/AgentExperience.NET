@@ -5,13 +5,13 @@ using Json.Schema;
 namespace AgentExperience.Contract.Tests;
 
 /// <summary>
-/// <c>contract/schema/experience-record.v1.json</c>, evaluated by a real JSON Schema (draft 2020-12) evaluator, and the
+/// <c>contract/schema/experience-record.v1-1.19.json</c> (contract 1.0's schema plus 1.19's optional recipe excerpt), evaluated by a real JSON Schema (draft 2020-12) evaluator, and the
 /// stored-format round trip every record in a fixture must survive.
 /// </summary>
 internal static class RecordSchema
 {
     private static readonly Lazy<JsonSchema> Schema = new(() =>
-        JsonSchema.FromText(ContractFiles.Read("schema/experience-record.v1.json") ?? throw new InvalidOperationException("The record schema is missing.")));
+        JsonSchema.FromText(ContractFiles.Read("schema/experience-record.v1-1.19.json") ?? throw new InvalidOperationException("The record schema is missing.")));
 
     /// <summary>
     /// Checks one stored record: it validates against the schema, and reading it through the PostgreSQL adapter's payload
@@ -28,7 +28,7 @@ internal static class RecordSchema
                 .Where(detail => detail.Errors is { Count: > 0 })
                 .SelectMany(detail => detail.Errors!.Select(error => $"{detail.InstanceLocation}: {error.Value}"))
                 .Take(10);
-            problems.Add($"{where}: does not validate against experience-record.v1.json: {string.Join("; ", errors)}");
+            problems.Add($"{where}: does not validate against experience-record.v1-1.19.json: {string.Join("; ", errors)}");
 
             // A record the schema refuses is not handed to the reader: whatever it throws would only hide this.
             return;

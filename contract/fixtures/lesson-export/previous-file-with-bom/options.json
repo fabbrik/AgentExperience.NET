@@ -1,0 +1,23 @@
+{
+  "description": "The file before the export starts with a UTF-8 byte order mark (previousFileBom: previous.md's bytes follow EF BB BF), then the first lesson's heading: the mark is not part of the text read, so that heading opens its section and the lesson is unchanged; the file written has no mark.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "authorizedScope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "now": "2026-03-03T09:00:00.1234567+00:00",
+  "minimumRunsPerArm": 3,
+  "hasPreviousFile": true,
+  "previousFileBom": true
+}

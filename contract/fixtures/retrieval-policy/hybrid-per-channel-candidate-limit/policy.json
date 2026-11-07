@@ -1,0 +1,32 @@
+{
+  "description": "Hybrid, with a candidate limit of 2: each channel is asked for 3 and considered to its first 2. The text channel returned 3, so the result is truncated; the vector channel's two are merged after the text channel's, one of them already found by text. MaxAge and decay apply to the merged list as to text candidates.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "taskText": "rotate the signing keys",
+  "now": "2026-03-02T09:00:00+00:00",
+  "preferredEnvironment": {},
+  "excludeModelAuthored": false,
+  "policy": {
+    "timeoutTicks": 5000000,
+    "minimumConfidence": 0.5,
+    "maxAgeTicks": 77760000000000,
+    "recencyHalfLifeTicks": 25920000000000,
+    "candidateLimit": 2,
+    "maxAbandonedSearches": 16,
+    "minimumMatchedTerms": 3,
+    "minimumVectorRelevance": null
+  },
+  "confidenceDecay": {
+    "domainKey": "domain",
+    "halfLivesTicks": {
+      "framework-api": 25920000000000
+    },
+    "defaultHalfLifeTicks": null
+  }
+}

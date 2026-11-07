@@ -1,0 +1,281 @@
+using AgentExperience.Abstractions;
+using Npgsql;
+using NpgsqlTypes;
+using static AgentExperience.Storage.Postgres.ExperienceRecordParameters;
+using static AgentExperience.Storage.Postgres.ExperienceRecordRows;
+using static AgentExperience.Storage.Postgres.ExperienceRecordSql;
+using static AgentExperience.Storage.Postgres.ExperienceStoreFailures;
+
+namespace AgentExperience.Storage.Postgres;
+
+/// <summary>
+/// The injection holdout's assignments. <c>0027</c>'s <c>agent_experience.experience_holdout_assignments</c>
+/// holds one row per captured run and record its block named, with the arm; <see cref="RecordHoldoutAssignmentAsync"/>
+/// inserts them in one statement per assigned block, and <see cref="QueryHoldoutOutcomesAsync"/> reads them back, a page at
+/// a time, with each run's own verified outcome.
+/// </summary>
+public sealed partial class PostgresExperienceRecordStore
+{
+    /// <summary>The holdout assignment table <c>0027</c> creates.</summary>
+    internal const string HoldoutAssignmentsTable = "agent_experience.experience_holdout_assignments";
+
+    /// <summary>
+    /// The one write: a row per named record that is live in exactly the caller's scope, its scope copied from the record
+    /// so a row can never name another scope, at the revision the block rendered. The instant is clamped to the database's
+    /// clock. A row that already exists for the run and record is left as it is. The records are locked <c>FOR KEY
+    /// SHARE</c> in ID order, as <see cref="RecordInjectionSql"/> locks them: an erasure racing the write either waits for
+    /// it and then deletes its rows through <c>0027</c>'s trigger, or runs first and leaves a tombstone this statement no
+    /// longer selects.
+    /// <para>
+    /// The late-write guard: first, the run's own records (<c>source_run_id</c> is the run, in the caller's
+    /// tenant, found through <c>0028</c>'s index) are locked <c>FOR KEY SHARE</c> in ID order, by the IDs the statement's
+    /// snapshot found, and nothing is written when every one of them is by then a tombstone (while one is still live, the
+    /// run still has a record and is written). So an erasure of the run's record
+    /// that has started but not committed holds the write until it commits, and the write then sees the tombstone and
+    /// writes nothing; an erasure that starts while the write is in flight waits for it, and its trigger then deletes the
+    /// rows. The IDs are fixed in an array before the lock, so the re-check after a wait follows the record, not its
+    /// <c>source_run_id</c>, which the purge zeroes. An erasure committed before the write's snapshot is not seen: a
+    /// tombstone keeps no run (0010), so nothing in the schema says a run's record was erased once it has been.
+    /// </para>
+    /// </summary>
+    internal const string RecordHoldoutAssignmentSql =
+        "WITH run_record AS MATERIALIZED (SELECT d.deleted_at\n" +
+        $"FROM {Table} d\n" +
+        "WHERE d.experience_id = ANY (ARRAY(SELECT s.experience_id FROM " + Table + " s " +
+        "WHERE s.tenant_id = @tenant_id AND s.source_run_id = @run_id))\n" +
+        "ORDER BY d.experience_id FOR KEY SHARE OF d)\n" +
+        $"INSERT INTO {HoldoutAssignmentsTable} (run_id, experience_id, revision, arm, tenant_id, application_id, project_id, " +
+        "team_id, agent_id, user_id, assigned_at)\n" +
+        "SELECT @run_id, r.experience_id, n.revision, @arm, r.tenant_id, r.application_id, r.project_id, r.team_id, r.agent_id, " +
+        "r.user_id, LEAST(@assigned_at, pg_catalog.clock_timestamp())\n" +
+        $"FROM {Table} r\n" +
+        "JOIN ROWS FROM (pg_catalog.unnest(@experience_ids), pg_catalog.unnest(@revisions)) AS n(experience_id, revision) " +
+        "ON n.experience_id = r.experience_id\n" +
+        $"WHERE {RecordScopePredicate} AND {RecordLivePredicate}\n" +
+        $"AND {RunNotErasedPredicate}\n" +
+        $"ORDER BY r.experience_id {RecordKeyShareLock}\n" +
+        "ON CONFLICT (run_id, experience_id) DO NOTHING";
+
+    /// <summary>
+    /// The late-write guard's condition: the run's own records, once locked, are not all tombstones. No record yet (the
+    /// aggregate is null) or any one still live lets the write through; it reads every row, so every one is locked.
+    /// </summary>
+    internal const string RunNotErasedPredicate = "(SELECT pg_catalog.bool_and(run_record.deleted_at IS NOT NULL) FROM run_record) IS NOT TRUE";
+
+    /// <inheritdoc />
+    public bool TracksHoldout => true;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// One statement, whatever the number of records: an insert into <c>agent_experience.experience_holdout_assignments</c>
+    /// of the named records that are live in exactly <paramref name="scope"/>. In encrypted mode a record whose key is
+    /// destroyed counts as erased and is skipped, at the cost of one batched key lookup. Until the application role has
+    /// been granted the table (re-run
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// after migrating to <c>0027</c>) it throws <see cref="ExperienceStoreException"/>, which the injection adapter
+    /// reports without affecting the injection.
+    /// </remarks>
+    public async Task<ExperienceHoldoutRecordResult> RecordHoldoutAssignmentAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        HoldoutAssignment assignment,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+        ArgumentNullException.ThrowIfNull(scope);
+
+        var errors = ExperienceRecordValidator.ValidateHoldoutAssignment(scope, assignment);
+        if (errors.Count > 0)
+        {
+            return new(ExperienceStoreOutcome.Invalid, errors);
+        }
+
+        if (!authorization.Permits(scope))
+        {
+            return new(ExperienceStoreOutcome.Denied, NoErrors);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // A record named twice counts once, at the revision it was first named with.
+        var records = assignment.Records.DistinctBy(exposure => exposure.ExperienceId).ToArray();
+        var ids = records.Select(exposure => exposure.ExperienceId).ToArray();
+
+        try
+        {
+            if (_encryption is not null && ids.Length > 0)
+            {
+                var live = (await WithLiveKeysAsync(ids, scope, cancellationToken).ConfigureAwait(false)).ToHashSet();
+                records = [.. records.Where(exposure => live.Contains(exposure.ExperienceId))];
+                ids = [.. records.Select(exposure => exposure.ExperienceId)];
+            }
+
+            if (ids.Length == 0)
+            {
+                return new(ExperienceStoreOutcome.Committed, NoErrors);
+            }
+
+            await using var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false);
+            await using (var command = session.CreateCommand(RecordHoldoutAssignmentSql))
+            {
+                command.Parameters.Add(new NpgsqlParameter<Guid>("run_id", assignment.RunId));
+                command.Parameters.Add(new NpgsqlParameter<string>("arm", assignment.Arm.ToString()));
+                command.Parameters.Add(new NpgsqlParameter<Guid[]>("experience_ids", ids));
+                command.Parameters.Add(new NpgsqlParameter<long[]>("revisions", NpgsqlDbType.Array | NpgsqlDbType.Bigint)
+                {
+                    TypedValue = [.. records.Select(exposure => exposure.Revision)],
+                });
+                command.Parameters.Add(new NpgsqlParameter<DateTimeOffset>("assigned_at", ToStoredTimestamp(assignment.AssignedAt)));
+                AddScopeParameters(command.Parameters, scope);
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await session.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new(ExperienceStoreOutcome.Committed, NoErrors);
+        }
+        catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
+        {
+            throw Translate(ex, "record holdout assignment", cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// The read's first part: a page of the caller's exact-scope assignment rows in (run, record) order, then, for each
+    /// run on the page, the run's own live record in exactly the same scope (the earliest created, then the lowest ID),
+    /// found with one semi-join rather than one probe per row. A record in another scope that names the same run is never
+    /// the run's record. The record columns keep ordinals 0-17, null when the run has no record; the row is 18-21, and
+    /// ordinal 22 is 0. After the page's rows, in the same statement, come the live records the page's rows name (the
+    /// lessons, in exactly the page's scope, so nothing outside it is decrypted), one each, at ordinals 0-17, with 18-21 null and ordinal 22 1: read for
+    /// the model that learned each lesson. Row-level security bounds both tables to the caller's bounds. The keyset
+    /// predicate, when there is one, goes between the two parts.
+    /// </summary>
+    internal const string QueryHoldoutOutcomesPrefix =
+        "WITH page AS (SELECT run_id, arm, experience_id, assigned_at\n" +
+        $"FROM {HoldoutAssignmentsTable}\n" +
+        $"WHERE {ScopePredicate}";
+
+    /// <summary>Resumes after the previous page's last row.</summary>
+    internal const string QueryHoldoutOutcomesAfterPredicate = " AND (run_id, experience_id) > (@after_run_id, @after_experience_id)";
+
+    internal const string QueryHoldoutOutcomesSuffix =
+        "\nORDER BY run_id, experience_id LIMIT @limit),\n" +
+        $"run_record AS (SELECT DISTINCT ON (source_run_id) {SelectColumns}\n" +
+        $"FROM {Table}\n" +
+        $"WHERE {ScopePredicate} AND {LivePredicate} AND source_run_id IN (SELECT run_id FROM page)\n" +
+        "ORDER BY source_run_id, created_at, experience_id),\n" +
+        $"lesson_record AS (SELECT {SelectColumns}\n" +
+        $"FROM {Table}\n" +
+        $"WHERE {ScopePredicate} AND {LivePredicate} AND experience_id IN (SELECT experience_id FROM page))\n" +
+        "SELECT run_record.*, page.run_id, page.arm, page.experience_id, page.assigned_at, 0 AS part\n" +
+        "FROM page LEFT JOIN run_record ON run_record.source_run_id = page.run_id\n" +
+        "UNION ALL\n" +
+        "SELECT lesson_record.*, NULL, NULL, NULL, NULL, 1 AS part\n" +
+        "FROM lesson_record\n" +
+        "ORDER BY 23, 19, 21, 1";
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// One statement per page (see <see cref="QueryHoldoutOutcomesPrefix"/>). The rows are read into memory and the
+    /// connection released before any key is fetched; then every sealed run record on the page is opened in one key-store
+    /// call, through the store's own read path. One sealed under a destroyed key reads as no outcome. Until the
+    /// application role has been granted <c>0027</c>'s table it throws <see cref="ExperienceStoreException"/>.
+    /// </remarks>
+    public async Task<HoldoutOutcomeQueryResult> QueryHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        HoldoutOutcomeQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(authorization);
+
+        var errors = ExperienceRecordValidator.ValidateHoldoutOutcomeQuery(query);
+        if (errors.Count > 0)
+        {
+            return new(ExperienceStoreOutcome.Invalid, [], errors);
+        }
+
+        if (!authorization.Permits(query.Scope))
+        {
+            return new(ExperienceStoreOutcome.Denied, [], NoErrors);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            var sql = QueryHoldoutOutcomesPrefix
+                + (query.After is null ? string.Empty : QueryHoldoutOutcomesAfterPredicate)
+                + QueryHoldoutOutcomesSuffix;
+
+            List<SnapshotRow> snapshot;
+            await using (var session = await AuthorizedTransaction.OpenAsync(_dataSource, authorization, cancellationToken).ConfigureAwait(false))
+            {
+                await using (var command = session.CreateCommand(sql))
+                {
+                    AddScopeParameters(command.Parameters, query.Scope);
+                    command.Parameters.Add(new NpgsqlParameter<int>("limit", query.Limit));
+                    if (query.After is { } after)
+                    {
+                        command.Parameters.Add(new NpgsqlParameter<Guid>("after_run_id", after.RunId));
+                        command.Parameters.Add(new NpgsqlParameter<Guid>("after_experience_id", after.ExperienceId));
+                    }
+
+                    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                    snapshot = await SnapshotRow.ReadAllAsync(reader, cancellationToken).ConfigureAwait(false);
+                }
+
+                await session.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            // The page's rows first, then the lessons they name.
+            var pageRows = snapshot.Where(row => row.GetInt32(22) == 0).ToList();
+            var lessonRows = snapshot.Where(row => row.GetInt32(22) == 1).ToArray();
+
+            // One record per run (every row of a run carries the same one) and one per lesson, decoded together: sealed
+            // ones in one batch.
+            var runRows = pageRows.Where(row => !row.IsDBNull(0)).DistinctBy(row => row.GetGuid(18)).ToArray();
+            var records = await ReadRecordsAsync([.. runRows, .. lessonRows], _encryption, cancellationToken).ConfigureAwait(false);
+            var runs = new Dictionary<Guid, (TaskVerificationStatus? Outcome, string? Model)>(runRows.Length);
+            for (var i = 0; i < runRows.Length; i++)
+            {
+                runs[runRows[i].GetGuid(18)] = (records[i]?.Outcome?.Status, ModelOf(records[i]));
+            }
+
+            // The statement reads lessons in exactly the page's scope; the authorization check is defence in depth.
+            var lessonModels = new Dictionary<Guid, string?>(lessonRows.Length);
+            for (var i = 0; i < lessonRows.Length; i++)
+            {
+                var lesson = records[runRows.Length + i];
+                lessonModels[lessonRows[i].GetGuid(0)] = lesson is not null && authorization.Permits(lesson.Scope) ? ModelOf(lesson) : null;
+            }
+
+            var rows = pageRows.Select(row =>
+                {
+                    var run = runs.GetValueOrDefault(row.GetGuid(18));
+                    return new HoldoutOutcomeRow(
+                        row.GetGuid(18),
+                        Enum.Parse<HoldoutArm>(row.GetString(19)),
+                        row.GetGuid(20),
+                        row.GetFieldValue<DateTimeOffset>(21),
+                        run.Outcome)
+                    {
+                        RunModel = run.Model,
+                        LessonModel = lessonModels.GetValueOrDefault(row.GetGuid(20)),
+                    };
+                })
+                .ToList();
+            return new(ExperienceStoreOutcome.Found, rows, NoErrors);
+        }
+        catch (Exception ex) when (IsInfrastructureFailure(ex, cancellationToken))
+        {
+            throw Translate(ex, "query holdout outcomes", cancellationToken);
+        }
+    }
+
+    /// <summary>The model a record's environment names (<see cref="HoldoutOutcomeRow.ModelMetadataKey"/>), or <see langword="null"/> when none or blank.</summary>
+    private static string? ModelOf(ExperienceRecord? record) =>
+        record?.Environment?.Metadata is { } metadata
+        && metadata.TryGetValue(HoldoutOutcomeRow.ModelMetadataKey, out var model)
+        && !string.IsNullOrWhiteSpace(model)
+            ? model
+            : null;
+}

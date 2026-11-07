@@ -26,6 +26,35 @@ public sealed class ConfigurationTests
     }
 
     [Fact]
+    public void OpenRouter_is_chosen_only_explicitly_needs_a_key_and_a_model_and_sends_no_seed()
+    {
+        Assert.Equal(ConfigurationOutcome.NotConfigured, Read(("OPENROUTER_API_KEY", "sk-or-test"), ("OPENROUTER_MODEL", "qwen/qwen3-coder")).Outcome);
+        Assert.Equal(ConfigurationOutcome.Invalid, Read(("AGENTEXPERIENCE_LIVE_PROVIDER", "openrouter"), ("OPENROUTER_MODEL", "qwen/qwen3-coder")).Outcome);
+        Assert.Equal(ConfigurationOutcome.Invalid, Read(("AGENTEXPERIENCE_LIVE_PROVIDER", "openrouter"), ("OPENROUTER_API_KEY", "sk-or-test")).Outcome);
+
+        var (outcome, configuration, _) = Read(("AGENTEXPERIENCE_LIVE_PROVIDER", "openrouter"), ("OPENROUTER_API_KEY", "sk-or-test"), ("OPENROUTER_MODEL", "qwen/qwen3-coder"));
+        Assert.Equal(ConfigurationOutcome.Ready, outcome);
+        Assert.Equal(LiveProvider.OpenRouter, configuration!.Provider);
+        var descriptor = configuration.Describe();
+        Assert.Equal("openrouter", descriptor.Provider);
+        Assert.Equal("qwen/qwen3-coder", descriptor.RequestedModel);
+        Assert.Equal("openrouter.ai", descriptor.EndpointHost);
+        Assert.False(descriptor.SeedSent);
+        Assert.Null(configuration.InputPrice);
+        Assert.DoesNotContain("sk-or-test", configuration.ToString(), StringComparison.Ordinal);
+        Assert.Equal(ConfigurationOutcome.Invalid, Read(("AGENTEXPERIENCE_LIVE_PROVIDER", "openrouter"), ("OPENROUTER_API_KEY", "sk-or-test"), ("OPENROUTER_MODEL", "a b")).Outcome);
+    }
+
+    [Fact]
+    public void An_openrouter_request_asks_for_hosts_that_support_every_parameter()
+    {
+        var body = System.Text.Encoding.UTF8.GetBytes("{\"model\":\"m\",\"tools\":[]}");
+        var rewritten = System.Text.Json.Nodes.JsonNode.Parse(OpenRouterRoutingPolicy.WithRouting(body))!;
+        Assert.Equal("m", (string?)rewritten["model"]);
+        Assert.True((bool)rewritten["provider"]!["require_parameters"]!);
+    }
+
+    [Fact]
     public void Ollama_is_chosen_only_explicitly_needs_a_model_costs_nothing_and_reports_the_local_host()
     {
         Assert.Equal(ConfigurationOutcome.NotConfigured, Read(("OLLAMA_MODEL", "qwen2.5:7b")).Outcome);

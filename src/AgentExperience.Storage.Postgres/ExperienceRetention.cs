@@ -217,3 +217,27 @@ public sealed record ExperienceGrantAccessPurgeResult(
     int PurgedCount,
     bool MoreRemain,
     IReadOnlyList<StoreValidationError> Errors);
+
+/// <summary>
+/// The result of one call to <see cref="PostgresExperienceRecordStore.BackfillFailureSignaturesAsync(AuthorizationContext, Scope, int, ScopeMatch, Guid?, CancellationToken)"/>,
+/// the upgrade job that derives and writes the failure signatures of plaintext records stored before <c>0030</c>.
+/// </summary>
+/// <param name="Outcome">
+/// <see cref="ExperienceStoreOutcome.Committed"/> when the batch ran -- including when it wrote nothing -- or
+/// <see cref="ExperienceStoreOutcome.Denied"/> or <see cref="ExperienceStoreOutcome.Invalid"/> before any storage was
+/// touched.
+/// </param>
+/// <param name="RecordCount">How many records gained at least one signature row in this call.</param>
+/// <param name="SignatureCount">How many signature rows this call wrote.</param>
+/// <param name="SkippedCount">How many records this call examined and could not decode; they are left without signatures, and the cursor moves past them.</param>
+/// <param name="MoreRemain">Whether live plaintext records exist past <paramref name="ResumeAfter"/>.</param>
+/// <param name="ResumeAfter">The last record ID this call examined -- the cursor to pass as the next call's <c>startAfter</c> -- or the cursor it was given when it examined nothing.</param>
+/// <param name="Errors">Every validation error when <see cref="Outcome"/> is <see cref="ExperienceStoreOutcome.Invalid"/>; otherwise empty.</param>
+public sealed record ExperienceFailureSignatureBackfillResult(
+    ExperienceStoreOutcome Outcome,
+    int RecordCount,
+    int SignatureCount,
+    int SkippedCount,
+    bool MoreRemain,
+    Guid? ResumeAfter,
+    IReadOnlyList<StoreValidationError> Errors);

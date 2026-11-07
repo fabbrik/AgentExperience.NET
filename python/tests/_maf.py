@@ -84,3 +84,15 @@ class ScriptedClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], Bas
             return ChatResponse(messages=[reply])
 
         return respond()
+
+
+def delivered(sink: Any) -> Any:
+    """An ``on_injected`` that passes ``sink`` only what an invocation delivered or withheld: not the
+    ``NothingToInject`` reports (contract 1.10, as .NET reports them), nor the ``Skipped``, ``Failed`` and
+    ``RetrievalFailed`` ones (contract 1.13), which the tests that count injections ignore."""
+
+    def report(result: Any) -> None:
+        if result.outcome not in ("NothingToInject", "Skipped", "Failed", "RetrievalFailed"):
+            sink(result)
+
+    return report

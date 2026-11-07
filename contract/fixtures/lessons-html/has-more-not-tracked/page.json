@@ -1,0 +1,33 @@
+{
+  "description": "One lesson of more (the page says so), from a store that does not track injections: its last injection is 'not tracked', its confidence of 0.125 is written 0.13 (half away from zero) and it has no checks.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "outcome": "Found",
+  "generatedAt": "2026-03-03T09:00:00.9999999+00:00",
+  "hasMore": true,
+  "outOfScopeDropped": 0,
+  "injectionsTracked": false,
+  "lessons": [
+    {
+      "experienceId": "00000152-0000-4000-8000-000000000001",
+      "taskId": "rotate-keys",
+      "status": "Reinforced",
+      "confidence": 0.125,
+      "createdAt": "2026-03-02T09:00:00+00:00",
+      "updatedAt": "2026-03-02T09:00:00+00:00",
+      "checks": [],
+      "blockText": "Lesson: Rotate the keys.\n",
+      "isEligible": true,
+      "ineligibility": null,
+      "ineligibleReason": null,
+      "lastInjectedAt": null,
+      "injectionCount": 0
+    }
+  ]
+}

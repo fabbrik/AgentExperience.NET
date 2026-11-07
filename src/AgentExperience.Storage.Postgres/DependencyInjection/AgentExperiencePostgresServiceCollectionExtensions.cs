@@ -314,7 +314,8 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
     /// <summary>
     /// Registers <see cref="PostgresExperienceCandidateSource"/> as the singleton
     /// <see cref="IExperienceCandidateSource"/>, over an <see cref="NpgsqlDataSource"/> resolved from
-    /// the container, so Core's retrieval service has something to search.
+    /// the container, so Core's retrieval service has something to search, and
+    /// <see cref="PostgresExperienceSignatureSource"/> as the singleton <see cref="IExperienceSignatureSource"/> beside it.
     /// </summary>
     /// <remarks>
     /// Registered separately from the store: the two are independent ports, and a host that only
@@ -337,12 +338,21 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
                 auditing: provider.GetService<ExperienceGrantAuditing>(),
                 encryption: provider.GetService<ExperienceEncryption>()));
 
+        // Story 28.2: the optional signature port, a search channel of the same database, on the same terms.
+        services.TryAddSingleton<IExperienceSignatureSource>(provider =>
+            new PostgresExperienceSignatureSource(
+                provider.GetRequiredService<NpgsqlDataSource>(),
+                onGrantsUnavailable: null,
+                auditing: provider.GetService<ExperienceGrantAuditing>(),
+                encryption: provider.GetService<ExperienceEncryption>()));
+
         return services;
     }
 
     /// <summary>
     /// Registers <see cref="PostgresExperienceCandidateSource"/> as the singleton
-    /// <see cref="IExperienceCandidateSource"/> over <paramref name="dataSource"/>, for a host that
+    /// <see cref="IExperienceCandidateSource"/>, and <see cref="PostgresExperienceSignatureSource"/> as the singleton
+    /// <see cref="IExperienceSignatureSource"/>, over <paramref name="dataSource"/>, for a host that
     /// keeps its data source outside the container.
     /// </summary>
     /// <param name="services">The service collection to add to.</param>
@@ -363,6 +373,63 @@ public static class AgentExperiencePostgresServiceCollectionExtensions
                 auditing: provider.GetService<ExperienceGrantAuditing>(),
                 encryption: provider.GetService<ExperienceEncryption>()));
 
+        // Story 28.2: the optional signature port, over the same data source.
+        services.TryAddSingleton<IExperienceSignatureSource>(provider =>
+            new PostgresExperienceSignatureSource(
+                dataSource,
+                onGrantsUnavailable: null,
+                auditing: provider.GetService<ExperienceGrantAuditing>(),
+                encryption: provider.GetService<ExperienceEncryption>()));
+
         return services;
     }
+
+    /// <summary>
+    /// Registers <see cref="PostgresExperienceRunStore"/> as the singleton <see cref="IExperienceRunStore"/>, over the
+    /// registered <see cref="NpgsqlDataSource"/>, unless a run store is already registered: the capture service then keeps
+    /// each completed run, and finalization can read it in a later process. Opt-in: nothing writes
+    /// <c>agent_experience.experience_runs</c> without it.
+    /// </summary>
+    /// <remarks>
+    /// Migrate to <c>0032</c> and re-run
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// first; until then each save fails and is reported, and the run still completes in memory. A stored run is not
+    /// sealed, so resolving the run store throws <see cref="InvalidOperationException"/> when encryption
+    /// (<see cref="AddAgentExperiencePostgresEncryption"/>) is registered.
+    /// </remarks>
+    /// <param name="services">The service collection to add to.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperiencePostgresRunStore(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddSingleton<IExperienceRunStore>(provider =>
+            RunStore(provider, provider.GetRequiredService<NpgsqlDataSource>()));
+        return services;
+    }
+
+    /// <summary>
+    /// Registers <see cref="PostgresExperienceRunStore"/> over <paramref name="dataSource"/> as the singleton
+    /// <see cref="IExperienceRunStore"/>; see <see cref="AddAgentExperiencePostgresRunStore(IServiceCollection)"/>.
+    /// </summary>
+    /// <param name="services">The service collection to add to.</param>
+    /// <param name="dataSource">The application role's data source.</param>
+    /// <returns><paramref name="services"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    public static IServiceCollection AddAgentExperiencePostgresRunStore(this IServiceCollection services, NpgsqlDataSource dataSource)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(dataSource);
+
+        services.TryAddSingleton<IExperienceRunStore>(provider => RunStore(provider, dataSource));
+        return services;
+    }
+
+    private static PostgresExperienceRunStore RunStore(IServiceProvider provider, NpgsqlDataSource dataSource) =>
+        provider.GetService<ExperienceEncryption>() is null
+            ? new PostgresExperienceRunStore(dataSource)
+            : throw new InvalidOperationException(
+                "The PostgreSQL run store keeps completed runs unsealed, so it is not available in crypto-shredding mode "
+                + "(AddAgentExperiencePostgresEncryption is registered). Remove AddAgentExperiencePostgresRunStore, or the encryption.");
 }

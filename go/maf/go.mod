@@ -3,14 +3,15 @@ module github.com/fabbrik/AgentExperience.NET/go/maf
 go 1.26.0
 
 require (
-	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.16
-	github.com/fabbrik/AgentExperience.NET/go/inmemory v0.1.0-preview.16
-	github.com/fabbrik/AgentExperience.NET/go/postgres v0.1.0-preview.16
-	github.com/fabbrik/AgentExperience.NET/go/postgres/pgtest v0.1.0-preview.16
+	github.com/fabbrik/AgentExperience.NET/go v0.1.0-preview.17
+	github.com/fabbrik/AgentExperience.NET/go/inmemory v0.1.0-preview.17
+	github.com/fabbrik/AgentExperience.NET/go/postgres v0.1.0-preview.17
+	github.com/fabbrik/AgentExperience.NET/go/postgres/pgtest v0.1.0-preview.17
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microsoft/agent-framework-go v0.1.1
 	github.com/openai/openai-go/v3 v3.74.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	golang.org/x/text v0.43.0
 )
 
 require (
@@ -38,7 +39,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	github.com/klauspost/compress v1.18.7 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
@@ -75,7 +76,6 @@ require (
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
 )
 
 // The core, the in-memory store, the PostgreSQL store and its test helper are developed in the same repository, so a

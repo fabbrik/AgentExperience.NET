@@ -28,12 +28,14 @@
     }
     public sealed class CaptureLimits : System.IEquatable<AgentExperience.Core.Capture.CaptureLimits>
     {
+        public const int DefaultMaxRecipeExcerptLength = 200;
         public CaptureLimits(int MaxAttemptsPerRun, int MaxToolCallsPerAttempt, int MaxResultLength, int MaxErrorLength) { }
         public System.TimeSpan CompletedRunRetention { get; init; }
         public int MaxAttemptsPerRun { get; init; }
         public int MaxErrorLength { get; init; }
         public System.TimeSpan? MaxOpenRunAge { get; init; }
         public int MaxOpenRuns { get; init; }
+        public int MaxRecipeExcerptLength { get; init; }
         public int MaxResultLength { get; init; }
         public int MaxRetainedCompletedRuns { get; init; }
         public int MaxToolCallsPerAttempt { get; init; }
@@ -50,6 +52,15 @@
         public CompleteRunResult(AgentExperience.Core.Capture.CompleteRunOutcome Outcome, string? Reason) { }
         public AgentExperience.Core.Capture.CompleteRunOutcome Outcome { get; init; }
         public string? Reason { get; init; }
+        public System.Exception? RunStoreException { get; init; }
+        public string? RunStoreFailure { get; init; }
+    }
+    public sealed class ExperienceRunStoreOptions
+    {
+        public static readonly System.TimeSpan DefaultSaveTimeout;
+        public ExperienceRunStoreOptions() { }
+        public System.TimeSpan SaveTimeout { get; init; }
+        public System.Func<AgentExperience.Abstractions.ExperienceRun, bool>? ShouldPersistRun { get; init; }
     }
     public interface IExperienceCaptureService
     {
@@ -63,6 +74,8 @@
     {
         public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits) { }
         public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits, System.TimeProvider timeProvider) { }
+        public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits, System.TimeProvider timeProvider, AgentExperience.Abstractions.IExperienceRunStore? runStore) { }
+        public InMemoryExperienceCaptureService(AgentExperience.Abstractions.ISanitizer sanitizer, AgentExperience.Core.Capture.CaptureLimits limits, System.TimeProvider timeProvider, AgentExperience.Abstractions.IExperienceRunStore? runStore, AgentExperience.Core.Capture.ExperienceRunStoreOptions? runStoreOptions) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Capture.AppendAttemptResult> AppendAttemptAsync(System.Guid runId, AgentExperience.Core.Capture.AppendAttemptRequest request, System.Threading.CancellationToken cancellationToken = default) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Capture.CompleteRunResult> CompleteRunAsync(System.Guid runId, System.Guid completionEventId, AgentExperience.Abstractions.RunExecutionStatus executionStatus, System.DateTimeOffset endedAt, System.Threading.CancellationToken cancellationToken = default) { }
         public AgentExperience.Core.Capture.RecordExposureResult RecordExposure(System.Guid runId, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.RunExposure> exposures) { }
@@ -75,6 +88,8 @@
         public System.Collections.Generic.IReadOnlyDictionary<string, object?> Arguments { get; init; }
         public System.TimeSpan Duration { get; init; }
         public string? Error { get; init; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string? RecipeExcerpt { get; init; }
         public string? Result { get; init; }
         public System.DateTimeOffset StartedAt { get; init; }
         public System.Guid ToolCallId { get; init; }
@@ -288,6 +303,7 @@ namespace AgentExperience.Core.Finalization
         public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout = default) { }
         public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout, AgentExperience.Core.Confidence.ExperienceProvenanceSigningOptions? provenanceSigning) { }
         public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout, AgentExperience.Core.Confidence.ExperienceProvenanceSigningOptions? provenanceSigning, AgentExperience.Abstractions.ISanitizer? reflectionSanitizer, AgentExperience.Core.Finalization.ExperienceFinalizationOptions? options) { }
+        public ExperienceFinalizationService(AgentExperience.Core.Capture.IExperienceCaptureService captureService, AgentExperience.Core.Reflections.IExperienceReflector reflector, AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycleService, AgentExperience.Core.Indexing.ExperienceIndexingService? indexingService, System.TimeSpan? indexingTimeout, AgentExperience.Core.Confidence.ExperienceProvenanceSigningOptions? provenanceSigning, AgentExperience.Abstractions.ISanitizer? reflectionSanitizer, AgentExperience.Core.Finalization.ExperienceFinalizationOptions? options, AgentExperience.Abstractions.IExperienceRunStore? runStore) { }
         public System.TimeSpan IndexingTimeout { get; }
         public AgentExperience.Core.Finalization.ExperienceFinalizationOptions Options { get; }
         public System.Threading.Tasks.Task<AgentExperience.Core.Finalization.FinalizeExperienceResult> FinalizeAsync(AgentExperience.Core.Finalization.FinalizeExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
@@ -356,6 +372,7 @@ namespace AgentExperience.Core.Finalization
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Finalization.ReuseEvidenceResult> ReuseEvidence { get; init; }
         public bool ReuseEvidenceTruncated { get; init; }
         public long Revision { get; init; }
+        public string? RunStoreFailure { get; init; }
         public AgentExperience.Core.Finalization.FinalizationStage Stage { get; init; }
         public AgentExperience.Abstractions.ExperienceStatus? Status { get; }
     }
@@ -384,6 +401,95 @@ namespace AgentExperience.Core.Finalization
         public string? Reason { get; init; }
         public static AgentExperience.Core.Finalization.StorageDecision Permit { get; }
         public static AgentExperience.Core.Finalization.StorageDecision Deny(string? reason = null) { }
+    }
+}
+namespace AgentExperience.Core.Holdout
+{
+    public sealed class ExperienceBenefitAccumulator
+    {
+        public ExperienceBenefitAccumulator(AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null) { }
+        public void Add(AgentExperience.Abstractions.HoldoutOutcomeRow? row) { }
+        public void AddRange(System.Collections.Generic.IEnumerable<AgentExperience.Abstractions.HoldoutOutcomeRow?> rows) { }
+        public AgentExperience.Core.Holdout.ExperienceBenefitEstimate ToEstimate() { }
+    }
+    public sealed class ExperienceBenefitArm : System.IEquatable<AgentExperience.Core.Holdout.ExperienceBenefitArm>
+    {
+        public ExperienceBenefitArm(int Runs, int Successes) { }
+        public double? Rate { get; }
+        public int Runs { get; init; }
+        public int Successes { get; init; }
+    }
+    public sealed class ExperienceBenefitComparison : System.IEquatable<AgentExperience.Core.Holdout.ExperienceBenefitComparison>
+    {
+        public ExperienceBenefitComparison(AgentExperience.Core.Holdout.ExperienceBenefitArm Treatment, AgentExperience.Core.Holdout.ExperienceBenefitArm Holdout, double? Difference, double? Lower, double? Upper, AgentExperience.Core.Holdout.ExperienceBenefitVerdict Verdict, int Unverified, int Pending, int MixedArm) { }
+        public double? Difference { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitArm Holdout { get; init; }
+        public double? Lower { get; init; }
+        public int MixedArm { get; init; }
+        public int Pending { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitArm Treatment { get; init; }
+        public int Unverified { get; init; }
+        public double? Upper { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitVerdict Verdict { get; init; }
+    }
+    public sealed class ExperienceBenefitEstimate : System.IEquatable<AgentExperience.Core.Holdout.ExperienceBenefitEstimate>
+    {
+        public const string UnknownModel = "unknown";
+        public ExperienceBenefitEstimate(AgentExperience.Core.Holdout.ExperienceBenefitComparison Overall, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Holdout.ExperienceLessonBenefit> Lessons) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Holdout.ExperienceModelBenefit>? ByConsumingModel { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Holdout.ExperienceLessonBenefit> Lessons { get; init; }
+        public int MinimumRunsPerArm { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison Overall { get; init; }
+        public bool Tracked { get; init; }
+    }
+    public static class ExperienceBenefitEstimator
+    {
+        public const double Z = 1.959963984540054D;
+        public static AgentExperience.Core.Holdout.ExperienceBenefitEstimate Empty(AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null) { }
+        public static AgentExperience.Core.Holdout.ExperienceBenefitEstimate Estimate(System.Collections.Generic.IEnumerable<AgentExperience.Abstractions.HoldoutOutcomeRow> rows, AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null) { }
+    }
+    public sealed class ExperienceBenefitOptions : System.IEquatable<AgentExperience.Core.Holdout.ExperienceBenefitOptions>
+    {
+        public const int DefaultMinimumRunsPerArm = 20;
+        public ExperienceBenefitOptions() { }
+        public int MinimumRunsPerArm { get; init; }
+        public bool SplitByModel { get; init; }
+    }
+    public enum ExperienceBenefitVerdict
+    {
+        NoEvidence = 0,
+        Helps = 1,
+        Hurts = 2,
+    }
+    public sealed class ExperienceLessonBenefit : System.IEquatable<AgentExperience.Core.Holdout.ExperienceLessonBenefit>
+    {
+        public ExperienceLessonBenefit(System.Guid ExperienceId, AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Holdout.ExperienceModelPairBenefit>? ByModelPair { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison { get; init; }
+        public System.Guid ExperienceId { get; init; }
+    }
+    public sealed class ExperienceModelBenefit : System.IEquatable<AgentExperience.Core.Holdout.ExperienceModelBenefit>
+    {
+        public ExperienceModelBenefit(string Model, AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison) { }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison { get; init; }
+        public string Model { get; init; }
+    }
+    public sealed class ExperienceModelPairBenefit : System.IEquatable<AgentExperience.Core.Holdout.ExperienceModelPairBenefit>
+    {
+        public ExperienceModelPairBenefit(string LessonModel, string RunModel, AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison) { }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison Comparison { get; init; }
+        public string LessonModel { get; init; }
+        public string RunModel { get; init; }
+    }
+    public sealed class ExperienceProviderBenefitEstimate : System.IEquatable<AgentExperience.Core.Holdout.ExperienceProviderBenefitEstimate>
+    {
+        public ExperienceProviderBenefitEstimate(string ProviderKey, AgentExperience.Core.Holdout.ExperienceBenefitComparison Overall) { }
+        public int MinimumRunsPerArm { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison Overall { get; init; }
+        public string ProviderKey { get; init; }
+        public bool Tracked { get; init; }
     }
 }
 namespace AgentExperience.Core.Indexing
@@ -631,6 +737,75 @@ namespace AgentExperience.Core.Lifecycle
         Deleted = 8,
         Unverified = 9,
     }
+    public sealed class ExperienceConsolidatedLookupResult : System.IEquatable<AgentExperience.Core.Lifecycle.ExperienceConsolidatedLookupResult>
+    {
+        public ExperienceConsolidatedLookupResult(AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<System.Guid> ExperienceIds) { }
+        public System.Collections.Generic.IReadOnlyList<System.Guid> ExperienceIds { get; init; }
+        public bool MayHaveMore { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+    }
+    public static class ExperienceConsolidation
+    {
+        public const int MaxLessonToolNames = 16;
+        public const int MaxPreconditions = 16;
+        public const int MaxSources = 256;
+        public const string Producer = "AgentExperience.Consolidation/1";
+        public const string ProvenanceSource = "AgentExperience.Consolidation";
+        public const string TemplateVersion = "1";
+        public static System.Guid ConsolidatedIdFor(AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IEnumerable<System.Guid> sourceIds) { }
+        public static bool IsConsolidated(AgentExperience.Abstractions.ExperienceRecord record) { }
+        public static System.Collections.Generic.IReadOnlyList<System.Guid> SourcesOf(AgentExperience.Abstractions.ExperienceRecord record) { }
+    }
+    public enum ExperienceConsolidationGroupOutcome
+    {
+        Created = 0,
+        Existing = 1,
+        Refused = 2,
+        Deferred = 3,
+    }
+    public sealed class ExperienceConsolidationGroupResult : System.IEquatable<AgentExperience.Core.Lifecycle.ExperienceConsolidationGroupResult>
+    {
+        public ExperienceConsolidationGroupResult(System.Guid ConsolidatedExperienceId, AgentExperience.Core.Lifecycle.ExperienceConsolidationGroupOutcome Outcome, int IndependentRuns, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Lifecycle.ExperienceConsolidationSourceResult> Sources) { }
+        public bool Complete { get; }
+        public System.Guid ConsolidatedExperienceId { get; init; }
+        public int Deferred { get; init; }
+        public int IndependentRuns { get; init; }
+        public AgentExperience.Core.Lifecycle.ExperienceConsolidationGroupOutcome Outcome { get; init; }
+        public string? Reason { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Lifecycle.ExperienceConsolidationSourceResult> Sources { get; init; }
+    }
+    public sealed class ExperienceConsolidationOptions : System.IEquatable<AgentExperience.Core.Lifecycle.ExperienceConsolidationOptions>
+    {
+        public const int DefaultMinimumSources = 3;
+        public ExperienceConsolidationOptions() { }
+        public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? ArgumentKeys { get; init; }
+        public int MinimumSources { get; init; }
+    }
+    public sealed class ExperienceConsolidationResult : System.IEquatable<AgentExperience.Core.Lifecycle.ExperienceConsolidationResult>
+    {
+        public ExperienceConsolidationResult(AgentExperience.Abstractions.Scope Scope, AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Lifecycle.ExperienceConsolidationGroupResult> Groups) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Lifecycle.ExperienceConsolidationGroupResult> Groups { get; init; }
+        public int IncompleteGroups { get; }
+        public bool MayHaveMore { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public int RecordsRead { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+    }
+    public sealed class ExperienceConsolidationService
+    {
+        public ExperienceConsolidationService(AgentExperience.Abstractions.IExperienceRecordStore store, AgentExperience.Core.Lifecycle.ExperienceLifecycleService lifecycle, System.TimeProvider? clock = null) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ExperienceConsolidationResult> ConsolidateAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Core.Lifecycle.ExperienceConsolidationOptions options, System.Threading.CancellationToken cancellationToken) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ExperienceConsolidatedLookupResult> FindConsolidatedContainingAsync(AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, System.Guid sourceId, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public sealed class ExperienceConsolidationSourceResult : System.IEquatable<AgentExperience.Core.Lifecycle.ExperienceConsolidationSourceResult>
+    {
+        public ExperienceConsolidationSourceResult(System.Guid ExperienceId, AgentExperience.Core.Lifecycle.LifecycleTransitionOutcome? Outcome) { }
+        public string? ExceptionType { get; init; }
+        public System.Guid ExperienceId { get; init; }
+        public AgentExperience.Core.Lifecycle.LifecycleTransitionOutcome? Outcome { get; init; }
+        public bool Superseded { get; }
+    }
     public sealed class ExperienceLifecycleService
     {
         public const AgentExperience.Abstractions.ExperienceStatus FirstEventStatus = 0;
@@ -786,9 +961,15 @@ namespace AgentExperience.Core.Retrieval
         public AgentExperience.Core.Retrieval.RetrievalPolicy Policy { get; }
         public AgentExperience.Core.Retrieval.RankingWeights Weights { get; }
         public static System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus> EligibleStatuses { get; }
+        public bool AreRecipeExcerptsConfirmed(AgentExperience.Abstractions.ExperienceRecord record) { }
         public bool IsContentConfirmed(AgentExperience.Abstractions.ExperienceRecord record) { }
         public bool IsModelAuthored(AgentExperience.Abstractions.ExperienceRecord record) { }
         public System.Threading.Tasks.Task<AgentExperience.Core.Retrieval.ExperienceRetrievalResult> RetrieveAsync(AgentExperience.Core.Retrieval.RetrieveExperienceRequest request, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class ExperienceSignatureRetrievalService
+    {
+        public ExperienceSignatureRetrievalService(AgentExperience.Abstractions.IExperienceSignatureSource source, AgentExperience.Core.Retrieval.RetrievalPolicy? policy = null, System.TimeProvider? timeProvider = null) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Retrieval.SignatureRetrievalResult> FindAsync(AgentExperience.Core.Retrieval.SignatureRetrievalRequest request, System.Threading.CancellationToken cancellationToken = default) { }
     }
     public interface IEnvironmentCompatibilityScorer
     {
@@ -800,11 +981,14 @@ namespace AgentExperience.Core.Retrieval
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.Retrieval.RankingComponent> Components { get; init; }
         public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? GrantApproachArguments { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
+        public System.Collections.Generic.IReadOnlyList<string>? GrantRecipeExcerpts { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure? MatchedGrantDisclosure { get; init; }
         public System.Guid? PermittingGrantId { get; init; }
         public AgentExperience.Abstractions.ExperienceRecord Record { get; init; }
         public double Score { get; init; }
         public bool SharedByGrant { get; init; }
+        public double? TextCoverage { get; init; }
+        public double? VectorRelevance { get; init; }
     }
     public sealed class RankingComponent : System.IEquatable<AgentExperience.Core.Retrieval.RankingComponent>
     {
@@ -887,6 +1071,32 @@ namespace AgentExperience.Core.Retrieval
         public System.Collections.Generic.IReadOnlyDictionary<string, string>? RequiredEnvironmentAttributes { get; init; }
         public AgentExperience.Abstractions.Scope Scope { get; init; }
         public string TaskText { get; init; }
+    }
+    public enum SignatureRetrievalOutcome
+    {
+        Completed = 0,
+        Denied = 1,
+        Invalid = 2,
+        Failed = 3,
+    }
+    public sealed class SignatureRetrievalRequest : System.IEquatable<AgentExperience.Core.Retrieval.SignatureRetrievalRequest>
+    {
+        public SignatureRetrievalRequest(AgentExperience.Abstractions.AuthorizationContext Authorization, AgentExperience.Abstractions.Scope Scope, AgentExperience.Abstractions.ExperienceFailureSignature Signature) { }
+        public AgentExperience.Abstractions.AuthorizationContext Authorization { get; init; }
+        public string? CorrelationId { get; init; }
+        public bool ExcludeModelAuthored { get; init; }
+        public int Limit { get; init; }
+        public AgentExperience.Abstractions.ExperienceSignatureMatch Match { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+        public AgentExperience.Abstractions.ExperienceFailureSignature Signature { get; init; }
+    }
+    public sealed class SignatureRetrievalResult : System.IEquatable<AgentExperience.Core.Retrieval.SignatureRetrievalResult>
+    {
+        public SignatureRetrievalResult(AgentExperience.Core.Retrieval.SignatureRetrievalOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceSignatureCandidate> Candidates, System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors, System.Exception? Failure) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceSignatureCandidate> Candidates { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.StoreValidationError> Errors { get; init; }
+        public System.Exception? Failure { get; init; }
+        public AgentExperience.Core.Retrieval.SignatureRetrievalOutcome Outcome { get; init; }
     }
     public enum TextOnlyReason
     {

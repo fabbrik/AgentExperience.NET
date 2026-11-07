@@ -60,6 +60,7 @@ public class TelemetryNamesFileTests
             ("LifecycleCommit", typeof(LifecycleTransitionOutcome)),
             ("ConfidenceApply", typeof(ConfidenceUpdateOutcome)),
             ("Retrieve", typeof(RetrievalOutcome)),
+            ("RetrieveSignature", typeof(SignatureRetrievalOutcome)),
             ("Index", typeof(ExperienceIndexingOutcome)),
             ("Deindex", typeof(ExperienceDeindexingOutcome)),
             ("Reindex", typeof(ExperienceReindexOutcome)),
@@ -128,15 +129,30 @@ public class TelemetryNamesFileTests
             }
 
             Operation(json, InjectionDiagnostics.Inject, adapterSource, true, Enum.GetNames<InjectionOutcome>());
+            Operation(json, InjectionDiagnostics.Recall, adapterSource, true, Enum.GetNames<ExperienceRecallOutcome>());
+            foreach (var background in new[] { InjectionDiagnostics.RecordInjection, InjectionDiagnostics.RecordHoldout, InjectionDiagnostics.RecordProviderHoldout })
+            {
+                Operation(
+                    json,
+                    background,
+                    adapterSource,
+                    false,
+                    [
+                        InjectionDiagnostics.RecordedOutcome,
+                        InjectionDiagnostics.NotTrackedOutcome,
+                        InjectionDiagnostics.NotRecordedOutcome,
+                        InjectionDiagnostics.OutcomeUnknownOutcome,
+                    ]);
+            }
+
             Operation(
                 json,
-                InjectionDiagnostics.RecordInjection,
+                InjectionDiagnostics.BenefitRefresh,
                 adapterSource,
                 false,
                 [
-                    InjectionDiagnostics.RecordedOutcome,
-                    InjectionDiagnostics.NotTrackedOutcome,
-                    InjectionDiagnostics.NotRecordedOutcome,
+                    InjectionDiagnostics.RefreshedOutcome,
+                    InjectionDiagnostics.NotRefreshedOutcome,
                     InjectionDiagnostics.OutcomeUnknownOutcome,
                 ]);
             json.WriteEndArray();

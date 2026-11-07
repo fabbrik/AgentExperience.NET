@@ -254,6 +254,23 @@ public class DefaultExperienceReflectorTests
     }
 
     [Fact]
+    public async Task The_recorded_model_is_never_a_precondition()
+    {
+        var plain = ReflectionFixtures.Run(ReflectionFixtures.RepairAttempts(), ReflectionFixtures.Environment(metadata: new Dictionary<string, string> { ["zone"] = "b" }));
+        var onA = ReflectionFixtures.Run(
+            ReflectionFixtures.RepairAttempts(),
+            ReflectionFixtures.Environment(metadata: new Dictionary<string, string> { ["zone"] = "b", [HoldoutOutcomeRow.ModelMetadataKey] = "model-a" }));
+
+        var withModel = await _reflector.ReflectAsync(ReflectionFixtures.Request(onA, ReflectionFixtures.Verified()));
+        var without = await _reflector.ReflectAsync(ReflectionFixtures.Request(plain, ReflectionFixtures.Verified()));
+
+        Assert.Equal(without.Preconditions, withModel.Preconditions);
+        Assert.Equal(without.Warnings, withModel.Warnings);
+        Assert.Equal(without.ReuseGuidance, withModel.ReuseGuidance);
+        Assert.DoesNotContain(withModel.Preconditions, p => p.Contains("model-a", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task No_attempts_yields_empty_approach_lists_and_a_warning()
     {
         var reflection = await _reflector.ReflectAsync(ReflectionFixtures.Request(ReflectionFixtures.Run([]), ReflectionFixtures.Verified()));

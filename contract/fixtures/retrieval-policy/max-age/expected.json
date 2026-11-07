@@ -1,0 +1,134 @@
+{
+  "outcome": "Completed",
+  "query": {
+    "minConfidence": 0.5,
+    "limit": 51,
+    "minimumMatchedTerms": 3,
+    "excludeModelAuthored": false
+  },
+  "truncated": false,
+  "ranked": [
+    {
+      "experienceId": "000000c0-0000-4000-8000-000000000005",
+      "score": 0.8382406619318034,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 1,
+          "weight": 0.35,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Confidence",
+          "value": 0.6666666666666666,
+          "weight": 0.25,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Recency",
+          "value": 0.9771599684342459,
+          "weight": 0.15,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15,
+          "undecayedValue": null
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1,
+          "undecayedValue": null
+        }
+      ]
+    },
+    {
+      "experienceId": "000000c0-0000-4000-8000-000000000001",
+      "score": 0.710854927141606,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 1,
+          "weight": 0.35,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Confidence",
+          "value": 0.6666666666666666,
+          "weight": 0.25,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Recency",
+          "value": 0.12792173649959684,
+          "weight": 0.15,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15,
+          "undecayedValue": null
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1,
+          "undecayedValue": null
+        }
+      ]
+    },
+    {
+      "experienceId": "000000c0-0000-4000-8000-000000000002",
+      "score": 0.7104166666666666,
+      "components": [
+        {
+          "kind": "Relevance",
+          "value": 1,
+          "weight": 0.35,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Confidence",
+          "value": 0.6666666666666666,
+          "weight": 0.25,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Recency",
+          "value": 0.125,
+          "weight": 0.15,
+          "undecayedValue": null
+        },
+        {
+          "kind": "Status",
+          "value": 0.5,
+          "weight": 0.15,
+          "undecayedValue": null
+        },
+        {
+          "kind": "EnvironmentCompatibility",
+          "value": 1,
+          "weight": 0.1,
+          "undecayedValue": null
+        }
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "experienceId": "000000c0-0000-4000-8000-000000000003",
+      "reason": "Expired"
+    },
+    {
+      "experienceId": "000000c0-0000-4000-8000-000000000004",
+      "reason": "Expired"
+    },
+    {
+      "experienceId": "000000c0-0000-4000-8000-000000000006",
+      "reason": "IneligibleStatus"
+    }
+  ]
+}

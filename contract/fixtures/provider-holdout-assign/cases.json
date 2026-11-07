@@ -1,0 +1,2249 @@
+{
+  "description": "providerSalt = the key's length in UTF-16 code units, in decimal, then ':', the key, '/', and the holdout's salt. The fraction and the arm are README-1.8's assignment function over the run ID and providerSalt: SHA-256 over the run ID's 16 bytes in RFC 4122 order, then providerSalt's UTF-8 bytes; the digest's first 8 bytes as a big-endian unsigned integer, divided by 2^64. The arm at a rate is Holdout when the rate is at least 1 or the fraction is strictly below the rate, else Treatment. Each case's last rate is its own fraction (Treatment). validKey says whether the key is a valid provider key; a wrapper refuses one that is not.",
+  "cases": [
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "providerKey": "mem0",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "4:mem0/agentexperience-holdout-v1",
+      "fraction": 0.7242403116876974,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7242403116876974,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "providerKey": "zep",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "3:zep/agentexperience-holdout-v1",
+      "fraction": 0.6072210613181156,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.6072210613181156,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "providerKey": "mem0",
+      "salt": "another-experiment",
+      "validKey": true,
+      "providerSalt": "4:mem0/another-experiment",
+      "fraction": 0.4875513744406032,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.4875513744406032,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "providerKey": "Letta.v2_prod-1",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "validKey": true,
+      "providerSalt": "15:Letta.v2_prod-1/expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.8263365960258839,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.8263365960258839,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "providerKey": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "100:kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk/agentexperience-holdout-v1",
+      "fraction": 0.05080706472760984,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.05080706472760984,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "providerKey": "a",
+      "salt": "b/c",
+      "validKey": true,
+      "providerSalt": "1:a/b/c",
+      "fraction": 0.9475517967716243,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9475517967716243,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "providerKey": "a/b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a/b/c",
+      "fraction": 0.00432658892886631,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.00432658892886631,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "providerKey": "a",
+      "salt": "b:c",
+      "validKey": true,
+      "providerSalt": "1:a/b:c",
+      "fraction": 0.38225900609992547,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.38225900609992547,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "providerKey": "a:b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a:b/c",
+      "fraction": 0.7900787336821001,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7900787336821001,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "providerKey": "1:a",
+      "salt": "b",
+      "validKey": false,
+      "providerSalt": "3:1:a/b",
+      "fraction": 0.002823230840308016,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.002823230840308016,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "providerKey": "1",
+      "salt": "a/b",
+      "validKey": true,
+      "providerSalt": "1:1/a/b",
+      "fraction": 0.5531498620063902,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5531498620063902,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "providerKey": "mem0",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "4:mem0/agentexperience-holdout-v1",
+      "fraction": 0.6164383193078965,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.6164383193078965,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "providerKey": "zep",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "3:zep/agentexperience-holdout-v1",
+      "fraction": 0.1317971823707633,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.1317971823707633,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "providerKey": "mem0",
+      "salt": "another-experiment",
+      "validKey": true,
+      "providerSalt": "4:mem0/another-experiment",
+      "fraction": 0.537967411755185,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.537967411755185,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "providerKey": "Letta.v2_prod-1",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "validKey": true,
+      "providerSalt": "15:Letta.v2_prod-1/expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.25206810085053627,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.25206810085053627,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "providerKey": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "100:kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk/agentexperience-holdout-v1",
+      "fraction": 0.7793223704146676,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7793223704146676,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "providerKey": "a",
+      "salt": "b/c",
+      "validKey": true,
+      "providerSalt": "1:a/b/c",
+      "fraction": 0.6220995830452056,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.6220995830452056,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "providerKey": "a/b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a/b/c",
+      "fraction": 0.05173752790871573,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.05173752790871573,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "providerKey": "a",
+      "salt": "b:c",
+      "validKey": true,
+      "providerSalt": "1:a/b:c",
+      "fraction": 0.39985808661044636,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.39985808661044636,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "providerKey": "a:b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a:b/c",
+      "fraction": 0.7710316871148759,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7710316871148759,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "providerKey": "1:a",
+      "salt": "b",
+      "validKey": false,
+      "providerSalt": "3:1:a/b",
+      "fraction": 0.48018197760896714,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.48018197760896714,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "providerKey": "1",
+      "salt": "a/b",
+      "validKey": true,
+      "providerSalt": "1:1/a/b",
+      "fraction": 0.13397045347286432,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.13397045347286432,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "providerKey": "mem0",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "4:mem0/agentexperience-holdout-v1",
+      "fraction": 0.659582710964263,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.659582710964263,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "providerKey": "zep",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "3:zep/agentexperience-holdout-v1",
+      "fraction": 0.8666544593316119,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.8666544593316119,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "providerKey": "mem0",
+      "salt": "another-experiment",
+      "validKey": true,
+      "providerSalt": "4:mem0/another-experiment",
+      "fraction": 0.9028671108292288,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9028671108292288,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "providerKey": "Letta.v2_prod-1",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "validKey": true,
+      "providerSalt": "15:Letta.v2_prod-1/expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.5043596534605723,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5043596534605723,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "providerKey": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "100:kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk/agentexperience-holdout-v1",
+      "fraction": 0.30249232704820866,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.30249232704820866,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "providerKey": "a",
+      "salt": "b/c",
+      "validKey": true,
+      "providerSalt": "1:a/b/c",
+      "fraction": 0.5457467277212794,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5457467277212794,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "providerKey": "a/b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a/b/c",
+      "fraction": 0.060907079191405464,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.060907079191405464,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "providerKey": "a",
+      "salt": "b:c",
+      "validKey": true,
+      "providerSalt": "1:a/b:c",
+      "fraction": 0.31407294554567394,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.31407294554567394,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "providerKey": "a:b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a:b/c",
+      "fraction": 0.0818318682810625,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.0818318682810625,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "providerKey": "1:a",
+      "salt": "b",
+      "validKey": false,
+      "providerSalt": "3:1:a/b",
+      "fraction": 0.15612213413276,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.15612213413276,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "providerKey": "1",
+      "salt": "a/b",
+      "validKey": true,
+      "providerSalt": "1:1/a/b",
+      "fraction": 0.8540890972229471,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.8540890972229471,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "providerKey": "mem0",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "4:mem0/agentexperience-holdout-v1",
+      "fraction": 0.6708206327760704,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.6708206327760704,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "providerKey": "zep",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "3:zep/agentexperience-holdout-v1",
+      "fraction": 0.10167136698185733,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.10167136698185733,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "providerKey": "mem0",
+      "salt": "another-experiment",
+      "validKey": true,
+      "providerSalt": "4:mem0/another-experiment",
+      "fraction": 0.6809261938428547,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.6809261938428547,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "providerKey": "Letta.v2_prod-1",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "validKey": true,
+      "providerSalt": "15:Letta.v2_prod-1/expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.16548392037402326,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.16548392037402326,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "providerKey": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "100:kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk/agentexperience-holdout-v1",
+      "fraction": 0.4658515851061931,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.4658515851061931,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "providerKey": "a",
+      "salt": "b/c",
+      "validKey": true,
+      "providerSalt": "1:a/b/c",
+      "fraction": 0.8466024416062926,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.8466024416062926,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "providerKey": "a/b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a/b/c",
+      "fraction": 0.10344715398829195,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.10344715398829195,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "providerKey": "a",
+      "salt": "b:c",
+      "validKey": true,
+      "providerSalt": "1:a/b:c",
+      "fraction": 0.17646041062678872,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.17646041062678872,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "providerKey": "a:b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a:b/c",
+      "fraction": 0.9379919419937911,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9379919419937911,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "providerKey": "1:a",
+      "salt": "b",
+      "validKey": false,
+      "providerSalt": "3:1:a/b",
+      "fraction": 0.7303989398744316,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7303989398744316,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "providerKey": "1",
+      "salt": "a/b",
+      "validKey": true,
+      "providerSalt": "1:1/a/b",
+      "fraction": 0.3048738744266389,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.3048738744266389,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000101",
+      "providerKey": "mem0",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "4:mem0/agentexperience-holdout-v1",
+      "fraction": 0.8875406175192444,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.8875406175192444,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000101",
+      "providerKey": "zep",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "3:zep/agentexperience-holdout-v1",
+      "fraction": 0.3626802419771648,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.3626802419771648,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000101",
+      "providerKey": "mem0",
+      "salt": "another-experiment",
+      "validKey": true,
+      "providerSalt": "4:mem0/another-experiment",
+      "fraction": 0.9595749384628205,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9595749384628205,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000101",
+      "providerKey": "Letta.v2_prod-1",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "validKey": true,
+      "providerSalt": "15:Letta.v2_prod-1/expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.18794509065236248,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.18794509065236248,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000101",
+      "providerKey": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "100:kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk/agentexperience-holdout-v1",
+      "fraction": 0.19282537810751257,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.19282537810751257,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000101",
+      "providerKey": "a",
+      "salt": "b/c",
+      "validKey": true,
+      "providerSalt": "1:a/b/c",
+      "fraction": 0.6173194666510217,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.6173194666510217,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000101",
+      "providerKey": "a/b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a/b/c",
+      "fraction": 0.505501210335764,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.505501210335764,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000101",
+      "providerKey": "a",
+      "salt": "b:c",
+      "validKey": true,
+      "providerSalt": "1:a/b:c",
+      "fraction": 0.9498133747170535,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9498133747170535,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000101",
+      "providerKey": "a:b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a:b/c",
+      "fraction": 0.7011574283935591,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7011574283935591,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000101",
+      "providerKey": "1:a",
+      "salt": "b",
+      "validKey": false,
+      "providerSalt": "3:1:a/b",
+      "fraction": 0.5508606056773054,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5508606056773054,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000101",
+      "providerKey": "1",
+      "salt": "a/b",
+      "validKey": true,
+      "providerSalt": "1:1/a/b",
+      "fraction": 0.7337187828870239,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7337187828870239,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000102",
+      "providerKey": "mem0",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "4:mem0/agentexperience-holdout-v1",
+      "fraction": 0.2104481341843965,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.2104481341843965,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000102",
+      "providerKey": "zep",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "3:zep/agentexperience-holdout-v1",
+      "fraction": 0.426360001750383,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.426360001750383,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000102",
+      "providerKey": "mem0",
+      "salt": "another-experiment",
+      "validKey": true,
+      "providerSalt": "4:mem0/another-experiment",
+      "fraction": 0.5320612388308591,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5320612388308591,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000102",
+      "providerKey": "Letta.v2_prod-1",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "validKey": true,
+      "providerSalt": "15:Letta.v2_prod-1/expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.6743784854965325,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.6743784854965325,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000102",
+      "providerKey": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+      "salt": "agentexperience-holdout-v1",
+      "validKey": true,
+      "providerSalt": "100:kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk/agentexperience-holdout-v1",
+      "fraction": 0.7157656777325814,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7157656777325814,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000102",
+      "providerKey": "a",
+      "salt": "b/c",
+      "validKey": true,
+      "providerSalt": "1:a/b/c",
+      "fraction": 0.7970302896336555,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7970302896336555,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000102",
+      "providerKey": "a/b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a/b/c",
+      "fraction": 0.9917383145543107,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9917383145543107,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000102",
+      "providerKey": "a",
+      "salt": "b:c",
+      "validKey": true,
+      "providerSalt": "1:a/b:c",
+      "fraction": 0.289389775975393,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.289389775975393,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000102",
+      "providerKey": "a:b",
+      "salt": "c",
+      "validKey": false,
+      "providerSalt": "3:a:b/c",
+      "fraction": 0.15902607551233922,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.15902607551233922,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000102",
+      "providerKey": "1:a",
+      "salt": "b",
+      "validKey": false,
+      "providerSalt": "3:1:a/b",
+      "fraction": 0.7785686030503923,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7785686030503923,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "000000d0-0000-4000-8000-000000000102",
+      "providerKey": "1",
+      "salt": "a/b",
+      "validKey": true,
+      "providerSalt": "1:1/a/b",
+      "fraction": 0.6048445296521708,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.1,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.9,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.6048445296521708,
+          "arm": "Treatment"
+        }
+      ]
+    }
+  ]
+}

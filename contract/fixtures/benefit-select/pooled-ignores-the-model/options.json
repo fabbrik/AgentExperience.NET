@@ -1,0 +1,11 @@
+{
+  "description": "PerModel off: the pooled verdicts, whatever the invoking model.",
+  "enabled": true,
+  "preferMeasuredHelpful": true,
+  "perModel": false,
+  "model": "model-a",
+  "requestLimit": null,
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

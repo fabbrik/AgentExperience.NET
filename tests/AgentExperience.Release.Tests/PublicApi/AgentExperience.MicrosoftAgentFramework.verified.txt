@@ -4,6 +4,11 @@
     {
         public static Microsoft.Agents.AI.AIAgentBuilder UseAgentExperience(this Microsoft.Agents.AI.AIAgentBuilder builder, System.IServiceProvider services) { }
     }
+    public static class AgentExperienceBenefit
+    {
+        public static System.Threading.Tasks.Task<AgentExperience.Core.Holdout.ExperienceBenefitEstimate> EstimateAsync(System.IServiceProvider services, AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null, System.Threading.CancellationToken cancellationToken = default) { }
+        public static System.Threading.Tasks.Task<AgentExperience.Core.Holdout.ExperienceProviderBenefitEstimate> EstimateProviderAsync(System.IServiceProvider services, AgentExperience.Abstractions.AuthorizationContext authorization, AgentExperience.Abstractions.Scope scope, string providerKey, AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null, System.Threading.CancellationToken cancellationToken = default) { }
+    }
     public enum AgentExperienceEmbeddings
     {
         Auto = 0,
@@ -19,6 +24,9 @@
     }
     public sealed class AgentExperienceLessons
     {
+        public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ExperienceConsolidationResult> ConsolidateAsync(AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, AgentExperience.Core.Lifecycle.ExperienceConsolidationOptions? options = null, System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonExportResult> ExportMeasuredAsync(AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, AgentExperience.MicrosoftAgentFramework.Export.IExperienceLessonSink sink, AgentExperience.Core.Holdout.ExperienceBenefitOptions? options = null, System.Threading.CancellationToken cancellationToken = default) { }
+        public System.Threading.Tasks.Task<AgentExperience.Core.Lifecycle.ExperienceConsolidatedLookupResult> FindConsolidatedContainingAsync(AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, System.Guid sourceId, System.Threading.CancellationToken cancellationToken = default) { }
         public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage> ListAsync(AgentExperience.MicrosoftAgentFramework.ExperienceIdentity identity, AgentExperience.MicrosoftAgentFramework.ExperienceLessonsQuery? query = null, System.Threading.CancellationToken cancellationToken = default) { }
         public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.ExperienceLessonsPage> ListForDevelopmentIdentityAsync(AgentExperience.MicrosoftAgentFramework.ExperienceLessonsQuery? query = null, System.Threading.CancellationToken cancellationToken = default) { }
     }
@@ -36,6 +44,7 @@
         public bool InjectWithUseAgentExperience { get; set; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionOptions>? Injection { get; set; }
         public double MinimumSemanticSimilarity { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOptions? Recall { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.AgentExperienceIdentityContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceIdentity?>>? ResolveIdentity { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.AgentExperienceIdentityContext, string>? ResolveTaskId { get; set; }
         public AgentExperience.Core.Finalization.ReuseEvidenceMode ReuseEvidence { get; set; }
@@ -43,6 +52,7 @@
         public string TaskId { get; set; }
         public System.TimeProvider? TimeProvider { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceVerificationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.MicrosoftAgentFramework.ExperienceVerification?>>? Verify { get; set; }
+        public void Recipe(string toolName, System.Collections.Generic.IReadOnlyList<string>? arguments = null, System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceToolResultContext, string?>? resultExcerpt = null) { }
         public void UseDevelopmentIdentity(string? tenant = null) { }
     }
     public sealed class ExperienceApproval : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ExperienceApproval>
@@ -75,6 +85,9 @@
         RecordExposure = 5,
         ToolResultClassification = 6,
         Embeddings = 7,
+        Recall = 8,
+        RecipeExcerpt = 9,
+        RunStore = 10,
     }
     public sealed class ExperienceCaptureOptions
     {
@@ -90,6 +103,7 @@
         public System.Func<System.Guid> NewId { get; set; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.ExperienceCaptureFailure>? OnCaptureFailure { get; set; }
         public System.Action<AgentExperience.Core.Finalization.FinalizeExperienceResult>? OnRunFinalized { get; set; }
+        public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceToolResultContext, string?>? RecipeResultExcerpt { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext, AgentExperience.Core.Finalization.FinalizeExperienceRequest?>? ResolveFinalization { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceFinalizationContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.Core.Finalization.FinalizeExperienceRequest?>>? ResolveFinalizationAsync { get; set; }
         public required System.Func<AgentExperience.MicrosoftAgentFramework.ExperienceRunContext, AgentExperience.MicrosoftAgentFramework.ExperienceRunDescriptor> ResolveRun { get; set; }
@@ -113,6 +127,7 @@
         public string BlockText { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.ExperienceLessonCheck> Checks { get; init; }
         public double Confidence { get; init; }
+        public int? ConsolidatedFrom { get; init; }
         public System.DateTimeOffset CreatedAt { get; init; }
         public System.Guid ExperienceId { get; init; }
         public AgentExperience.MicrosoftAgentFramework.ExperienceLessonIneligibility? Ineligibility { get; init; }
@@ -120,6 +135,7 @@
         public long InjectionCount { get; init; }
         public bool IsEligible { get; init; }
         public System.DateTimeOffset? LastInjectedAt { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceLessonBenefit? MeasuredBenefit { get; init; }
         public AgentExperience.Abstractions.ExperienceStatus Status { get; init; }
         public string TaskId { get; init; }
         public System.DateTimeOffset UpdatedAt { get; init; }
@@ -165,6 +181,7 @@
     {
         public ExperienceLessonsQuery() { }
         public bool IncludeIneligible { get; init; }
+        public bool IncludeMeasuredBenefit { get; init; }
         public int Limit { get; init; }
         public System.Collections.Generic.IReadOnlyList<AgentExperience.Abstractions.ExperienceStatus>? Statuses { get; init; }
     }
@@ -245,6 +262,48 @@
     }
     public interface IAgentExperienceBuilder : AgentExperience.Abstractions.IAgentExperienceBuilder<Microsoft.Extensions.DependencyInjection.IServiceCollection> { }
 }
+namespace AgentExperience.MicrosoftAgentFramework.Export
+{
+    public sealed class ExperienceLessonExportResult : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonExportResult>
+    {
+        public ExperienceLessonExportResult(AgentExperience.Abstractions.Scope Scope, AgentExperience.Abstractions.ExperienceStoreOutcome Outcome, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Export.ExportedLesson> Lessons, AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonSyncResult? Sync, System.DateTimeOffset ExportedAt) { }
+        public System.DateTimeOffset ExportedAt { get; init; }
+        public bool HoldoutTracked { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Export.ExportedLesson> Lessons { get; init; }
+        public AgentExperience.Abstractions.ExperienceStoreOutcome Outcome { get; init; }
+        public AgentExperience.Abstractions.Scope Scope { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonSyncResult? Sync { get; init; }
+    }
+    public sealed class ExperienceLessonSyncResult : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonSyncResult>
+    {
+        public ExperienceLessonSyncResult(int Added, int Updated, int Removed) { }
+        public int Added { get; init; }
+        public int Removed { get; init; }
+        public int Updated { get; init; }
+    }
+    public sealed class ExportedLesson : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Export.ExportedLesson>
+    {
+        public ExportedLesson(System.Guid ExperienceId, long Revision, string TaskId, string LessonText, AgentExperience.Core.Holdout.ExperienceBenefitComparison MeasuredBenefit, System.DateTimeOffset ExportedAt) { }
+        public System.Guid ExperienceId { get; init; }
+        public System.DateTimeOffset ExportedAt { get; init; }
+        public string LessonText { get; init; }
+        public AgentExperience.Core.Holdout.ExperienceBenefitComparison MeasuredBenefit { get; init; }
+        public long Revision { get; init; }
+        public string TaskId { get; init; }
+    }
+    public interface IExperienceLessonSink
+    {
+        System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonSyncResult> SyncAsync(AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Export.ExportedLesson> current, System.Threading.CancellationToken cancellationToken);
+    }
+    public sealed class MarkdownLessonFileSink : AgentExperience.MicrosoftAgentFramework.Export.IExperienceLessonSink
+    {
+        public const string ExportedLinePrefix = "Exported: ";
+        public const string LessonHeadingPrefix = "## Lesson ";
+        public MarkdownLessonFileSink(string path, System.TimeProvider? timeProvider = null) { }
+        public string Path { get; }
+        public System.Threading.Tasks.Task<AgentExperience.MicrosoftAgentFramework.Export.ExperienceLessonSyncResult> SyncAsync(AgentExperience.Abstractions.Scope scope, System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Export.ExportedLesson> current, System.Threading.CancellationToken cancellationToken) { }
+    }
+}
 namespace AgentExperience.MicrosoftAgentFramework.Injection
 {
     public enum AttemptFailureDetail
@@ -252,6 +311,22 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         ErrorClass = 0,
         Excerpt = 1,
         None = 2,
+    }
+    public sealed class ExperienceBenefitPolicy : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceBenefitPolicy>
+    {
+        public static readonly System.TimeSpan DefaultRefreshInterval;
+        public static readonly System.TimeSpan DefaultRefreshTimeout;
+        public static readonly System.TimeSpan DefaultWindow;
+        public static readonly System.TimeSpan MaxRefreshTimeout;
+        public ExperienceBenefitPolicy() { }
+        public bool Enabled { get; init; }
+        public int MinimumRunsPerArm { get; init; }
+        public bool PerModel { get; init; }
+        public bool PreferMeasuredHelpful { get; init; }
+        public System.TimeSpan RefreshInterval { get; init; }
+        public System.TimeSpan RefreshTimeout { get; init; }
+        public System.TimeSpan Window { get; init; }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceBenefitPolicy Off { get; }
     }
     public sealed class ExperienceContextProvider : Microsoft.Agents.AI.AIContextProvider
     {
@@ -262,6 +337,24 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         protected override System.Threading.Tasks.ValueTask InvokedCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokedContext context, System.Threading.CancellationToken cancellationToken = default) { }
         protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> InvokingCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
         protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> ProvideAIContextAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class ExperienceHoldoutContextProvider : Microsoft.Agents.AI.AIContextProvider
+    {
+        public ExperienceHoldoutContextProvider(Microsoft.Agents.AI.AIContextProvider inner, string providerKey, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions holdout, AgentExperience.Abstractions.IExperienceRecordStore store, System.Func<AgentExperience.Abstractions.Scope, AgentExperience.Abstractions.AuthorizationContext?>? authorize = null, System.TimeProvider? timeProvider = null) { }
+        public Microsoft.Agents.AI.AIContextProvider InnerProvider { get; }
+        public string ProviderKey { get; }
+        public override System.Collections.Generic.IReadOnlyList<string> StateKeys { get; }
+        public override object? GetService(System.Type serviceType, object? serviceKey = null) { }
+        protected override System.Threading.Tasks.ValueTask InvokedCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokedContext context, System.Threading.CancellationToken cancellationToken = default) { }
+        protected override System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext> InvokingCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext context, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class ExperienceHoldoutOptions : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions>
+    {
+        public const string DefaultSalt = "agentexperience-holdout-v1";
+        public ExperienceHoldoutOptions() { }
+        public double Rate { get; init; }
+        public string Salt { get; init; }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions Off { get; }
     }
     public sealed class ExperienceInjectionContext : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext>
     {
@@ -280,6 +373,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public AgentExperience.Abstractions.ExperienceRecord Current { get; init; }
         public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>>? GrantApproachArguments { get; init; }
         public AgentExperience.Abstractions.ExperienceGrantDisclosure? GrantDisclosure { get; init; }
+        public System.Collections.Generic.IReadOnlyList<string>? GrantRecipeExcerpts { get; init; }
         public bool ModelAuthored { get; init; }
         public System.Guid? PermittingGrantId { get; init; }
         public bool SharedByGrant { get; init; }
@@ -303,13 +397,18 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const int MaxSessionStateKeyLength = 128;
         public ExperienceInjectionOptions() { }
         public System.Collections.Generic.IDictionary<string, System.Collections.Generic.IReadOnlyList<string>> ApproachArguments { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceBenefitPolicy Benefit { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionDecisionContext, AgentExperience.MicrosoftAgentFramework.Injection.InjectionDecision>? DecideInjection { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.AttemptFailureDetail FailureDetail { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions Holdout { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionLimits Limits { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceMessageRole MessageRole { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceMatchFloor? MinimumMatch { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ModelAuthoredLessonPolicy ModelAuthoredLessons { get; set; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionResult>? OnContextInjected { get; set; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOptions? Recall { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.ReceivingAgentCapabilities? ReceivingAgent { get; set; }
+        public System.Collections.Generic.ICollection<string> RecipeExcerpts { get; set; }
         public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceRendering Rendering { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, AgentExperience.Core.Retrieval.RetrieveExperienceRequest?>? ResolveRequest { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionContext, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<AgentExperience.Core.Retrieval.RetrieveExperienceRequest?>>? ResolveRequestAsync { get; set; }
@@ -335,6 +434,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public bool TextOnly { get; }
         public bool Truncated { get; init; }
         public AgentExperience.Core.Retrieval.VectorChannelFallback? VectorFallback { get; init; }
+        public System.Collections.Generic.IReadOnlyList<System.Guid> WithheldExperienceIds { get; init; }
     }
     public sealed class ExperienceInjectionSessionLimits : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceInjectionSessionLimits>
     {
@@ -357,6 +457,54 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public bool RecordsExhausted { get; }
         public int RecordsUsed { get; init; }
         public int TrackedRecords { get; init; }
+    }
+    public sealed class ExperienceMatchFloor : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceMatchFloor>
+    {
+        public const double Tolerance = 1E-06D;
+        public ExperienceMatchFloor() { }
+        public double? MinimumSemanticSimilarity { get; init; }
+        public required double MinimumTextCoverage { get; init; }
+    }
+    public sealed class ExperienceRecallOptions : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOptions>
+    {
+        public const int DefaultMaxHintBytes = 600;
+        public const int DefaultMaxHintsPerRun = 3;
+        public const int DefaultMaxRecordsPerHint = 1;
+        public const int MaxHintBytesLimit = 16384;
+        public const int MaxHintsPerRunLimit = 20;
+        public const int MaxRecordsPerHintLimit = 5;
+        public static readonly System.TimeSpan DefaultLookupTimeout;
+        public ExperienceRecallOptions() { }
+        public bool AllowCoarseMatch { get; init; }
+        public System.TimeSpan LookupTimeout { get; init; }
+        public int MaxHintBytes { get; init; }
+        public int MaxHintsPerRun { get; init; }
+        public int MaxRecordsPerHint { get; init; }
+        public System.Action<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallResult>? OnRecall { get; init; }
+        public AgentExperience.Abstractions.IExperienceSignatureSource? SignatureSource { get; init; }
+    }
+    public enum ExperienceRecallOutcome
+    {
+        Hinted = 0,
+        Withheld = 1,
+        NoMatch = 2,
+        TimedOut = 3,
+        Failed = 4,
+        Bounded = 5,
+    }
+    public sealed class ExperienceRecallResult : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallResult>
+    {
+        public ExperienceRecallResult(System.Guid RunId, AgentExperience.Abstractions.ExperienceFailureSignature? Signature, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOutcome Outcome, System.Collections.Generic.IReadOnlyList<System.Guid> ExperienceIds) { }
+        public string? CorrelationId { get; init; }
+        public System.Collections.Generic.IReadOnlyList<System.Guid> ExperienceIds { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.InjectionFailure? Failure { get; init; }
+        public int HintBytes { get; init; }
+        public AgentExperience.Abstractions.ExperienceSignatureMatch? Match { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.MicrosoftAgentFramework.Injection.OmittedExperience> Omitted { get; init; }
+        public AgentExperience.MicrosoftAgentFramework.Injection.ExperienceRecallOutcome Outcome { get; init; }
+        public System.Guid RunId { get; init; }
+        public AgentExperience.Abstractions.ExperienceFailureSignature? Signature { get; init; }
+        public System.Collections.Generic.IReadOnlyList<System.Guid> WithheldExperienceIds { get; init; }
     }
     public enum HistoricalReferenceMessageRole
     {
@@ -381,9 +529,12 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
     public sealed class HistoricalReferenceWriteSettings : System.IEquatable<AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceWriteSettings>
     {
         public HistoricalReferenceWriteSettings() { }
+        public System.Func<AgentExperience.Abstractions.ExperienceRecord, bool>? AreRecipeExcerptsConfirmed { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.AttemptFailureDetail FailureDetail { get; init; }
         public System.Func<AgentExperience.Abstractions.ExperienceRecord, bool>? IsContentConfirmed { get; init; }
+        public System.Collections.Generic.IEnumerable<string>? RecipeExcerpts { get; init; }
         public AgentExperience.MicrosoftAgentFramework.Injection.HistoricalReferenceRendering Rendering { get; init; }
+        public bool ShowRecipeExcerptsWithoutSigning { get; init; }
     }
     public static class HistoricalReferenceWriter
     {
@@ -400,12 +551,14 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const string CallFailedClassPrefix = "[failed: ";
         public const string CallMarkerEnd = "]";
         public const string CallReturned = "[returned]";
+        public const string CallReturnedExcerptPrefix = "[returned: ";
         public const string ClampedName = "[...]";
         public const string MatchedWithoutRanking = "no ranking data";
         public const int MaxApproachArgumentsLength = 512;
         public const int MaxApproachToolNames = 20;
         public const int MaxArgumentValueLength = 64;
         public const int MaxErrorExcerptLength = 120;
+        public const int MaxRecipeExcerptLength = 200;
         public const int MaxToolNameLength = 96;
         public const int MaxTriedAttempts = 4;
         public const string ModelAuthoredEndLine = "End authored: the model-written text ends here.";
@@ -415,6 +568,9 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         public const string NoValue = "(none recorded)";
         public const string NotANumber = "(unavailable)";
         public const string OutcomeSeparator = " → ";
+        public const string RecallBegin = "=== BEGIN HISTORICAL REFERENCE: EARLIER FIX FOR THIS FAILURE (UNTRUSTED REFERENCE" +
+            " MATERIAL) ===";
+        public const string RecallWorkedPrefix = "  - worked: ";
         public const string RetractionBegin = "--- WITHDRAWN ---";
         public const string RetractionEnd = "--- END WITHDRAWN ---";
         public const string ToolSeparator = ", ";
@@ -456,6 +612,8 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         RiskClassExceeded = 8,
         ModelAuthored = 9,
         UnconfirmedContent = 10,
+        MeasuredHarmful = 11,
+        WeakMatch = 12,
     }
     public enum InjectionOutcome
     {
@@ -468,6 +626,7 @@ namespace AgentExperience.MicrosoftAgentFramework.Injection
         Failed = 6,
         Retracted = 7,
         SessionBudgetExhausted = 8,
+        Withheld = 9,
     }
     public enum ModelAuthoredLessonPolicy
     {
@@ -566,5 +725,6 @@ namespace Microsoft.Extensions.DependencyInjection
         public static AgentExperience.MicrosoftAgentFramework.IAgentExperienceBuilder AddAgentExperience(this Microsoft.Extensions.DependencyInjection.IServiceCollection services, System.Action<AgentExperience.MicrosoftAgentFramework.AgentExperienceOptions> configure) { }
         public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceContextProvider GetAgentExperienceContextProvider(this System.IServiceProvider services) { }
         public static AgentExperience.MicrosoftAgentFramework.AgentExperienceLessons GetAgentExperienceLessons(this System.IServiceProvider services) { }
+        public static AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutContextProvider UseMeasuredMemory(this System.IServiceProvider services, Microsoft.Agents.AI.AIContextProvider memory, string providerKey, AgentExperience.MicrosoftAgentFramework.Injection.ExperienceHoldoutOptions? holdout = null) { }
     }
 }

@@ -620,6 +620,8 @@ public sealed class AgentExperienceFiveLineSetupTests
                 .AddAgentExperience(options =>
                 {
                     options.UseDevelopmentIdentity(Tenant);
+                    // No real timer fires: a loaded machine must not time out a retrieval that would have finished.
+                    options.TimeProvider = NeverFiringTimeProvider.Instance;
                     options.Verify = (context, cancellationToken) =>
                     {
                         Verifications.Add(context);

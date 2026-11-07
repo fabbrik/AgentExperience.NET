@@ -99,6 +99,12 @@ public sealed class RealTaskOptions
     /// <summary>The model. Any <see cref="IChatClient"/>: a provider's, or a scripted one offline.</summary>
     public required IChatClient Model { get; init; }
 
+    /// <summary>
+    /// The learning phase's model in a cross-model run (amendment 7), or <see langword="null"/> when <see cref="Model"/>
+    /// does both phases. Learning runs call only this; trials call only <see cref="Model"/>. Both count against one budget.
+    /// </summary>
+    public IChatClient? LearningModel { get; init; }
+
     /// <summary>What the model is, for the report.</summary>
     public required RunDescriptor Descriptor { get; init; }
 

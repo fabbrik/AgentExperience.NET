@@ -165,6 +165,14 @@ public sealed record RankedExperience(
     IReadOnlyDictionary<string, IReadOnlyList<string>>? GrantApproachArguments = null)
 {
     /// <summary>
+    /// The permitting grant's <see cref="ExperienceGrant.RecipeExcerpts"/>, the tool names whose recipe excerpts its
+    /// owner consented to show, filled in by the same pre-injection re-read under a level that shows the approach, and
+    /// <see langword="null"/> otherwise, including on everything retrieval itself returns. Anything that renders a
+    /// shared record treats <see langword="null"/> as naming no tool.
+    /// </summary>
+    public IReadOnlyList<string>? GrantRecipeExcerpts { get; init; }
+
+    /// <summary>
     /// The level of the grant the candidate source's own predicate matched this record under, copied from
     /// <see cref="ExperienceCandidate.GrantDisclosure"/> when <see cref="SharedByGrant"/> is <see langword="true"/>,
     /// and <see langword="null"/> otherwise. Unlike <see cref="GrantDisclosure"/>, it is filled in by retrieval and
@@ -174,6 +182,22 @@ public sealed record RankedExperience(
     /// <see cref="ExperienceGrantDisclosure.LessonOnly"/>.
     /// </summary>
     public ExperienceGrantDisclosure? MatchedGrantDisclosure { get; init; }
+
+    /// <summary>
+    /// How much of the request's text the record covers, when the <em>text</em> channel found it: the share of the
+    /// request's distinct terms it contains (<see cref="ExperienceCandidate.TermCoverage"/>), or the text channel's
+    /// relevance when its source reports no coverage, normalized to [0, 1]. <see langword="null"/> when only the vector
+    /// channel found the record. Set by retrieval; it does not enter <see cref="Score"/>, whose relevance component is the
+    /// higher of the two channels' relevances. The injection provider's match floor reads it.
+    /// </summary>
+    public double? TextCoverage { get; init; }
+
+    /// <summary>
+    /// The vector channel's relevance for the record, <c>(1 + cosine) / 2</c> normalized to [0, 1], when that channel
+    /// found it; <see langword="null"/> when only the text channel did, or with no vector channel. Set by retrieval; the
+    /// injection provider's match floor reads it.
+    /// </summary>
+    public double? VectorRelevance { get; init; }
 }
 
 /// <summary>Why a candidate the search returned was not ranked.</summary>

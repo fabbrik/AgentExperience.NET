@@ -1,0 +1,409 @@
+{
+  "description": "The feedback ID is the idempotency key. The same submission again, its exposures listed in another order and its instant differing below a microsecond, is AlreadyRecorded: the ledger is unchanged and the attributed record's evidence is replayed under the same derived IDs. The same ID with any stored field changed, or from another reviewer, is a Conflict reporting the stored submission's exposures as Refused; from a caller with no authority over the stored submission's scope, a Conflict that reports none. Nothing is written by any of them.",
+  "service": {
+    "engine": null,
+    "hostTrustedEvidence": "Counted"
+  },
+  "records": [
+    {
+      "columns": {
+        "experience_id": "00001170-0000-4000-8000-000000000020",
+        "source_run_id": "00001170-0000-4000-8000-000000000120",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.6666666666666666,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-02-20T09:00:00+00:00",
+        "updated_at": "2026-02-20T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "00001170-0000-4000-8000-000000000e20",
+              "verificationRoundId": "00001170-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "00001170-0000-4000-8000-000000000220",
+          "experienceRunId": "00001170-0000-4000-8000-000000000120",
+          "lesson": "Verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "00001170-0000-4000-8000-000000000e20"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    },
+    {
+      "columns": {
+        "experience_id": "00001170-0000-4000-8000-000000000021",
+        "source_run_id": "00001170-0000-4000-8000-000000000121",
+        "tenant_id": "contract-tenant",
+        "application_id": "contract-app",
+        "project_id": "contract-project",
+        "team_id": null,
+        "agent_id": "refund-agent",
+        "user_id": null,
+        "task_id": "rotate-keys",
+        "status": "Validated",
+        "reuse_confidence": 0.6666666666666666,
+        "supporting_validations": 1,
+        "contradictions": 0,
+        "revision": 1,
+        "created_at": "2026-02-20T09:00:00+00:00",
+        "updated_at": "2026-02-20T09:00:00+00:00",
+        "payload_version": 1
+      },
+      "payload": {
+        "taskSummary": "Rotate the signing keys",
+        "attempts": [],
+        "outcome": {
+          "status": "Verified",
+          "evidence": [
+            {
+              "evidenceId": "00001170-0000-4000-8000-000000000e21",
+              "verificationRoundId": "00001170-0000-4000-8000-000000000d00",
+              "artifactRevision": "rev-1",
+              "checkId": "check",
+              "kind": "integration-test",
+              "result": "Pass",
+              "producer": "contract-ci",
+              "detail": null,
+              "capturedAt": "2026-02-20T09:00:00+00:00"
+            }
+          ],
+          "reason": null,
+          "evaluatedAt": "2026-02-20T09:00:00+00:00"
+        },
+        "completionScore": 1,
+        "reflection": {
+          "reflectionId": "00001170-0000-4000-8000-000000000221",
+          "experienceRunId": "00001170-0000-4000-8000-000000000121",
+          "lesson": "Verified after 1 attempt.",
+          "successfulApproaches": [],
+          "failedApproaches": [],
+          "preconditions": [
+            "Runtime version: runtime-1"
+          ],
+          "warnings": [],
+          "reuseGuidance": "Reuse only where the listed preconditions match.",
+          "evidenceIds": [
+            "00001170-0000-4000-8000-000000000e21"
+          ],
+          "verificationStatus": "Verified",
+          "completionScore": 1,
+          "verificationRuleVersion": "1.0.0",
+          "producer": "host-reflector/1.0",
+          "createdAt": "2026-02-20T09:00:00+00:00"
+        },
+        "environment": {
+          "hostName": "contract-host",
+          "runtimeVersion": "runtime-1",
+          "operatingSystem": "linux",
+          "applicationVersion": "1.0.0",
+          "metadata": {
+            "region": "eu-west"
+          }
+        },
+        "provenance": {
+          "source": "contract-fixture",
+          "sourceVersion": "1",
+          "recordedAt": "2026-02-20T09:00:00+00:00",
+          "correlationId": null
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "submit": {
+        "authorization": {
+          "principalId": "reviewer-ü",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f001",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "exposedExperienceIds": [
+            "00001170-0000-4000-8000-000000000020",
+            "00001170-0000-4000-8000-000000000021"
+          ],
+          "runOutcome": "Verified",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "claimedBenefit": "Unknown",
+          "humanAssessment": {
+            "assessmentId": "00001170-0000-4000-8000-00000000a001",
+            "benefit": "Improved",
+            "attributedExperienceIds": [
+              "00001170-0000-4000-8000-000000000020"
+            ],
+            "rationale": "The reviewer saw the lesson applied.",
+            "assessedAt": "2026-03-02T09:35:00+00:00",
+            "verificationRoundId": null,
+            "assessmentToken": "aexat1.not-checked"
+          },
+          "comparativeEvaluation": null,
+          "trialLabel": null
+        }
+      },
+      "clock": "2026-03-02T12:00:00+00:00"
+    },
+    {
+      "submit": {
+        "authorization": {
+          "principalId": "reviewer-ü",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f001",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "exposedExperienceIds": [
+            "00001170-0000-4000-8000-000000000021",
+            "00001170-0000-4000-8000-000000000020"
+          ],
+          "runOutcome": "Verified",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "observedAt": "2026-03-02T09:30:00.0000003+00:00",
+          "claimedBenefit": "Unknown",
+          "humanAssessment": {
+            "assessmentId": "00001170-0000-4000-8000-00000000a001",
+            "benefit": "Improved",
+            "attributedExperienceIds": [
+              "00001170-0000-4000-8000-000000000020"
+            ],
+            "rationale": "The reviewer saw the lesson applied.",
+            "assessedAt": "2026-03-02T09:35:00+00:00",
+            "verificationRoundId": null,
+            "assessmentToken": "aexat1.not-checked"
+          },
+          "comparativeEvaluation": null,
+          "trialLabel": null
+        }
+      },
+      "clock": "2026-03-02T12:01:00+00:00"
+    },
+    {
+      "submit": {
+        "authorization": {
+          "principalId": "reviewer-ü",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f001",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "exposedExperienceIds": [
+            "00001170-0000-4000-8000-000000000020",
+            "00001170-0000-4000-8000-000000000021"
+          ],
+          "runOutcome": "Verified",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 8
+          },
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "claimedBenefit": "Unknown",
+          "humanAssessment": {
+            "assessmentId": "00001170-0000-4000-8000-00000000a001",
+            "benefit": "Improved",
+            "attributedExperienceIds": [
+              "00001170-0000-4000-8000-000000000020"
+            ],
+            "rationale": "The reviewer saw the lesson applied.",
+            "assessedAt": "2026-03-02T09:35:00+00:00",
+            "verificationRoundId": null,
+            "assessmentToken": "aexat1.not-checked"
+          },
+          "comparativeEvaluation": null,
+          "trialLabel": null
+        }
+      },
+      "clock": "2026-03-02T12:02:00+00:00"
+    },
+    {
+      "submit": {
+        "authorization": {
+          "principalId": "reviewer-2",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f001",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "exposedExperienceIds": [
+            "00001170-0000-4000-8000-000000000020",
+            "00001170-0000-4000-8000-000000000021"
+          ],
+          "runOutcome": "Verified",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "claimedBenefit": "Unknown",
+          "humanAssessment": {
+            "assessmentId": "00001170-0000-4000-8000-00000000a001",
+            "benefit": "Improved",
+            "attributedExperienceIds": [
+              "00001170-0000-4000-8000-000000000020"
+            ],
+            "rationale": "The reviewer saw the lesson applied.",
+            "assessedAt": "2026-03-02T09:35:00+00:00",
+            "verificationRoundId": null,
+            "assessmentToken": "aexat1.not-checked"
+          },
+          "comparativeEvaluation": null,
+          "trialLabel": null
+        }
+      },
+      "clock": "2026-03-02T12:03:00+00:00"
+    },
+    {
+      "submit": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "other-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001170-0000-4000-8000-00000000f001",
+          "runId": "00001170-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "other-agent",
+            "userId": null
+          },
+          "exposedExperienceIds": [
+            "00001170-0000-4000-8000-000000000020",
+            "00001170-0000-4000-8000-000000000021"
+          ],
+          "runOutcome": "Verified",
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "claimedBenefit": "Unknown",
+          "humanAssessment": null,
+          "comparativeEvaluation": null,
+          "trialLabel": null
+        }
+      },
+      "clock": "2026-03-02T12:04:00+00:00"
+    }
+  ]
+}

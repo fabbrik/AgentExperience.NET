@@ -201,6 +201,49 @@ What the engine is given, and what it is not:
   when the record's first evidence is applied. Scores stored before the engine changed keep the rule they were
   recorded under until new evidence arrives.
 
+## In Python and Go
+
+Since contract 1.15 ([what it adds](../../contract/README-1.15.md)), both ports compute confidence as .NET does: the
+default rule, the update one piece of evidence makes, the status it moves the record to, the independence key it is
+counted under, a host engine checked and recorded as above, and assessment tokens minted in .NET's exact format. The
+contract's `confidence-engine` fixtures are .NET's results, and each port must give the same numbers (within 1e-12),
+statuses, rule strings, keys, tokens and refusals.
+
+Since contract 1.16 ([what it adds](../../contract/README-1.16.md)) they also **apply** evidence to a stored record and
+read confidence back: `ApplyEvidenceAsync` and `ReadConfidenceAsync` are in both ports' lifecycle services, over their
+in-memory and PostgreSQL stores, with the evidence ledger, the independence key, the single-use assessment, idempotent
+replay and the revision check exactly as above (the `lifecycle-apply` and `lifecycle-sql` fixtures are .NET's results).
+What a port does not do yet is **verify** a key's inputs: its service runs as .NET's does under
+`IndependenceVerification.TrustHostSuppliedIdentifiers`, so only the own-run rule is checked, a human submission's
+assessment token is neither checked nor spent, and every update a port applies is admitted **`HostTrusted`** and stored
+so. A .NET reader sees it for what it is: `ReadConfidenceAsync` with `ExcludeHostTrusted` or `VerifiedOnly` leaves it
+out. **Because a port cannot verify, its default is `HostTrustedEvidence = RecordedOnly`**, not .NET's `Counted`: by
+default the evidence a port applies is recorded on an event that moves only the revision, never the counters, score or
+status, so a caller cannot inflate or contest a lesson with invented run IDs. A host that accepts that risk opts into
+`Counted` explicitly (Python `host_trusted_evidence="Counted"`, Go `HostTrustedEvidence: ae.HostTrustedCounted`), which is .NET's behaviour under `TrustHostSuppliedIdentifiers`.
+Reuse feedback and finalization's own reuse evidence (`ReuseEvidenceMode`) stay
+.NET-only, so a mixed deployment that wants verified evidence still applies it from .NET.
+
+| .NET | Python (`agentexperience`) | Go (core module) |
+| --- | --- | --- |
+| `ReuseConfidenceHeuristic.Score` | `score(s, f)` | `ConfidenceScore(s, f)` |
+| `ReuseConfidenceHeuristic.Apply` | `apply(record, evidence_id, kind, source, run_id, round_id, reviewer, detail)` | `ApplyConfidenceEvidence(record, ConfidenceEvidence{...})` |
+| `AcceptsEvidenceIn`, `StatusAfter` | `accepts_evidence_in`, `status_after` | `AcceptsEvidenceIn`, `StatusAfter` |
+| `IndependenceKeyFor`, `ConfidenceIndependenceKey` | `independence_key_for`, `ConfidenceIndependenceKey` | `IndependenceKeyFor`, `MachineIndependenceKey`, `HumanIndependenceKey` |
+| `IExperienceConfidenceEngine`, `ReuseConfidenceHeuristicEngine` | `ExperienceConfidenceEngine` (a protocol), `ReuseConfidenceHeuristicEngine.INSTANCE` | `ConfidenceEngine`, `ReuseConfidenceHeuristicEngine{}` |
+| The lifecycle service's engine check and score (`confidenceEngine`) | `ConfidenceEngineRule.for_engine(engine)`, `.apply(...)`, `.recorded` | `NewConfidenceEngineRule(engine, ae.ConfidenceEngineParameter)`, `.Apply`, `.Recorded()` |
+| `ExperienceLifecycleService.ApplyEvidenceAsync`, `ReadConfidenceAsync` (contract 1.16) | `ExperienceLifecycleService(store, confidence_engine=..., host_trusted_evidence=...)`, `.apply_evidence(...)`, `.read_confidence(...)` | `NewLifecycleService(store, LifecycleOptions{...})`, `.ApplyEvidence`, `.ReadConfidence` |
+| `AssessmentTokenIssuer`, `ExperienceIndependenceOptions` | `AssessmentTokenIssuer`, `ExperienceIndependenceOptions` | `NewAssessmentTokenIssuer`, `IndependenceOptions` |
+| `ArgumentException` (and its parameter), `InvalidOperationException` | `ConfidenceArgumentError` (`.exception`, `.parameter`), `ConfidenceEngineError` | `*ConfidenceArgumentError`, `*ConfidenceEngineError` |
+
+Where a port differs, each forced by the language: an engine failure is the engine's own exception in Python and the
+error it returns in Go, passed on unchanged as .NET's is; Go reads a zero token lifetime as the default (a day) rather
+than refusing it, as its options do elsewhere; and Python states a lifetime as a `timedelta`, in whole microseconds
+rather than .NET's 100-nanosecond ticks. The token, which carries whole milliseconds, is the same either way. Python's
+`ExperienceIdentity` refuses a blank reviewer principal (`ValueError`) when it is built, before the issuer can; Go's
+`Identity.Authorization()` with nil `Bounds` is the identity's own scope, so a reviewer issuing for another scope needs
+bounds that permit it.
+
 ## Independence is keyed, and the database owns the key
 
 Machine evidence counts once per `(record, run, verification round)`; human evidence once per `(record, reviewer,
@@ -354,6 +397,18 @@ for nothing.
   are encoded: each attempt's byte saying whether it failed becomes its `Error` as a string (that byte is the string's
   presence byte), and each tool call's `Error` follows its arguments as a string. Every other byte is unchanged.
 
+  **Claims version 4: the recipe.** Under `SignClaimsVersion = 4`, finalization signs claims version 4,
+  `HMAC-SHA256.aexp-prov.v4` (`ExperienceProvenanceSignature.HmacSha256ClaimsV4`): the version 3 encoding tagged
+  `aexp-prov:v4`, whose content encoding adds each tool call's recipe excerpt (`ToolCallRecord.RecipeExcerpt`, see
+  [Injection](injection.md#showing-what-worked-the-recipe)) as a string after its `Error`. The default stays 3, which
+  signs every record, one carrying an excerpt included, exactly as before and leaves the excerpt unsigned. A version 4
+  signature confirms content like version 3, and it is the only one that confirms an excerpt: with signing configured,
+  injection shows an excerpt only under a version 4 signature that verifies
+  (`ExperienceRetrievalService.AreRecipeExcerptsConfirmed`), and renders the rest of a record without one as before.
+  Neither `TrustUnsignedRecordIds` nor `ConfirmContentRecordIds` confirms an excerpt. **To show recipe excerpts with
+  signing on, set `SignClaimsVersion = 4` once every node that verifies runs this release**: a node on an earlier build
+  refuses a version 4 signature as one it cannot check.
+
   **Version 2 records.** Signatures made by `0.1.0-preview.7` through `0.1.0-preview.9`, or during a
   `SignClaimsVersion = 2` rollout, carry `HMAC-SHA256.aexp-prov.v2` (`ExperienceProvenanceSignature.HmacSha256ClaimsV2`):
   claims version 2, the same encoding tagged `aexp-prov:v2`, whose content digest encodes only *whether* each attempt
@@ -367,7 +422,7 @@ for nothing.
   (`ExperienceProvenanceSignature.HmacSha256`): claims version 1, the same encoding tagged `aexp-prov:v1` with no
   content digest. They still verify for those claims.
 - **Content decides authorship.** With signing configured, a record's content is *confirmed* only when it carries a
-  version 3 or version 2 signature, under a key in the ring, that verifies, or when it is unsigned and its ID is in
+  version 4, version 3 or version 2 signature, under a key in the ring, that verifies, or when it is unsigned and its ID is in
   `TrustUnsignedRecordIds`. Otherwise (a version 1 signature, none, an unknown key, or one that does not verify) its
   content is unconfirmed, and it counts as model-authored whatever its reflection declares: `ExperienceRetrievalService`
   leaves it out under `ExcludeModelAuthored` (`RetrievalExclusionReason.UnconfirmedContent` when that is the only

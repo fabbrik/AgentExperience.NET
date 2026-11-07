@@ -1,0 +1,18 @@
+{
+  "session_id": "{{session}}",
+  "transcript_path": "/home/user/.claude/projects/example/{{session}}.jsonl",
+  "cwd": "/home/user/my-project",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/home/user/my-project/src/ledger.js",
+    "content": "module.exports = {};"
+  },
+  "tool_response": {
+    "filePath": "/home/user/my-project/src/ledger.js",
+    "type": "create"
+  },
+  "tool_use_id": "toolu_01ABC124",
+  "duration_ms": 12
+}

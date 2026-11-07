@@ -1,0 +1,8 @@
+{
+  "accepted": false,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "options",
+    "message": "ExperienceIndependenceOptions.AssessmentTokenKey must be at least 32 bytes."
+  }
+}

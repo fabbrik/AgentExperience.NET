@@ -8,6 +8,7 @@ minimum number of query terms (fewer for a shorter query). Nothing survives the 
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import threading
 import unicodedata
@@ -16,6 +17,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from .confidence import ConfidenceUpdate
 from .embedding import (
     EmbeddingWrite,
     EmbeddingWriteResult,
@@ -27,9 +29,48 @@ from .embedding import (
 )
 from .encoding import Instant
 from .finalize import FinalizedExperience, InitialLifecycleEvent
-from .records import EXPERIENCE_STATUSES, ExperienceRecord, Scope
+from .holdout import (
+    HoldoutArm,
+    HoldoutAssignment,
+    HoldoutOutcomeCursor,
+    HoldoutOutcomeRow,
+    ProviderHoldoutAssignment,
+    ProviderHoldoutOutcomeRow,
+    check_outcome_limit,
+    check_provider_assignment,
+    check_provider_key,
+    holdout_records,
+)
+from .lifecycle import (
+    AuthorizationContext,
+    HistoryQuery,
+    HistoryResult,
+    LifecycleCommitResult,
+    LifecycleEvent,
+    RecordReadResult,
+    StoredLifecycleEvent,
+    SupersessionCheckResult,
+    as_replay_of,
+    assessment_spent_error,
+    is_same_evidence,
+    stored_independence_key,
+    validate_get,
+    validate_history_query,
+    validate_lifecycle_event,
+    validate_supersession_check,
+)
+from .model import model_of_metadata
+from .records import EXPERIENCE_STATUSES, ExperienceRecord, ExperienceStatus, Scope
 from .reflector import is_model_authored
-from .search import AuthorizationBounds, SearchParameters, SearchRow
+from .reuse_feedback import (
+    ExperienceReuseExposure,
+    ExperienceReuseFeedbackStoreResult,
+    RecordedExperienceReuseFeedback,
+    normalize_reuse_feedback,
+    same_reuse_feedback,
+    validate_reuse_feedback,
+)
+from .search import ELIGIBLE_STATUSES, AuthorizationBounds, SearchParameters, SearchRow
 
 MAX_INDEXED_LENGTH = 100_000
 
@@ -73,6 +114,57 @@ class InjectionRecorder(Protocol):
         experience_ids: Sequence[uuid.UUID],
         injected_at: Instant,
     ) -> None: ...
+
+
+@runtime_checkable
+class HoldoutRecorder(Protocol):
+    """
+    A store that records the injection holdout's assignments (contract 1.8), which the .NET benefit estimate reads.
+    Optional: the agent integration records an assignment only through a store that has this method, and reports
+    ``NotTracked`` for one that does not.
+    """
+
+    def record_holdout_assignment(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: HoldoutAssignment
+    ) -> None: ...
+
+
+@runtime_checkable
+class ProviderHoldoutRecorder(Protocol):
+    """
+    A store that records another memory provider's holdout assignments (contract 1.11), which the provider estimate
+    reads. Optional: a wrapped provider's assignment is recorded only through a store that has this method, and is
+    reported ``NotTracked`` for one that does not.
+    """
+
+    def record_provider_holdout_assignment(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: ProviderHoldoutAssignment
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class ProviderHoldoutRow:
+    """One provider holdout row (contract 1.11): a run, the provider's key, the arm, the scope the run was captured
+    in, and the instant (truncated to whole microseconds, clamped to the store's clock)."""
+
+    run_id: uuid.UUID
+    provider_key: str
+    arm: HoldoutArm
+    scope: Scope
+    assigned_at: Instant
+
+
+@dataclass(frozen=True)
+class HoldoutRow:
+    """One holdout assignment row: a run, one record its block named at the revision named, the arm, the record's own
+    scope, and the instant (truncated to whole microseconds, clamped to the store's clock)."""
+
+    run_id: uuid.UUID
+    experience_id: uuid.UUID
+    revision: int
+    arm: HoldoutArm
+    scope: Scope
+    assigned_at: Instant
 
 
 @runtime_checkable
@@ -173,14 +265,7 @@ class AuthorizationDenied(PermissionError):
 
 def permits(bounds: AuthorizationBounds, scope: Scope) -> bool:
     """Whether ``bounds`` permit ``scope``: the tenant always, and every bounded field exactly."""
-    pairs = (
-        (bounds.application_id, scope.application_id),
-        (bounds.project_id, scope.project_id),
-        (bounds.team_id, scope.team_id),
-        (bounds.agent_id, scope.agent_id),
-        (bounds.user_id, scope.user_id),
-    )
-    return bounds.tenant_id == scope.tenant_id and all(bound is None or bound == value for bound, value in pairs)
+    return bounds.permits(scope)
 
 
 def _words(text: str) -> list[str]:
@@ -259,17 +344,59 @@ def _index(record: ExperienceRecord) -> _Indexed:
     return _Indexed(record, fields[0], fields[1], fields[2])
 
 
+@dataclass(frozen=True)
+class _StoredEvent:
+    """One committed lifecycle event, with what only the store knows about it."""
+
+    event: LifecycleEvent
+    scope: Scope
+    applied_revision: int
+    recorded_at: Instant
+    actor: str | None
+
+    def public(self) -> StoredLifecycleEvent:
+        return StoredLifecycleEvent(self.event, self.recorded_at, self.applied_revision, self.actor)
+
+
+@dataclass(frozen=True)
+class _StoredEvidence:
+    """One piece of confidence evidence in the ledger, counted or recorded only."""
+
+    experience_id: uuid.UUID
+    event_id: uuid.UUID | None
+    update: ConfidenceUpdate
+    applied_revision: int
+    applied_status: ExperienceStatus
+
+
 class InMemoryExperienceStore:
     """Records in memory, for development and tests. Thread-safe. ``clock`` is the store's own clock, which an
-    injection's instant is clamped to, as PostgreSQL clamps it to its own."""
+    injection's instant is clamped to, as PostgreSQL clamps it to its own, and which a lifecycle commit stamps on the
+    event and the record (contract 1.16).
+
+    It moves a record through its lifecycle exactly as .NET's ``InMemoryExperienceRecordStore`` does
+    (:class:`~agentexperience.lifecycle.LifecycleStore`): every operation atomic under one lock, so concurrent commits
+    from one revision have exactly one winner. A record seeded through the constructor has no history; one written by
+    :meth:`insert_finalized` has its initial event at revision 1."""
 
     def __init__(self, records: Iterable[ExperienceRecord] = (), *, clock: Callable[[], Instant] = Instant.now) -> None:
         self._lock = threading.Lock()
         self._clock = clock
         self._records: dict[uuid.UUID, _Indexed] = {}
-        self._events: dict[uuid.UUID, tuple[InitialLifecycleEvent, str]] = {}
+        # Contract 1.16: the event log, by event and by record, the evidence ledger, and the keys it holds.
+        self._events: dict[uuid.UUID, _StoredEvent] = {}
+        self._history: dict[uuid.UUID, list[_StoredEvent]] = {}
+        self._evidence: dict[uuid.UUID, _StoredEvidence] = {}
+        self._counted_keys: set[tuple[uuid.UUID, str]] = set()
+        self._recorded_only_keys: set[tuple[uuid.UUID, str]] = set()
+        self._spent_assessments: set[tuple[uuid.UUID, uuid.UUID]] = set()
         self._injections: dict[uuid.UUID, InjectionSummary] = {}
         self._embeddings: dict[uuid.UUID, _Embedding] = {}
+        self._holdout: dict[tuple[uuid.UUID, uuid.UUID], HoldoutRow] = {}
+        # Contract 1.11: keyed on (tenant, run, provider key), as the table is.
+        self._provider_holdout: dict[tuple[str, uuid.UUID, str], ProviderHoldoutRow] = {}
+        # Erased records: each one's scope and the run it was captured from (an in-memory tombstone keeps its run).
+        self._tombstones: dict[uuid.UUID, tuple[Scope, uuid.UUID]] = {}
         for record in records:
             if record.experience_id in self._records:
                 raise ValueError("Two records share one experience ID.")
@@ -284,10 +411,13 @@ class InMemoryExperienceStore:
         if not permits(bounds, record.scope):
             raise AuthorizationDenied("The record's scope lies outside the authorization bounds.")
         with self._lock:
-            if record.experience_id in self._records:
+            if record.experience_id in self._records or record.experience_id in self._tombstones:
                 raise ValueError("A record with this experience ID is already stored.")
+            if finalized.event.event_id in self._events:
+                # As PostgreSQL's primary key on lifecycle_events refuses it.
+                raise ValueError("A lifecycle event with this event ID is already stored.")
             self._records[record.experience_id] = _index(record)
-            self._events[record.experience_id] = (finalized.event, actor)
+            self._append(_initial_event(finalized.event, record.scope, self._clock(), actor))
 
     def get(self, bounds: AuthorizationBounds, scope: Scope, experience_id: uuid.UUID) -> ExperienceRecord | None:
         """One record in exactly ``scope``; ``None`` when there is none, or the bounds do not permit it."""
@@ -335,6 +465,251 @@ class InMemoryExperienceStore:
                         max(current.last_injected_at, at), min(current.injection_count + 1, MAX_INJECTION_COUNT)
                     )
                 )
+
+    def record_holdout_assignment(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: HoldoutAssignment
+    ) -> None:
+        """
+        Records a run's holdout assignment as ``sql/record-holdout-assignment.sql`` does (contract 1.8): one row per
+        named record held (not erased) in exactly ``scope``, at the revision named (a record named twice counts once,
+        at the revision first named); a row that already exists for the run and record is kept as it is; the instant,
+        truncated to whole microseconds, is clamped to the store's clock. Nothing is written for a run whose own
+        records in the tenant (``source_run_id`` is the run) are all erased. Raises :class:`AuthorizationDenied`
+        outside the bounds, and ``ValueError`` for an invalid assignment.
+        """
+        records = holdout_records(assignment)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        at = min(assignment.assigned_at.truncate_to_microseconds(), self._clock().truncate_to_microseconds())
+        run_id = assignment.run_id
+        with self._lock:
+            if self._run_erased(run_id, scope.tenant_id):
+                return
+            for exposure in records:
+                indexed = self._records.get(exposure.experience_id)
+                if indexed is None or indexed.record.scope != scope:
+                    continue
+                self._holdout.setdefault(
+                    (run_id, exposure.experience_id),
+                    HoldoutRow(run_id, exposure.experience_id, exposure.revision, assignment.arm, scope, at),
+                )
+
+    def _run_erased(self, run_id: uuid.UUID, tenant_id: str) -> bool:
+        """The late-write guard (called under the lock): the run has records in the tenant and all are erased."""
+        live = any(
+            indexed.record.source_run_id == run_id and indexed.record.scope.tenant_id == tenant_id
+            for indexed in self._records.values()
+        )
+        erased = any(
+            erased_run == run_id and erased_scope.tenant_id == tenant_id
+            for erased_scope, erased_run in self._tombstones.values()
+        )
+        return erased and not live
+
+    def record_provider_holdout_assignment(
+        self, bounds: AuthorizationBounds, scope: Scope, assignment: ProviderHoldoutAssignment
+    ) -> None:
+        """
+        Records a run's arm in a memory provider's holdout as ``sql/record-provider-holdout-assignment.sql`` does
+        (contract 1.11): one row per tenant, run and key, in exactly ``scope`` (no record is read for it); a row that
+        already exists for them is kept as it is, whatever its scope; the instant, truncated to whole microseconds, is
+        clamped to the store's clock. Nothing is written for a run whose own records in the tenant are all erased.
+        Raises :class:`AuthorizationDenied` outside the bounds, and ``ValueError`` for an invalid assignment.
+        """
+        check_provider_assignment(assignment)
+        if not isinstance(scope, Scope):
+            raise TypeError("scope must be a Scope.")
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        at = min(assignment.assigned_at.truncate_to_microseconds(), self._clock().truncate_to_microseconds())
+        with self._lock:
+            if self._run_erased(assignment.run_id, scope.tenant_id):
+                return
+            self._provider_holdout.setdefault(
+                (scope.tenant_id, assignment.run_id, assignment.provider_key),
+                ProviderHoldoutRow(assignment.run_id, assignment.provider_key, assignment.arm, scope, at),
+            )
+
+    def provider_holdout_assignments(self) -> list[ProviderHoldoutRow]:
+        """Every provider holdout row, ordered by tenant, run then key, for inspection in tests."""
+        with self._lock:
+            rows = list(self._provider_holdout.values())
+        return sorted(rows, key=lambda row: (row.scope.tenant_id, row.run_id, row.provider_key))
+
+    def _seed_provider_holdout_row(self, row: ProviderHoldoutRow) -> None:
+        """Holds one provider holdout row exactly as given (no checks, no clamp): test-only seeding, not part of the
+        store's API. A row that already exists for the tenant, run and key is replaced."""
+        if not isinstance(row, ProviderHoldoutRow):
+            raise TypeError("row must be a ProviderHoldoutRow.")
+        with self._lock:
+            self._provider_holdout[(row.scope.tenant_id, row.run_id, row.provider_key)] = row
+
+    def read_provider_holdout_outcomes(
+        self,
+        bounds: AuthorizationBounds,
+        scope: Scope,
+        provider_key: str,
+        limit: int,
+        after: uuid.UUID | None = None,
+    ) -> list[ProviderHoldoutOutcomeRow]:
+        """
+        A page of one provider's holdout rows (contract 1.11), as ``sql/query-provider-holdout-outcomes.sql`` reads
+        them: the key's rows in exactly ``scope``, in run order (compared as UUIDs), after the run ``after``, at most
+        ``limit`` (1 to 1000), each with its run's outcome (the record held in exactly the row's scope whose source run
+        is the run, the earliest created, then the lowest ID). Raises :class:`AuthorizationDenied` outside the bounds
+        and ``ValueError`` for a bad limit or key. Reads only.
+        """
+        check_provider_key(provider_key)
+        check_outcome_limit(limit)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        with self._lock:
+            page = sorted(
+                (
+                    row
+                    for row in self._provider_holdout.values()
+                    if row.scope == scope and row.provider_key == provider_key and (after is None or row.run_id > after)
+                ),
+                key=lambda row: row.run_id,
+            )[:limit]
+            result: list[ProviderHoldoutOutcomeRow] = []
+            for row in page:
+                own = sorted(
+                    (
+                        indexed.record
+                        for indexed in self._records.values()
+                        if indexed.record.source_run_id == row.run_id and indexed.record.scope == row.scope
+                    ),
+                    key=lambda record: (record.created_at.truncate_to_microseconds(), record.experience_id),
+                )
+                result.append(
+                    ProviderHoldoutOutcomeRow(
+                        row.run_id, row.provider_key, row.arm, row.assigned_at, own[0].outcome.status if own else None
+                    )
+                )
+        return result
+
+    def seed_holdout_row(self, row: HoldoutRow) -> None:
+        """Holds one assignment row exactly as given, as the schema's owner inserts one (no checks, no clamp): for
+        seeding and tests. A row that already exists for the run and record is replaced."""
+        if not isinstance(row, HoldoutRow):
+            raise TypeError("row must be a HoldoutRow.")
+        with self._lock:
+            self._holdout[(row.run_id, row.experience_id)] = row
+
+    def holdout_assignments(self) -> list[HoldoutRow]:
+        """Every holdout assignment row, ordered by run then record, for inspection in tests."""
+        with self._lock:
+            rows = list(self._holdout.values())
+        return sorted(rows, key=lambda row: (row.run_id, row.experience_id))
+
+    def read_holdout_outcomes(
+        self, bounds: AuthorizationBounds, scope: Scope, limit: int, after: HoldoutOutcomeCursor | None = None
+    ) -> list[HoldoutOutcomeRow]:
+        """
+        A page of the holdout's outcome rows (contract 1.9), as ``sql/query-holdout-outcomes.sql`` reads them: the
+        assignment rows in exactly ``scope``, in (run, record) order, after ``after``, at most ``limit`` (1 to 1000),
+        each with its run's outcome and model (the record held in exactly the row's scope whose source run is the run,
+        the earliest created, then the lowest ID) and the named lesson's model (its record in exactly the row's
+        scope). Raises :class:`AuthorizationDenied` outside the bounds and ``ValueError`` for a bad limit. Reads only.
+        """
+        check_outcome_limit(limit)
+        if not permits(bounds, scope):
+            raise AuthorizationDenied("The scope lies outside the authorization bounds.")
+        with self._lock:
+            page = sorted(
+                (
+                    row
+                    for row in self._holdout.values()
+                    if row.scope == scope and (after is None or (row.run_id, row.experience_id) > after)
+                ),
+                key=lambda row: (row.run_id, row.experience_id),
+            )[:limit]
+            runs: dict[uuid.UUID, tuple[str | None, str | None]] = {}
+            lessons: dict[uuid.UUID, str | None] = {}
+            result: list[HoldoutOutcomeRow] = []
+            for row in page:
+                if row.run_id not in runs:
+                    own = sorted(
+                        (
+                            indexed.record
+                            for indexed in self._records.values()
+                            if indexed.record.source_run_id == row.run_id and indexed.record.scope == row.scope
+                        ),
+                        key=lambda record: (record.created_at.truncate_to_microseconds(), record.experience_id),
+                    )
+                    runs[row.run_id] = (
+                        (own[0].outcome.status, model_of_metadata(own[0].environment.metadata)) if own else (None, None)
+                    )
+                if row.experience_id not in lessons:
+                    lesson = self._records.get(row.experience_id)
+                    lessons[row.experience_id] = (
+                        model_of_metadata(lesson.record.environment.metadata)
+                        if lesson is not None and lesson.record.scope == row.scope
+                        else None
+                    )
+                outcome, run_model = runs[row.run_id]
+                result.append(
+                    HoldoutOutcomeRow(
+                        row.run_id,
+                        row.arm,
+                        row.experience_id,
+                        row.assigned_at,
+                        outcome,
+                        run_model,
+                        lessons[row.experience_id],
+                    )
+                )
+        return result
+
+    def erase(self, experience_id: uuid.UUID) -> bool:
+        """
+        Erases a record, as the .NET erasure does to what this store holds: the record is no longer read, searched,
+        listed or recorded; its injection summary and embedding go; every holdout row naming it goes, and so does
+        every row of the run it was captured from when no other record of that run is live in its tenant, the run's
+        provider holdout rows (contract 1.11) among them. The tombstone keeps the record's scope and run, so a later
+        holdout write for that run records nothing. Answers
+        whether a record was erased. For tests and development: the contract leaves erasure to .NET.
+        """
+        with self._lock:
+            indexed = self._records.pop(experience_id, None)
+            if indexed is None:
+                return False
+            record = indexed.record
+            self._tombstones[experience_id] = (record.scope, record.source_run_id)
+            self._injections.pop(experience_id, None)
+            self._embeddings.pop(experience_id, None)
+            # Its events and evidence go with it, as an erasure removes them in PostgreSQL.
+            for stored in self._history.pop(experience_id, []):
+                self._events.pop(stored.event.event_id, None)
+            for evidence_id in [key for key, row in self._evidence.items() if row.experience_id == experience_id]:
+                del self._evidence[evidence_id]
+            for keys in (self._counted_keys, self._recorded_only_keys):
+                keys.difference_update({key for key in keys if key[0] == experience_id})
+            self._spent_assessments.difference_update(
+                {key for key in self._spent_assessments if key[0] == experience_id}
+            )
+            run_live = any(
+                other.record.source_run_id == record.source_run_id
+                and other.record.scope.tenant_id == record.scope.tenant_id
+                for other in self._records.values()
+            )
+            for key, row in list(self._holdout.items()):
+                if row.experience_id == experience_id or (
+                    not run_live
+                    and row.run_id == record.source_run_id
+                    and row.scope.tenant_id == record.scope.tenant_id
+                ):
+                    del self._holdout[key]
+            if not run_live:
+                # Contract 1.11: the provider holdout rows of the run, in its tenant, go with its last live record.
+                for provider_key in [
+                    key
+                    for key in self._provider_holdout
+                    if key[0] == record.scope.tenant_id and key[1] == record.source_run_id
+                ]:
+                    del self._provider_holdout[provider_key]
+        return True
 
     def injections(self) -> dict[uuid.UUID, InjectionSummary]:
         """When each record was last injected and how often, for inspection in tests."""
@@ -464,3 +839,351 @@ class InMemoryExperienceStore:
         if not any(embedding.model_id == query.model_id for _, embedding in eligible):
             return VectorSearchResult("ModelMismatch")
         return VectorSearchResult("DimensionMismatch")
+
+    # ---- Contract 1.16: the lifecycle (.NET's InMemoryExperienceRecordStore) ---------------------------------------
+
+    def read_record(
+        self, authorization: AuthorizationContext, scope: Scope, experience_id: uuid.UUID
+    ) -> RecordReadResult:
+        """One record in exactly ``scope``, as the lifecycle reads it: validated, then authorized."""
+        errors = validate_get(scope, experience_id)
+        if errors:
+            return RecordReadResult("Invalid", None, errors)
+        if not authorization.permits(scope):
+            return RecordReadResult("Denied", None)
+        with self._lock:
+            record = self._in_scope(scope, experience_id)
+        return RecordReadResult("NotFound", None) if record is None else RecordReadResult("Found", record)
+
+    def commit_lifecycle_event(
+        self, authorization: AuthorizationContext, scope: Scope, event: LifecycleEvent
+    ) -> LifecycleCommitResult:
+        """
+        Commits one lifecycle event (.NET's ``CommitLifecycleEventAsync``): validated, then authorized, then under the
+        lock in .NET's in-memory store's order: a resubmitted evidence ID, a spent assessment and a taken independence
+        key; a resubmitted event ID; the supersession gate; the revision and prior-status guards; then the write,
+        stamped with the store's clock (truncated to whole microseconds).
+        """
+        errors = validate_lifecycle_event(scope, event, authorization)
+        if errors:
+            return LifecycleCommitResult("Invalid", 0, None, errors)
+        if not authorization.permits(scope):
+            return LifecycleCommitResult("Denied", 0, None)
+        stored = dataclasses.replace(event, occurred_at=event.occurred_at.truncate_to_microseconds())
+        with self._lock:
+            return self._commit(authorization, scope, stored)
+
+    def get_history(self, authorization: AuthorizationContext, query: HistoryQuery) -> HistoryResult:
+        """One page of a record's history (.NET's ``GetHistoryAsync``): its events after the cursor, oldest first."""
+        errors = validate_history_query(query)
+        if errors:
+            return HistoryResult("Invalid", 0, (), errors)
+        if not authorization.permits(query.scope):
+            return HistoryResult("Denied", 0, ())
+        with self._lock:
+            record = self._in_scope(query.scope, query.experience_id)
+            if record is None:
+                return HistoryResult("NotFound", 0, ())
+            cursor = query.start_after_revision
+            events = tuple(
+                stored.public()
+                for stored in self._history.get(record.experience_id, [])
+                if cursor is None or stored.applied_revision > cursor
+            )[: query.limit]
+        return HistoryResult("Found", record.revision, events, (), events[-1].applied_revision if events else None)
+
+    def check_supersession(
+        self,
+        authorization: AuthorizationContext,
+        scope: Scope,
+        experience_id: uuid.UUID,
+        replacement_experience_id: uuid.UUID,
+    ) -> SupersessionCheckResult:
+        """Whether the replacement may replace the record (.NET's ``CheckSupersessionAsync``)."""
+        errors = validate_supersession_check(scope, experience_id, replacement_experience_id)
+        if errors:
+            return SupersessionCheckResult("Invalid", None, errors)
+        if not authorization.permits(scope):
+            return SupersessionCheckResult("Denied", None)
+        with self._lock:
+            return self._check_supersession(scope, experience_id, replacement_experience_id)
+
+    def _in_scope(self, scope: Scope, experience_id: uuid.UUID) -> ExperienceRecord | None:
+        indexed = self._records.get(experience_id)
+        return indexed.record if indexed is not None and indexed.record.scope == scope else None
+
+    def _append(self, stored: _StoredEvent) -> None:
+        self._events[stored.event.event_id] = stored
+        self._history.setdefault(stored.event.experience_record_id, []).append(stored)
+
+    def _commit(
+        self, authorization: AuthorizationContext, scope: Scope, event: LifecycleEvent
+    ) -> LifecycleCommitResult:
+        record_id = event.experience_record_id
+        submitted = event.confidence
+        if submitted is not None:
+            stored_evidence = self._evidence.get(submitted.evidence_id)
+            if stored_evidence is not None:
+                return self._compare_stored_evidence(scope, event, submitted, stored_evidence)
+            if submitted.assessment_id is not None and (record_id, submitted.assessment_id) in self._spent_assessments:
+                return LifecycleCommitResult("Conflict", 0, None, (assessment_spent_error(),))
+            key = (record_id, stored_independence_key(submitted))
+            if key in self._counted_keys or (not submitted.counted and key in self._recorded_only_keys):
+                return self._record_duplicate(scope, event, submitted)
+
+        stored_event = self._events.get(event.event_id)
+        if stored_event is not None:
+            return _compare_stored_event(scope, event, stored_event)
+
+        record = self._in_scope(scope, record_id)
+        if record is None:
+            return LifecycleCommitResult("NotFound", 0, None)
+
+        if event.replacement_experience_id is not None:
+            check = self._check_supersession(scope, record_id, event.replacement_experience_id)
+            if (
+                check.outcome != "Allowed"
+                or check.replacement_status is None
+                or check.replacement_status not in ELIGIBLE_STATUSES
+            ):
+                return LifecycleCommitResult("ReplacementNotAllowed", 0, check.replacement_status)
+
+        if record.revision != event.expected_revision:
+            return LifecycleCommitResult("StaleRevision", record.revision, None)
+        if record.status != (event.prior_status if event.prior_status is not None else event.current_status):
+            return LifecycleCommitResult("StatusMismatch", record.revision, record.status)
+
+        # Everything is decided and built before anything is changed, so a failure here leaves the store untouched.
+        now = self._clock().truncate_to_microseconds()
+        applied_revision = event.expected_revision + 1
+        confidence = event.confidence
+        recorded_only = confidence is not None and not confidence.counted
+        moved = dataclasses.replace(
+            record,
+            status=event.current_status,
+            revision=applied_revision,
+            updated_at=record.updated_at if recorded_only else now,
+        )
+        if confidence is not None and confidence.counted:
+            moved = dataclasses.replace(
+                moved,
+                reuse_confidence=confidence.new_reuse_confidence,
+                supporting_validations=confidence.new_supporting_validations,
+                contradictions=confidence.new_contradictions,
+            )
+        indexed = dataclasses.replace(self._records[record_id], record=moved)
+        stored = _StoredEvent(event, scope, applied_revision, now, authorization.actor)
+        evidence = (
+            None
+            if confidence is None
+            else self._evidence_entry(record_id, event.event_id, confidence, applied_revision, event.current_status)
+        )
+        self._records[record_id] = indexed
+        self._append(stored)
+        if evidence is not None:
+            self._apply_evidence(*evidence)
+        return LifecycleCommitResult("Committed", applied_revision, None, (), confidence)
+
+    def _record_duplicate(
+        self, scope: Scope, event: LifecycleEvent, submitted: ConfidenceUpdate
+    ) -> LifecycleCommitResult:
+        """A submission whose key was taken: recorded for audit with nothing moved, and nothing else written."""
+        record = self._in_scope(scope, event.experience_record_id)
+        if record is None:
+            return LifecycleCommitResult("NotFound", 0, None)
+        if record.revision != event.expected_revision:
+            return LifecycleCommitResult("StaleRevision", record.revision, None)
+        if event.prior_status is not None and record.status != event.prior_status:
+            return LifecycleCommitResult("StatusMismatch", record.revision, record.status)
+        recorded_only = submitted.as_recorded_only()
+        self._add_evidence(record.experience_id, None, recorded_only, record.revision, record.status)
+        return LifecycleCommitResult("Committed", record.revision, record.status, (), recorded_only)
+
+    def _add_evidence(
+        self,
+        record_id: uuid.UUID,
+        event_id: uuid.UUID | None,
+        update: ConfidenceUpdate,
+        applied_revision: int,
+        applied_status: ExperienceStatus,
+    ) -> None:
+        self._apply_evidence(*self._evidence_entry(record_id, event_id, update, applied_revision, applied_status))
+
+    @staticmethod
+    def _evidence_entry(
+        record_id: uuid.UUID,
+        event_id: uuid.UUID | None,
+        update: ConfidenceUpdate,
+        applied_revision: int,
+        applied_status: ExperienceStatus,
+    ) -> tuple[
+        _StoredEvidence, tuple[uuid.UUID, str] | None, tuple[uuid.UUID, str] | None, tuple[uuid.UUID, uuid.UUID] | None
+    ]:
+        """The ledger row and the keys it claims, built without changing anything."""
+        key = (record_id, stored_independence_key(update))
+        return (
+            _StoredEvidence(record_id, event_id, update, applied_revision, applied_status),
+            key if update.counted else None,
+            key if not update.counted and event_id is not None else None,
+            None if update.assessment_id is None else (record_id, update.assessment_id),
+        )
+
+    def _apply_evidence(
+        self,
+        row: _StoredEvidence,
+        counted_key: tuple[uuid.UUID, str] | None,
+        recorded_only_key: tuple[uuid.UUID, str] | None,
+        assessment: tuple[uuid.UUID, uuid.UUID] | None,
+    ) -> None:
+        self._evidence[row.update.evidence_id] = row
+        if counted_key is not None:
+            self._counted_keys.add(counted_key)
+        if recorded_only_key is not None:
+            self._recorded_only_keys.add(recorded_only_key)
+        if assessment is not None:
+            self._spent_assessments.add(assessment)
+
+    def _compare_stored_evidence(
+        self, scope: Scope, event: LifecycleEvent, submitted: ConfidenceUpdate, stored: _StoredEvidence
+    ) -> LifecycleCommitResult:
+        same_content = (
+            stored.experience_id == event.experience_record_id
+            and self._in_scope(scope, stored.experience_id) is not None
+            and (stored.event_id is None or stored.event_id == event.event_id)
+            and stored.update.kind == submitted.kind
+            and stored.update.source == submitted.source
+            and stored.update.run_id == submitted.run_id
+            and stored.update.verification_round_id == submitted.verification_round_id
+            and stored.update.reviewer_identity == submitted.reviewer_identity
+            and stored.update.rule_version == submitted.rule_version
+            and stored.update.detail == submitted.detail
+            and stored.update.assessment_id == submitted.assessment_id
+        )
+        if not same_content:
+            return LifecycleCommitResult("Conflict", 0, None)
+        replayed = dataclasses.replace(
+            submitted,
+            prior_reuse_confidence=stored.update.prior_reuse_confidence,
+            new_reuse_confidence=stored.update.new_reuse_confidence,
+            prior_supporting_validations=stored.update.prior_supporting_validations,
+            new_supporting_validations=stored.update.new_supporting_validations,
+            prior_contradictions=stored.update.prior_contradictions,
+            new_contradictions=stored.update.new_contradictions,
+            admission=stored.update.admission,
+        )
+        return LifecycleCommitResult("Committed", stored.applied_revision, stored.applied_status, (), replayed)
+
+    def _check_supersession(
+        self, scope: Scope, experience_id: uuid.UUID, replacement_id: uuid.UUID
+    ) -> SupersessionCheckResult:
+        if self._in_scope(scope, experience_id) is None:
+            return SupersessionCheckResult("RecordNotFound", None)
+        replacement = self._in_scope(scope, replacement_id)
+        if replacement is None:
+            return SupersessionCheckResult("ReplacementNotFound", None)
+        reached = {replacement_id}
+        pending = [replacement_id]
+        while pending:
+            current = pending.pop(0)
+            for stored in self._history.get(current, []):
+                following = stored.event.replacement_experience_id
+                if stored.scope == scope and following is not None and following not in reached:
+                    reached.add(following)
+                    pending.append(following)
+        return SupersessionCheckResult("Cycle" if experience_id in reached else "Allowed", replacement.status)
+
+
+def _compare_stored_event(scope: Scope, event: LifecycleEvent, stored: _StoredEvent) -> LifecycleCommitResult:
+    """A resubmitted event ID: the same event, every field and the scope included, is the original replayed."""
+    if stored.event.experience_record_id != event.experience_record_id or stored.scope != scope:
+        return LifecycleCommitResult("Conflict", 0, None)
+    resubmitted = dataclasses.replace(
+        event,
+        confidence=None if event.confidence is None else as_replay_of(event.confidence, stored.event.confidence),
+    )
+    if is_same_evidence(event.confidence, stored.event.confidence):
+        resubmitted = dataclasses.replace(resubmitted, current_status=stored.event.current_status)
+    if stored.event == resubmitted:
+        return LifecycleCommitResult("Committed", stored.applied_revision, None, (), stored.event.confidence)
+    return LifecycleCommitResult("Conflict", 0, None)
+
+
+def _initial_event(event: InitialLifecycleEvent, scope: Scope, recorded_at: Instant, actor: str) -> _StoredEvent:
+    """A finalized record's initial event, as the store holds it in the record's history."""
+    return _StoredEvent(
+        LifecycleEvent(
+            event_id=event.event_id,
+            experience_record_id=event.experience_id,
+            prior_status=event.prior_status,
+            current_status=event.current_status,
+            reason=event.reason,
+            producer=event.producer,
+            occurred_at=event.occurred_at.truncate_to_microseconds(),
+            expected_revision=event.expected_revision,
+        ),
+        scope,
+        event.applied_revision,
+        recorded_at.truncate_to_microseconds(),
+        actor,
+    )
+
+
+# ---- Contract 1.17: the reuse-feedback ledger ----------------------------------------------------------------------
+
+
+class InMemoryExperienceReuseFeedbackStore:
+    """
+    The reuse-feedback ledger in memory, for development and tests (.NET's ``InMemoryExperienceReuseFeedbackStore``):
+    every submission validated with the ledger's own rules, then authorized; the feedback ID the idempotency key, so an
+    identical resubmission is ``AlreadyRecorded`` and one differing in any stored field is ``Conflict``, with nothing
+    written; a conflicting submission handed back only when the caller has authority over its scope. Thread-safe.
+
+    A submission is stored as a snapshot with its exposures in experience-ID order and its instants truncated to whole
+    microseconds, as PostgreSQL stores them, and that snapshot is what every result hands back. Like .NET's, it is
+    independent of the record store and checks nothing about the exposed records.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._submissions: dict[uuid.UUID, RecordedExperienceReuseFeedback] = {}
+
+    def record(
+        self, authorization: AuthorizationContext, feedback: RecordedExperienceReuseFeedback
+    ) -> ExperienceReuseFeedbackStoreResult:
+        if authorization is None or feedback is None:
+            raise TypeError("authorization and feedback must not be None.")
+        errors = validate_reuse_feedback(feedback)
+        if errors:
+            return ExperienceReuseFeedbackStoreResult("Invalid", None, errors)
+        if not authorization.permits(feedback.scope):
+            return ExperienceReuseFeedbackStoreResult("Denied", None)
+        submitted = _feedback_snapshot(normalize_reuse_feedback(feedback))
+        with self._lock:
+            stored = self._submissions.get(submitted.feedback_id)
+            if stored is not None:
+                if same_reuse_feedback(stored, submitted):
+                    return ExperienceReuseFeedbackStoreResult("AlreadyRecorded", stored)
+                return ExperienceReuseFeedbackStoreResult(
+                    "Conflict", stored if authorization.permits(stored.scope) else None
+                )
+            self._submissions[submitted.feedback_id] = submitted
+            return ExperienceReuseFeedbackStoreResult("Recorded", submitted)
+
+    def submissions(self) -> list[RecordedExperienceReuseFeedback]:
+        """Every stored submission, by feedback ID, for inspection in tests."""
+        with self._lock:
+            return [self._submissions[key] for key in sorted(self._submissions)]
+
+
+def _feedback_snapshot(feedback: RecordedExperienceReuseFeedback) -> RecordedExperienceReuseFeedback:
+    return dataclasses.replace(
+        feedback,
+        evidence_ids=tuple(feedback.evidence_ids or ()),
+        attributed_at=None if feedback.attributed_at is None else feedback.attributed_at.truncate_to_microseconds(),
+        observed_at=feedback.observed_at.truncate_to_microseconds(),
+        exposures=tuple(
+            ExperienceReuseExposure(exposure.experience_id, exposure.attributed, exposure.evidence_id)
+            for exposure in feedback.exposures or ()
+            if exposure is not None
+        ),
+    )

@@ -1,0 +1,1013 @@
+{
+  "description": "Three lessons, each named by a different set of runs: each lesson's comparison counts exactly the runs whose blocks named it, and the lessons are ordered by experience ID.",
+  "rows": [
+    {
+      "runId": "00000099-0000-4000-8000-000000000101",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000101",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:01:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000102",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000102",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000102",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:02:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000103",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000103",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000103",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:03:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000104",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:04:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000104",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:04:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000105",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:05:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000105",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:05:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000105",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:05:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000106",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:06:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000106",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:06:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000106",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:06:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000107",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:07:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000107",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:07:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000108",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:08:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000108",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:08:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000108",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:08:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000109",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:09:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000109",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:09:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000109",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:09:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010a",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:10:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010a",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:10:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010b",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:11:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010b",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:11:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010b",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:11:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010c",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:12:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010c",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000002",
+      "assignedAt": "2026-03-02T09:12:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010c",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:12:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010d",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:13:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010e",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:14:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010e",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:14:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010f",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:15:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000010f",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:15:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000110",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:16:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000111",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:17:00+00:00",
+      "runOutcome": null,
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000111",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:17:00+00:00",
+      "runOutcome": null,
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000112",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:18:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000112",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:18:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000113",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:19:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000114",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:20:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000114",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:20:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000115",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:21:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000115",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:21:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000116",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:22:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000117",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:23:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000117",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:23:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000118",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:24:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000118",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:24:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000119",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:25:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000011a",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:26:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000011a",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:26:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000011b",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:27:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000011b",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:27:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000011c",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:28:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000011d",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:29:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000011d",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:29:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000011e",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:30:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000011e",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:30:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000011f",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:31:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000120",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:32:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000120",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:32:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000121",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:33:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000121",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:33:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000122",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:34:00+00:00",
+      "runOutcome": null,
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000123",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:35:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000123",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:35:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000124",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:36:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000124",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:36:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000125",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:37:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000126",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:38:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000126",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:38:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000127",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:39:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000127",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:39:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000128",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:40:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000129",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:41:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000129",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:41:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000012a",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:42:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000012a",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:42:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000012b",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:43:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000012c",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:44:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000012c",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:44:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000012d",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:45:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000012d",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:45:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000012e",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:46:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000012f",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:47:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000012f",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:47:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000130",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:48:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000130",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:48:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000131",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:49:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000132",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:50:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000132",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:50:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000133",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:51:00+00:00",
+      "runOutcome": null,
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000133",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:51:00+00:00",
+      "runOutcome": null,
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000134",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:52:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000135",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:53:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000135",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:53:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000136",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:54:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000136",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:54:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000137",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:55:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000138",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:56:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000138",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:56:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000139",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:57:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-000000000139",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:57:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000013a",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:58:00+00:00",
+      "runOutcome": "Verified",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000013b",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T09:59:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000013b",
+      "arm": "Holdout",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T09:59:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000013c",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000001",
+      "assignedAt": "2026-03-02T10:00:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    },
+    {
+      "runId": "00000099-0000-4000-8000-00000000013c",
+      "arm": "Treatment",
+      "experienceId": "00000099-0000-4000-8000-000000000003",
+      "assignedAt": "2026-03-02T10:00:00+00:00",
+      "runOutcome": "Failed",
+      "runModel": null,
+      "lessonModel": null
+    }
+  ]
+}

@@ -2246,3 +2246,262 @@ test pins names against the .NET list.
 ### Story 23.6: 1.0-Safe Release Scripts
 Fix RELEASING's prefix-suffix build so an empty suffix yields 1.0.0; one
 tested version-derivation rule replaces the three inline copies.
+
+## Epic 25: The Library Measures Its Own Benefit
+
+**Added:** 2026-10-26 · **Status:** planned
+
+Every live experiment so far has failed to show that lessons help, and the
+library cannot tell either: an injected lesson is exposure (KL-11), and a run
+that got no lesson is not linked to the lessons it would have got. People learn
+by comparing what happened when they did something with what happened when they
+did not. This epic gives the library that comparison in production: on a
+random share of eligible runs it withholds the block, records what it withheld,
+and compares verified outcomes. Measured benefit then decides what keeps being
+injected, per scope and per consuming model, so lessons that one model learned
+are trusted by another only when they have been shown to help it.
+
+Design rules: off by default (rate 0); assignment is deterministic from the run
+id, so a replay lands in the same arm; both arms are recorded the same way; a
+verdict needs a minimum count per arm and an interval that excludes zero,
+otherwise it is `NoEvidence`; nothing is claimed from exposure alone.
+
+### Story 25.1: Withhold the Block on a Holdout Share and Record Both Arms
+`ExperienceInjectionOptions.Holdout` (rate 0..1, default 0). After the
+eligibility check and before the block is written, a run assigned to the holdout
+gets no block, no exposure and `InjectionOutcome.Withheld`; an injection
+assignment row records the run, its arm (treatment or holdout), the eligible
+record ids and revisions, and the instant, for both arms. In-memory and
+PostgreSQL (new migration, grants, RLS), telemetry outcome `Withheld`.
+
+### Story 25.2: Estimate Benefit From Verified Outcomes
+`IExperienceBenefitEstimator` joins assignments to finalized outcomes
+(Verified/Failed; Unknown excluded and counted) and returns, overall and per
+record: counts per arm, success rates, the difference with a 95% interval, and a
+verdict `Helps`/`Hurts`/`NoEvidence`. Pure and deterministic; tested against
+hand-computed tables.
+
+### Story 25.3: Act on Measured Benefit
+Opt-in policy: a record (or a whole scope) measured `Hurts` is no longer
+injected; one measured `Helps` gets a ranking boost; `NoEvidence` changes
+nothing. The holdout keeps running so a verdict can be reversed. Reported in the
+lessons listing (21.4) and as telemetry.
+
+### Story 25.4: Know Which Model Learned and Which Model Used It
+The capture records the model id the run's responses report; a record keeps the
+model that produced its source run. Benefit is estimated per consuming model and
+per (producing, consuming) pair, so cross-model transfer is measured, not
+assumed.
+
+### Story 25.5: Cross-Model Transfer Experiment
+A live experiment where one model learns and another uses the lessons, with the
+holdout as the comparison, pre-registered like the real-task experiment.
+
+### Story 25.6: Port the Holdout to Python and Go
+Assignment, the `Withheld` outcome and the assignment row through the contract
+(new fixtures), so a mixed-language deployment measures one benefit.
+
+### Story 25.7: Safeguards the Measurement Will Need
+Retire a lesson when the environment it was learned under changes; inject
+nothing below a retrieval threshold; report the mismatched-lesson cost in every
+live experiment. Each is judged by the benefit 25.2 measures.
+
+**Done 2026-10-27:** already provided by `RequiredEnvironmentAttributes`, `MaxAge` and confidence decay, the
+match floors, the benefit policy and withdrawal notices, and every live experiment's mismatched-lesson control; the
+injection guide's "Keeping lessons from misleading" maps them.
+
+### Story 25.8: Measure Any Memory Provider
+The holdout and benefit estimate wrap any MAF context provider, not only the
+library's own: on a held-out run the wrapped provider's context (Mem0, Zep,
+Letta or a host's own) is withheld, the run's arm is recorded, and 25.2's
+estimate answers whether that memory helps. Nothing in the wrapped provider
+changes. Starts with the .NET adapter; ports follow 25.6.
+
+### Story 25.9: Export Measured Lessons to Other Memory Stores
+A lesson that is verified and measured `Helps` can be exported, on request, to
+a host-supplied sink (a Mem0/Zep/Letta writer, a skills or instructions file),
+with its provenance and measured benefit, so agents that do not use this
+library's injection still get vetted lessons. Erasure and withdrawal of the
+source lesson are reported to the sink.
+
+
+### Story 25.10: Holdout Hardening
+From the 25.1-25.3 reviews: a holdout write that overlaps the erasure of the
+run's own record is refused; the benefit estimate aggregates run by run so
+memory grows with runs, not rows; migration 0028 indexes
+`experience_records (tenant_id, source_run_id)`; the lessons view can show
+each lesson's measured benefit (opt-in).
+
+## Epic 26: The Library on Real Work
+
+**Added:** 2026-10-28 · **Status:** in progress
+
+So far the library has only been measured in lab experiments. This epic runs it on real work, wired the way a user
+would wire it (public API only), with its own holdout judging it. The first real workload is this repository's own
+failed CI runs.
+
+### Story 26.1: CI-Failure Triage Agent
+`experiments/AgentExperience.CiTriage` triages this repository's failed CI runs. For each failure it names the files
+most likely to need the fix, or says the failure is flaky. The labels come from the repository's own later history:
+- a same-commit green run is flaky;
+- the next green commit's diff, when it is at most 10 files, is the fix.
+
+A pass replays, in time order on a simulated clock, every failure whose fix is known by then. A failure is triaged at
+its own time and finalized out of band at its green run's time, so a lesson only reaches failures after its fix was
+known. Injection runs a 0.5 holdout, and each pass ends with `AgentExperienceBenefit.EstimateAsync`. Storage is in
+memory, or PostgreSQL with a ledger that skips failures already processed. Calls and tokens have hard caps, and
+`--scripted` runs offline.
+
+### Story 26.2: Durable Capture for Outcomes That Arrive Later
+A captured run lives only in `InMemoryExperienceCaptureService`. It is dropped after `CompletedRunRetention` or when
+the process exits, so an outcome that arrives days later cannot be finalized. Examples are a CI fix and a ticket
+resolution. A durable capture store, so a run can be finalized from another process, would let 26.1 finalize each
+failure when its fix lands instead of replaying only failures whose fix is already known.
+
+## Epic 27: Python and Go Reach Parity with .NET
+
+**Added:** 2026-10-29 · **Status:** stopped after 27.6c (2026-10-30)
+
+**Stopped 2026-10-30.** After the critique that opened Epic 28, the port work stops once 27.6c (reuse feedback) merges.
+Stories 27.6d, 27.6e and 27.7-27.10 (reindex, session tracking, signing, grants, encryption, schema ownership in the
+ports) are deferred, not dropped: they harden a signal no real workload has yet shown helps. They return when Epic 28's
+holdout shows benefit on real work, or when a port user asks for one.
+
+The Python and Go ports pass contract 1.8: they capture, finalize, reflect, search (text and vectors), inject, record
+exposure and the holdout, and read the lessons view. Everything after that is .NET-only today: measuring and acting on
+benefit, the lifecycle after finalization, sharing, signing, encryption and erasure, and owning the schema. This epic
+closes the gap. .NET stays the reference: each story first adds a contract minor version whose fixtures are generated
+from .NET, then implements it in both ports, so the three cannot drift.
+
+### Story 27.1: Ports Estimate Benefit (contract 1.9)
+Ports record the run's model as bookkeeping metadata, read the holdout's outcome rows through a contract SQL statement,
+and compute the same Wilson/Newcombe estimate as `ExperienceBenefitEstimator` (overall, per lesson, per model), checked
+against numeric fixtures generated from .NET.
+
+### Story 27.2: Ports Act on the Estimate
+The benefit policy (`MeasuredHarmful` omission, `PreferMeasuredHelpful`, per model) with its background cache, and the
+lessons view's measured benefit.
+
+### Story 27.3: Ports Measure Another Memory Provider
+The provider holdout wrapper (`UseMeasuredMemory` equivalent) with its own SQL, privileges and telemetry.
+
+### Story 27.4: Retrieval Policy
+`MaxAge`, per-domain confidence decay, configurable recency half-life, candidate limit and timeout (with the
+abandoned-search cap), exclusion reasons and retrieval outcomes, as .NET's `RetrievalPolicy` and
+`ConfidenceDecayPolicy` (contract 1.12's `retrieval-policy` fixtures and a cross-language PostgreSQL test).
+
+### Story 27.4b: Injection Options
+Deciding and resolving the request, receiving-agent capabilities and tool risk, and the model-authored lesson policy.
+
+### Story 27.5: Lesson Export, the HTML View and the LLM Reflector
+The Markdown lesson export and the lessons HTML (byte fixtures), and a chat-client reflector with prompt and output
+fixtures.
+
+### Story 27.6: Confidence, Reuse Feedback and the Lifecycle
+The confidence engine, reuse feedback and evidence (derived ID tags 4 and 5), reinforce, contest, supersede and revoke
+with revision compare-and-set, reindex and deindex, then session tracking with withdrawal notices. Ports start changing
+stored records here, so storage conformance fixtures come first. Likely split into several stories.
+
+### Story 27.7: Provenance Signing and Independence Verification
+Shared-key signing fixtures, and the `Expired` and `ContentUnconfirmed` states.
+
+### Story 27.8: Sharing Through Grants
+The grant store, search with grants, disclosure and the access log.
+
+### Story 27.9: Encryption, Erasure and Retention
+Envelope keys and the key-encryption-key abstraction, sealed payload v2 read and write with cross-language fixtures,
+purge and retention sweeps. Go needs at-rest encryption from scratch. Likely split into several stories.
+
+### Story 27.10: Ports Own the Schema (optional)
+Freeze the migrations, privileges and row-level security as contract SQL, add port migrators, and give the upgrade
+tests a port leg, so a Python- or Go-only deployment needs no .NET process.
+
+## Epic 28: Lessons an Agent Can Act On, Wherever It Runs
+
+**Added:** 2026-10-30 · **Status:** in progress
+
+What no other agent memory has is here already: a lesson is stored only on the host's own verified evidence, and a
+randomized holdout measures whether lessons help. What the experiments show is that this is not yet enough:
+
+- the synthetic reuse experiment shows benefit when the working step reaches the block verbatim;
+- the transfer and real-task experiments show no overall benefit, but on the real task the lesson's content beat a
+  placebo block (p = 0.035), and mismatched lessons did worse than no memory at all;
+- the CI-triage dogfood (26.1) has too few runs for a verdict.
+
+So the content helps when it is specific and reaches the right run; the default lesson is too vague to act on, the
+match is keyed on the request text instead of the situation the agent is in, a wrong lesson costs more than no lesson,
+and only Microsoft Agent Framework agents can use the library at all. This epic fixes those, in that order, and judges
+every change with the holdout rather than with lab numbers.
+
+Design rules: everything new is opt-in or measured before it becomes a default; host consent decides what a lesson may
+quote; the block stays labelled reference material; a new surface (MCP, CLI, hooks) uses the same verification,
+sanitization and scope rules as the MAF adapter, never weaker ones; .NET first, ports only when asked.
+
+### Story 28.1: Fixes From the Critique
+Make `SingleCallParityTests` deterministic (a retrieval timeout it cannot hit, per the timing-test rule); scope the
+lifecycle's `lock-supersession-rows` statement to the caller's tenant and scope in .NET, and publish the scoped statement
+as contract 1.18 (add-only: a new statement the ports switch to); pin near-tie ranking with a contract fixture (two
+records whose scores differ in the last bits) so a cross-runtime `Math.Pow` difference fails a test instead of
+reordering silently.
+
+### Story 28.2: The Failure Signature
+Capture derives, per failed tool call, a **failure signature**: tool name, error class, and a normalized fingerprint of
+the error excerpt (numbers, paths, hex IDs, GUIDs and quoted literals replaced by placeholders, then hashed). A record
+stores the signatures of its failed calls and of the call that worked after them. Both stores index them (in memory, and
+a PostgreSQL migration with grants and row-level security), and retrieval gains a signature channel beside text and
+vectors: an exact signature match is a strong, explainable reason (`Matched: failure signature run_tests/exit 2`). The
+retrieval benchmark gets signature queries, and the golden reports show the channel's recall and false positives.
+
+### Story 28.3: Recall at the Moment of Failure
+Opt-in `IChatClient` middleware (`UseAgentExperienceRecall`) that runs between model calls inside one agent run: when
+the latest tool result failed (thrown, or classified by `ClassifyToolResult`) with a signature that a reusable lesson
+matches, it adds one short labelled hint before the next model call, naming what worked after that same failure. At
+most one hint per signature per run, within a byte budget, through the same eligibility, scope and authorship rules as
+the block, recorded as exposure, and under the same holdout (a held-out run gets no hint, and both arms are recorded),
+so the estimate says whether the hint helps.
+
+### Story 28.4: The Recipe
+With host consent, a lesson can carry the step that worked, not only its tool name: `RecipeArguments` (per tool, the
+argument keys whose values may be shown, sanitized at capture as today) and `RecipeResultExcerpt` (a host callback that
+returns a short excerpt of a successful call's result it vouches for, sanitized and bounded). The block renders a
+`Recipe:` line for the working attempt. Provenance claims v4 sign the recipe, and a record whose recipe no v4 signature
+confirms renders without it when signing is on. Off by default; the real-task experiment gets an amendment comparing
+recipe against plain lessons before any default changes.
+
+### Story 28.5: Precision Before Recall
+A wrong lesson costs more than none, so the block must earn its place. A minimum match strength for injection
+(`MinimumInjectionMatch`: a signature match, or text coverage plus semantic similarity above a floor), records below it
+are not injected even when retrieved, and the lessons view says why. The floor is chosen by a rule fixed before the run,
+on the retrieval benchmark's distractor queries, and its effect is read from the holdout.
+
+### Story 28.6: One Living Lesson per Situation
+Deterministic consolidation: validated records in one scope that share a failure signature and the same working tool
+sequence are merged into one consolidated lesson (the working approach, how many independent runs confirmed it, the
+environments it held in, what failed before it), which supersedes its sources through the existing lifecycle, keeps
+their provenance and exposure links, and gains confidence from each source run once. Run on demand
+(`ConsolidateAsync`), never on the hot path; a contradiction of the consolidated lesson contests it as today.
+
+### Story 28.7: A SQLite Store and Durable Capture
+`AgentExperience.Storage.Sqlite`: records, lifecycle, text search (FTS5), signatures and the holdout in one local file,
+passing the storage conformance suite, for a single agent on one machine. With it, captured runs persist: a run can be
+finalized from another process, days later, when its verdict arrives (a CI result, a merged pull request). This closes
+story 26.2 for SQLite and adds the same durable capture to PostgreSQL.
+
+### Story 28.8: Any Agent, Through MCP and a CLI
+`AgentExperience.Mcp`, a .NET tool exposing the loop as Model Context Protocol tools over the SQLite or PostgreSQL store:
+`recall` (the block, or a hint for a failure signature), `record_attempt`, `finalize` (with a host-configured verifier
+command, never the model's word) and `lessons`. An `aexp` CLI with the same verbs for scripts and hooks. Identity and
+scope come from the server's configuration, never from tool arguments; the verifier is a command the operator
+configures, and the model can only ask for it to run.
+
+### Story 28.9: A Claude Code Recipe
+A documented hooks recipe that turns a coding agent's work into verified lessons with no code: `PostToolUse` records
+each tool call through `aexp`, a `Stop` hook finalizes on the project's test command exit code, `SessionStart` and a
+`PostToolUse` failure path inject the block and the failure hint, and measured lessons are synced into a managed
+section of `CLAUDE.md` or `AGENTS.md` (a sink that rewrites only its own fenced section of an existing file).
+
+### Story 28.10: Dogfood on This Repository
+Run the recipe on this repository's own development: every pull request's CI run is the verifier, the holdout runs at
+0.5, and a results page reports the estimate after enough runs per arm, with the same pre-registered reading rules as
+the live experiments. The README then says what the library has shown on real work, whichever way it comes out, and
+leads with what it is for in one paragraph and one example.

@@ -1,0 +1,346 @@
+{
+  "minimumRunsPerArm": 20,
+  "overall": {
+    "treatment": {
+      "runs": 8,
+      "successes": 6,
+      "rate": 0.75
+    },
+    "holdout": {
+      "runs": 8,
+      "successes": 5,
+      "rate": 0.625
+    },
+    "difference": 0.125,
+    "lower": -0.2907058774965696,
+    "upper": 0.49078011165681384,
+    "verdict": "NoEvidence",
+    "unverified": 0,
+    "pending": 0,
+    "mixedArm": 0
+  },
+  "lessons": [
+    {
+      "experienceId": "0000009f-0000-4000-8000-000000000001",
+      "comparison": {
+        "treatment": {
+          "runs": 8,
+          "successes": 6,
+          "rate": 0.75
+        },
+        "holdout": {
+          "runs": 8,
+          "successes": 5,
+          "rate": 0.625
+        },
+        "difference": 0.125,
+        "lower": -0.2907058774965696,
+        "upper": 0.49078011165681384,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "Zeta",
+          "runModel": "\uD83D\uDE00-model",
+          "comparison": {
+            "treatment": {
+              "runs": 4,
+              "successes": 3,
+              "rate": 0.75
+            },
+            "holdout": {
+              "runs": 0,
+              "successes": 0,
+              "rate": null
+            },
+            "difference": null,
+            "lower": null,
+            "upper": null,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        },
+        {
+          "lessonModel": "alpha",
+          "runModel": "ａ-model",
+          "comparison": {
+            "treatment": {
+              "runs": 4,
+              "successes": 3,
+              "rate": 0.75
+            },
+            "holdout": {
+              "runs": 0,
+              "successes": 0,
+              "rate": null
+            },
+            "difference": null,
+            "lower": null,
+            "upper": null,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        },
+        {
+          "lessonModel": "\uD83D\uDE00-model",
+          "runModel": "alpha",
+          "comparison": {
+            "treatment": {
+              "runs": 0,
+              "successes": 0,
+              "rate": null
+            },
+            "holdout": {
+              "runs": 4,
+              "successes": 3,
+              "rate": 0.75
+            },
+            "difference": null,
+            "lower": null,
+            "upper": null,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        },
+        {
+          "lessonModel": "ａ-model",
+          "runModel": "Zeta",
+          "comparison": {
+            "treatment": {
+              "runs": 0,
+              "successes": 0,
+              "rate": null
+            },
+            "holdout": {
+              "runs": 4,
+              "successes": 2,
+              "rate": 0.5
+            },
+            "difference": null,
+            "lower": null,
+            "upper": null,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "0000009f-0000-4000-8000-000000000002",
+      "comparison": {
+        "treatment": {
+          "runs": 8,
+          "successes": 6,
+          "rate": 0.75
+        },
+        "holdout": {
+          "runs": 8,
+          "successes": 5,
+          "rate": 0.625
+        },
+        "difference": 0.125,
+        "lower": -0.2907058774965696,
+        "upper": 0.49078011165681384,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "Zeta",
+          "runModel": "alpha",
+          "comparison": {
+            "treatment": {
+              "runs": 0,
+              "successes": 0,
+              "rate": null
+            },
+            "holdout": {
+              "runs": 4,
+              "successes": 3,
+              "rate": 0.75
+            },
+            "difference": null,
+            "lower": null,
+            "upper": null,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        },
+        {
+          "lessonModel": "alpha",
+          "runModel": "Zeta",
+          "comparison": {
+            "treatment": {
+              "runs": 0,
+              "successes": 0,
+              "rate": null
+            },
+            "holdout": {
+              "runs": 4,
+              "successes": 2,
+              "rate": 0.5
+            },
+            "difference": null,
+            "lower": null,
+            "upper": null,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        },
+        {
+          "lessonModel": "\uD83D\uDE00-model",
+          "runModel": "ａ-model",
+          "comparison": {
+            "treatment": {
+              "runs": 4,
+              "successes": 3,
+              "rate": 0.75
+            },
+            "holdout": {
+              "runs": 0,
+              "successes": 0,
+              "rate": null
+            },
+            "difference": null,
+            "lower": null,
+            "upper": null,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        },
+        {
+          "lessonModel": "ａ-model",
+          "runModel": "\uD83D\uDE00-model",
+          "comparison": {
+            "treatment": {
+              "runs": 4,
+              "successes": 3,
+              "rate": 0.75
+            },
+            "holdout": {
+              "runs": 0,
+              "successes": 0,
+              "rate": null
+            },
+            "difference": null,
+            "lower": null,
+            "upper": null,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    }
+  ],
+  "byConsumingModel": [
+    {
+      "model": "Zeta",
+      "comparison": {
+        "treatment": {
+          "runs": 0,
+          "successes": 0,
+          "rate": null
+        },
+        "holdout": {
+          "runs": 4,
+          "successes": 2,
+          "rate": 0.5
+        },
+        "difference": null,
+        "lower": null,
+        "upper": null,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      }
+    },
+    {
+      "model": "alpha",
+      "comparison": {
+        "treatment": {
+          "runs": 0,
+          "successes": 0,
+          "rate": null
+        },
+        "holdout": {
+          "runs": 4,
+          "successes": 3,
+          "rate": 0.75
+        },
+        "difference": null,
+        "lower": null,
+        "upper": null,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      }
+    },
+    {
+      "model": "\uD83D\uDE00-model",
+      "comparison": {
+        "treatment": {
+          "runs": 4,
+          "successes": 3,
+          "rate": 0.75
+        },
+        "holdout": {
+          "runs": 0,
+          "successes": 0,
+          "rate": null
+        },
+        "difference": null,
+        "lower": null,
+        "upper": null,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      }
+    },
+    {
+      "model": "ａ-model",
+      "comparison": {
+        "treatment": {
+          "runs": 4,
+          "successes": 3,
+          "rate": 0.75
+        },
+        "holdout": {
+          "runs": 0,
+          "successes": 0,
+          "rate": null
+        },
+        "difference": null,
+        "lower": null,
+        "upper": null,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      }
+    }
+  ]
+}

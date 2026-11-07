@@ -251,6 +251,19 @@ public static class HistoricalReferenceWriter
     public const string CallMarkerEnd = "]";
 
     /// <summary>
+    /// What opens the marker of a call on the <c>Worked:</c> attempt whose recipe excerpt is shown, in place of
+    /// <see cref="CallReturned"/>: the marker is <c>[returned: "&lt;excerpt&gt;"]</c>, closed by <see cref="CallMarkerEnd"/>
+    /// (see <see cref="ExperienceInjectionOptions.RecipeExcerpts"/>).
+    /// </summary>
+    public const string CallReturnedExcerptPrefix = "[returned: ";
+
+    /// <summary>
+    /// The most characters of a recipe excerpt a marker shows, counted before quoting. A longer excerpt is cut to it and
+    /// marked with <see cref="ClampedName"/> outside the quotes.
+    /// </summary>
+    public const int MaxRecipeExcerptLength = 200;
+
+    /// <summary>
     /// What follows the attempt number on a <c>Worked:</c> line. The line names the attempt and nothing else: its
     /// calls are on that attempt's <c>Tried:</c> line, so no tool name or argument value is rendered twice.
     /// </summary>
@@ -592,7 +605,12 @@ public static class HistoricalReferenceWriter
             sessionBytesRemaining: null,
             settings.IsContentConfirmed,
             settings.FailureDetail,
-            settings.Rendering);
+            settings.Rendering,
+            settings.RecipeExcerpts is null
+                ? null
+                : new RecipeRendering(
+                    RecipeExcerptAllowlist.From(settings.RecipeExcerpts, nameof(settings)),
+                    settings.AreRecipeExcerptsConfirmed ?? (settings.ShowRecipeExcerptsWithoutSigning ? static _ => true : static _ => false)));
     }
 
     /// <summary>The records-only form, over an allowlist already validated and snapshotted.</summary>
@@ -625,6 +643,7 @@ public static class HistoricalReferenceWriter
     /// </param>
     /// <param name="failureDetail">How much a <c>Tried:</c> line says about a failed attempt; see <see cref="ExperienceInjectionOptions.FailureDetail"/>.</param>
     /// <param name="rendering">The layout; see <see cref="ExperienceInjectionOptions.Rendering"/>.</param>
+    /// <param name="recipe">The recipe excerpts the <c>Worked:</c> attempt's line may show; <see langword="null"/> shows none.</param>
     internal static HistoricalReferencePayload Write(
         IReadOnlyList<RankedExperience> records,
         ExperienceInjectionLimits limits,
@@ -633,12 +652,14 @@ public static class HistoricalReferenceWriter
         long? sessionBytesRemaining,
         Func<ExperienceRecord, bool>? isContentConfirmed = null,
         AttemptFailureDetail failureDetail = AttemptFailureDetail.ErrorClass,
-        HistoricalReferenceRendering rendering = HistoricalReferenceRendering.Verbose)
+        HistoricalReferenceRendering rendering = HistoricalReferenceRendering.Verbose,
+        RecipeRendering? recipe = null)
     {
         ArgumentNullException.ThrowIfNull(records);
         ArgumentNullException.ThrowIfNull(limits);
         ArgumentNullException.ThrowIfNull(approachArguments);
         ArgumentNullException.ThrowIfNull(retractions);
+        recipe ??= RecipeRendering.None;
 
         if (records.Count > limits.MaxRecords)
         {
@@ -716,8 +737,8 @@ public static class HistoricalReferenceWriter
             if (!dropping)
             {
                 var rendered = rendering == HistoricalReferenceRendering.Compact
-                    ? RenderCompact(ranked, included.Count + 1, approachArguments, isContentConfirmed, failureDetail, out var borrowedArguments)
-                    : Render(ranked, included.Count + 1, approachArguments, isContentConfirmed, failureDetail, out borrowedArguments);
+                    ? RenderCompact(ranked, included.Count + 1, approachArguments, isContentConfirmed, failureDetail, recipe, out var borrowedArguments)
+                    : Render(ranked, included.Count + 1, approachArguments, isContentConfirmed, failureDetail, recipe, out borrowedArguments);
                 var size = Utf8(rendered);
                 var fitsBlock = used + size <= limits.MaxBytes;
                 var fitsSession = sessionBytesRemaining is not { } remaining || used + size <= remaining;
@@ -779,6 +800,7 @@ public static class HistoricalReferenceWriter
     /// <param name="approachArguments">The reader's validated allowlist.</param>
     /// <param name="isContentConfirmed">The caller's content confirmation, or <see langword="null"/> to confirm every record.</param>
     /// <param name="failureDetail">How much a <c>Tried:</c> line says about a failed attempt.</param>
+    /// <param name="recipe">The recipe excerpts the <c>Worked:</c> attempt's line may show.</param>
     /// <param name="borrowedArguments">Whether the record is borrowed and its <c>Tried:</c> lines show at least one argument value.</param>
     private static string Render(
         RankedExperience ranked,
@@ -786,10 +808,10 @@ public static class HistoricalReferenceWriter
         ApproachArgumentAllowlist approachArguments,
         Func<ExperienceRecord, bool>? isContentConfirmed,
         AttemptFailureDetail failureDetail,
+        RecipeRendering recipe,
         out bool borrowedArguments)
     {
         var record = ranked.Record;
-        var reflection = record.Reflection;
 
         // Story 17.2: content nothing confirms (with provenance signing configured) is fenced as model-authored, and
         // so are the task ID and the Tried: and Worked: lines it renders, which a writer of the store could have changed too.
@@ -803,7 +825,7 @@ public static class HistoricalReferenceWriter
             .Append("; source run ").Append(record.SourceRunId.ToString("D", CultureInfo.InvariantCulture))
             .Append(unconfirmed ? UnconfirmedTaskNotice : "; task " + Clean(record.TaskId)).Append('\n');
 
-        var approachLine = GrantedAttempts(ranked, approachArguments, failureDetail, out var shared, out borrowedArguments);
+        var approachLine = GrantedAttempts(ranked, approachArguments, failureDetail, recipe, out var shared, out borrowedArguments);
         text.Append(shared);
 
         text.Append("Confidence: ").Append(Number(record.ReuseConfidence))
@@ -838,7 +860,44 @@ public static class HistoricalReferenceWriter
             text.Append(drawn);
         }
 
+        LessonLines(text, record, approachLine, unconfirmed, drawn.ToString());
+        text.Append("--- END RECORD ").Append(ordinal).Append(" ---\n");
+        return text.ToString();
+    }
 
+    /// <summary>
+    /// One record's lesson as plain text, without the block's delimiters, its record delimiters, its source, confidence
+    /// and ranking lines, or when and where it was recorded: the <c>Tried:</c> and <c>Worked:</c> lines and the
+    /// reflection, inside the model-authored fence when a model wrote it or nothing confirms its content, exactly as the
+    /// verbose block renders them for the reader's own record. For exporting measured lessons.
+    /// </summary>
+    /// <param name="record">The record, the reader's own (never one borrowed through a grant).</param>
+    /// <param name="approachArguments">The reader's validated allowlist.</param>
+    /// <param name="isContentConfirmed">The caller's content confirmation, or <see langword="null"/> to confirm every record.</param>
+    /// <param name="failureDetail">How much a <c>Tried:</c> line says about a failed attempt.</param>
+    internal static string RenderLesson(
+        ExperienceRecord record,
+        ApproachArgumentAllowlist approachArguments,
+        Func<ExperienceRecord, bool>? isContentConfirmed,
+        AttemptFailureDetail failureDetail)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(approachArguments);
+        var unconfirmed = isContentConfirmed is not null && !isContentConfirmed(record);
+        var approachLine = AttemptLines(record, approachArguments, failureDetail, borrowed: false, RecipeExcerptAllowlist.Empty, out _);
+        var text = new StringBuilder();
+        LessonLines(text, record, approachLine, unconfirmed, drawn: null);
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// The verbose layout's lesson lines: the lesson, the <c>Tried:</c> and <c>Worked:</c> lines, reuse guidance,
+    /// preconditions and warnings, fenced as model-authored when <paramref name="unconfirmed"/> or a model wrote the
+    /// reflection. <paramref name="drawn"/>, the lines drawn from an unconfirmed record, sits inside that fence.
+    /// </summary>
+    private static void LessonLines(StringBuilder text, ExperienceRecord record, string? approachLine, bool unconfirmed, string? drawn)
+    {
+        var reflection = record.Reflection;
         if (unconfirmed)
         {
             // Story 17.2: nothing confirms this record's content, so every line drawn from it -- the task ID, when
@@ -875,9 +934,6 @@ public static class HistoricalReferenceWriter
             Bullets(text, "Preconditions", reflection?.Preconditions);
             Bullets(text, "Warnings", reflection?.Warnings);
         }
-
-        text.Append("--- END RECORD ").Append(ordinal).Append(" ---\n");
-        return text.ToString();
     }
 
     /// <summary>
@@ -888,12 +944,14 @@ public static class HistoricalReferenceWriter
     /// <param name="ranked">The record.</param>
     /// <param name="approachArguments">The reader's validated allowlist.</param>
     /// <param name="failureDetail">How much a <c>Tried:</c> line says about a failed attempt.</param>
+    /// <param name="recipe">The recipe excerpts the <c>Worked:</c> attempt's line may show.</param>
     /// <param name="shared">The <c>Shared:</c> line, line break included, or <see langword="null"/> for the reader's own record.</param>
     /// <param name="borrowedArguments">Whether the record is borrowed and its <c>Tried:</c> lines show at least one argument value.</param>
     private static string? GrantedAttempts(
         RankedExperience ranked,
         ApproachArgumentAllowlist approachArguments,
         AttemptFailureDetail failureDetail,
+        RecipeRendering recipe,
         out string? shared,
         out bool borrowedArguments)
     {
@@ -917,7 +975,7 @@ public static class HistoricalReferenceWriter
 
         // A borrowed record shows only its verified working attempt (see AttemptLines): no failure, so no error
         // class or excerpt of the lending scope's ever crosses.
-        var approach = AttemptLines(ranked.Record, effective, failureDetail, ranked.SharedByGrant, out var argumentsShown);
+        var approach = AttemptLines(ranked.Record, effective, failureDetail, ranked.SharedByGrant, recipe.For(ranked), out var argumentsShown);
         var approachWithheld = ranked.SharedByGrant && !ShowsApproach(ranked.GrantDisclosure);
         borrowedArguments = ranked.SharedByGrant && !approachWithheld && argumentsShown;
         shared = !ranked.SharedByGrant
@@ -959,6 +1017,7 @@ public static class HistoricalReferenceWriter
         ApproachArgumentAllowlist approachArguments,
         Func<ExperienceRecord, bool>? isContentConfirmed,
         AttemptFailureDetail failureDetail,
+        RecipeRendering recipe,
         out bool borrowedArguments)
     {
         var record = ranked.Record;
@@ -993,7 +1052,7 @@ public static class HistoricalReferenceWriter
             text.Append("Environment: differs from this run's (fit ").Append(ShortNumber(fit)).Append(")\n");
         }
 
-        var approachLine = GrantedAttempts(ranked, approachArguments, failureDetail, out var shared, out borrowedArguments);
+        var approachLine = GrantedAttempts(ranked, approachArguments, failureDetail, recipe, out var shared, out borrowedArguments);
         text.Append(shared);
 
         // Only a deterministic reflection the default reflector wrote, and whose content is confirmed, has its generic
@@ -1232,6 +1291,7 @@ public static class HistoricalReferenceWriter
         ApproachArgumentAllowlist approachArguments,
         AttemptFailureDetail failureDetail,
         bool borrowed,
+        RecipeExcerptAllowlist recipe,
         out bool argumentsShown)
     {
         argumentsShown = false;
@@ -1272,7 +1332,13 @@ public static class HistoricalReferenceWriter
         {
             var attempt = attempts[index];
             text.Append("  - attempt ").Append(attempt.SequenceNumber.ToString(CultureInfo.InvariantCulture)).Append(": ")
-                .Append(Calls(OrderedCalls(attempt, out var clamped), clamped, approachArguments, borrowed ? null : failureDetail, ref argumentsShown))
+                .Append(Calls(
+                    OrderedCalls(attempt, out var clamped),
+                    clamped,
+                    approachArguments,
+                    borrowed ? null : failureDetail,
+                    ReferenceEquals(attempt, worked) ? recipe : RecipeExcerptAllowlist.Empty,
+                    ref argumentsShown))
                 .Append(OutcomeSeparator)
                 .Append(attempt.Error is null ? AttemptCompleted : Failure(attempt.Error, failureDetail))
                 .Append('\n');
@@ -1298,6 +1364,7 @@ public static class HistoricalReferenceWriter
         bool clamped,
         ApproachArgumentAllowlist approachArguments,
         AttemptFailureDetail? callOutcomes,
+        RecipeExcerptAllowlist recipe,
         ref bool argumentsShown)
     {
         if (calls.Count == 0)
@@ -1312,7 +1379,14 @@ public static class HistoricalReferenceWriter
             var name = Name(call.ToolName);
             var shown = approachArguments.IsEmpty ? null : Arguments(call, approachArguments.KeysFor(call.ToolName), budget);
             var step = shown is null ? name : name + "(" + shown + ")";
-            steps.Add(callOutcomes is { } detail ? step + " " + CallOutcome(call.Error, detail) : step);
+
+            // Story 28.4: on the Worked: attempt only, a call that returned and whose tool the recipe allowlist names
+            // shows its stored excerpt in place of its [returned] marker -- a borrowed line, which has no markers, too.
+            var excerpt = RecipeMarker(call, recipe);
+            argumentsShown |= excerpt is not null;
+            steps.Add(callOutcomes is { } detail
+                ? step + " " + (excerpt ?? CallOutcome(call.Error, detail))
+                : excerpt is null ? step : step + " " + excerpt);
         }
 
         argumentsShown |= budget.Shown;
@@ -1334,6 +1408,35 @@ public static class HistoricalReferenceWriter
         : failureDetail == AttemptFailureDetail.None
             ? CallFailed
             : CallFailedClassPrefix + FirstToken(ErrorClass.Of(error)) + CallMarkerEnd;
+
+    /// <summary>
+    /// The <c>[returned: "…"]</c> marker of <paramref name="call"/>'s recipe excerpt, or <see langword="null"/> when it
+    /// shows none: the call recorded an error, has no (or a blank, or an only-invisible) excerpt, or its tool is not in
+    /// <paramref name="recipe"/>. The excerpt is quoted and bounded exactly as an argument string is (<see cref="Quoted"/>),
+    /// cut to <see cref="MaxRecipeExcerptLength"/>.
+    /// </summary>
+    private static string? RecipeMarker(ToolCallRecord call, RecipeExcerptAllowlist recipe)
+    {
+        if (recipe.IsEmpty || call.Error is not null || string.IsNullOrWhiteSpace(call.RecipeExcerpt) || !recipe.Allows(call.ToolName))
+        {
+            return null;
+        }
+
+        // An excerpt of only invisible characters is empty once cleaned: the call keeps its [returned] marker.
+        var quoted = Quoted(call.RecipeExcerpt, MaxRecipeExcerptLength);
+        return quoted == EmptyQuoted ? null : CallReturnedExcerptPrefix + quoted + CallMarkerEnd;
+    }
+
+    /// <summary>What <see cref="Quoted"/> writes for a value that is empty once cleaned.</summary>
+    private const string EmptyQuoted = "\"\"";
+
+    /// <summary>
+    /// Whether the attempt <paramref name="record"/>'s <c>Worked:</c> line names has a call that returned carrying a
+    /// non-blank recipe excerpt: the only case in which a recipe needs the record's signature checked.
+    /// </summary>
+    internal static bool WorkedAttemptCarriesExcerpt(ExperienceRecord record) =>
+        FinalVerifiedAttempt(record, OrderedAttempts(record)) is { ToolCalls: { } calls }
+        && calls.Any(call => call is { Error: null } && !string.IsNullOrWhiteSpace(call.RecipeExcerpt));
 
     /// <summary>The first token of an <see cref="ErrorClass"/> class, whose tokens are joined with <c>", "</c>.</summary>
     private static string FirstToken(string errorClass)
@@ -2035,7 +2138,8 @@ public static class HistoricalReferenceWriter
 
         if (environment.Metadata is { Count: > 0 } metadata)
         {
-            foreach (var (key, value) in metadata.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+            // The recorded model is the holdout's bookkeeping: shown, it would read as "only for this model".
+            foreach (var (key, value) in metadata.Where(entry => !AgentExperience.Core.Holdout.ModelMetadata.IsModelKey(entry.Key)).OrderBy(entry => entry.Key, StringComparer.Ordinal))
             {
                 text.Append("; ").Append(Clean(key)).Append(' ').Append(Clean(value));
             }
@@ -2165,6 +2269,125 @@ public static class HistoricalReferenceWriter
     }
 
     private static int Utf8(string value) => Encoding.UTF8.GetByteCount(value);
+
+    /// <summary>The first line of a recall hint (<see cref="ExperienceRecallOptions"/>). It ends with <see cref="BlockEnd"/>.</summary>
+    public const string RecallBegin = "=== BEGIN HISTORICAL REFERENCE: EARLIER FIX FOR THIS FAILURE (UNTRUSTED REFERENCE MATERIAL) ===";
+
+    /// <summary>What begins the line of a recall hint that names the attempt that worked after the failure.</summary>
+    public const string RecallWorkedPrefix = "  - worked: ";
+
+    /// <summary>
+    /// The recall hint for a failure of <paramref name="toolName"/> with <paramref name="error"/>: one fixed-shape block
+    /// naming, for each of <paramref name="records"/> in order that fits <paramref name="maxBytes"/> (dropped whole, never
+    /// cut), the calls of the attempt its <c>Worked:</c> line would name, rendered exactly as that attempt's <c>Tried:</c>
+    /// line renders them (the same argument allowlist and grant rules, the same per-call markers, none for a borrowed
+    /// record), and its confidence and verification. A record whose content nothing confirms has that line inside the
+    /// model-authored fence, as the block puts it; a record with no verified working attempt, or borrowed under a grant
+    /// that withholds the approach, gives none. <see langword="null"/> when no record fits or gives a line.
+    /// </summary>
+    /// <param name="records">The records, re-read and checked, in the order to try them.</param>
+    /// <param name="toolName">The failed call's tool name, as capture records it.</param>
+    /// <param name="error">The failed call's error, as capture records it (an exception type name or a host's error class).</param>
+    /// <param name="match">How the records matched the failure.</param>
+    /// <param name="approachArguments">The reader's validated allowlist.</param>
+    /// <param name="isContentConfirmed">The caller's content confirmation, or <see langword="null"/> to confirm every record.</param>
+    /// <param name="failureDetail">How much a marker says about a failed call.</param>
+    /// <param name="maxBytes">The hint's UTF-8 budget, delimiters included.</param>
+    /// <param name="included">The records the hint names, in order.</param>
+    /// <param name="borrowedArgumentsShown">The borrowed records whose line shows at least one argument value.</param>
+    /// <param name="overBudget">The records that gave a line but did not fit.</param>
+    /// <param name="recipe">The recipe excerpts the <c>worked:</c> line may show, as on the block's; <see langword="null"/> shows none.</param>
+    internal static string? RecallHint(
+        IReadOnlyList<RankedExperience> records,
+        string toolName,
+        string error,
+        ExperienceSignatureMatch match,
+        ApproachArgumentAllowlist approachArguments,
+        Func<ExperienceRecord, bool>? isContentConfirmed,
+        AttemptFailureDetail failureDetail,
+        int maxBytes,
+        out List<Guid> included,
+        out HashSet<Guid> borrowedArgumentsShown,
+        out List<Guid> overBudget,
+        RecipeRendering? recipe = null)
+    {
+        recipe ??= RecipeRendering.None;
+        ArgumentNullException.ThrowIfNull(records);
+        ArgumentNullException.ThrowIfNull(approachArguments);
+        included = [];
+        borrowedArgumentsShown = [];
+        overBudget = [];
+
+        var failure = Name(toolName) + " " + CallOutcome(error, failureDetail);
+        var opening = match == ExperienceSignatureMatch.Exact
+            ? "An earlier verified run hit this same failure (" + failure + ") and then:\n"
+            : "An earlier verified run hit a failure like this one (the same tool and error class: " + failure + ") and then:\n";
+        var header = RecallBegin + "\n";
+        var footer = BlockEnd + "\n";
+        var used = Utf8(header) + Utf8(footer);
+        var body = new StringBuilder();
+
+        foreach (var ranked in records)
+        {
+            if (ranked?.Record is not { } record || (ranked.SharedByGrant && !ShowsApproach(ranked.GrantDisclosure)))
+            {
+                continue;
+            }
+
+            if (FinalVerifiedAttempt(record, OrderedAttempts(record)) is not { } worked)
+            {
+                continue;
+            }
+
+            var effective = !ranked.SharedByGrant
+                ? approachArguments
+                : ranked.GrantDisclosure == ExperienceGrantDisclosure.LessonApproachAndArguments
+                    ? approachArguments.IntersectWithGrant(ranked.GrantApproachArguments)
+                    : ApproachArgumentAllowlist.Empty;
+            var argumentsShown = false;
+            var line = RecallWorkedPrefix + "attempt " + worked.SequenceNumber.ToString(CultureInfo.InvariantCulture) + ": "
+                + Calls(OrderedCalls(worked, out var clamped), clamped, effective, ranked.SharedByGrant ? null : failureDetail, recipe.For(ranked), ref argumentsShown)
+                + OutcomeSeparator + AttemptCompleted + "\n";
+
+            var section = new StringBuilder(opening);
+            if (ranked.SharedByGrant)
+            {
+                section.Append("Shared: ").Append(SharedLine).Append('\n');
+            }
+
+            if (isContentConfirmed is not null && !isContentConfirmed(record))
+            {
+                // Nothing confirms this record's content, so the line drawn from its attempts sits inside the fence, as
+                // the block puts it.
+                section.Append(ModelAuthoredLine).Append('\n').Append(line).Append(ModelAuthoredEndLine).Append('\n');
+            }
+            else
+            {
+                section.Append(line);
+            }
+
+            section.Append("Confidence: ").Append(Number(record.ReuseConfidence)).Append(ConfidenceSeparator)
+                .Append(record.Outcome.Status).Append('\n');
+
+            var text = section.ToString();
+            var bytes = Utf8(text);
+            if (used + bytes > maxBytes)
+            {
+                overBudget.Add(record.ExperienceId);
+                continue;
+            }
+
+            used += bytes;
+            body.Append(text);
+            included.Add(record.ExperienceId);
+            if (ranked.SharedByGrant && argumentsShown)
+            {
+                borrowedArgumentsShown.Add(record.ExperienceId);
+            }
+        }
+
+        return included.Count == 0 ? null : header + body + footer;
+    }
 
     /// <summary>
     /// Whether a grant at <paramref name="level"/> shows a borrowed record's <c>Tried:</c> and <c>Worked:</c> lines. Only the two

@@ -31,19 +31,22 @@ const (
 	LessonsDenied LessonsOutcome = "Denied"
 )
 
-// LessonIneligibility is why retrieval would not currently use a lesson. A port decides these five; .NET's Expired
-// (a retrieval policy's maximum age) and ContentUnconfirmed (provenance signing) do not exist here, because this port
-// has neither a maximum-age policy nor provenance signing, and are never answered.
+// LessonIneligibility is why retrieval would not currently use a lesson. A port decides these six; .NET's
+// ContentUnconfirmed (provenance signing) does not exist here, because this port has no provenance signing, and is
+// never answered.
 type LessonIneligibility string
 
 // The ineligibility codes, in the order they are decided.
 const (
 	// IneligibleStatus is a status that is not Validated or Reinforced.
 	IneligibleStatus LessonIneligibility = "Status"
-	// IneligibleBelowConfidenceFloor is a confidence below the retrieval minimum (DefaultMinConfidence), or NaN.
+	// IneligibleBelowConfidenceFloor is a confidence below the retrieval policy's MinimumConfidence, or NaN.
 	IneligibleBelowConfidenceFloor LessonIneligibility = "BelowConfidenceFloor"
 	// IneligibleModelAuthored is a model-authored lesson when the settings exclude them.
 	IneligibleModelAuthored LessonIneligibility = "ModelAuthored"
+	// IneligibleExpired is a lesson whose last activity (UpdatedAt) is more than the retrieval policy's MaxAge before
+	// the page's GeneratedAt (contract 1.12).
+	IneligibleExpired LessonIneligibility = "Expired"
 	// IneligibleOverByteBudget is a block larger than the block options' maximum bytes.
 	IneligibleOverByteBudget LessonIneligibility = "OverByteBudget"
 	// IneligibleUnrenderable is a record whose block could not be rendered.
@@ -60,6 +63,11 @@ type LessonQuery struct {
 	Limit int
 	// IncludeIneligible is whether to list the lessons retrieval would not return, each marked with why; true when nil.
 	IncludeIneligible *bool
+	// IncludeMeasuredBenefit (contract 1.10) reads one benefit estimate for the page's scope, over the view's benefit
+	// policy's window before the page's GeneratedAt, with its minimum and, with PerModel, split by model (whether or
+	// not the policy is on), and sets each listed lesson's MeasuredBenefit from it. Off by default: then nothing more
+	// is read. A store failure on that read fails the list.
+	IncludeMeasuredBenefit bool
 }
 
 // Validate refuses a limit outside LessonsMinLimit..LessonsMaxLimit (0 is the default) and statuses that are empty or
@@ -186,6 +194,10 @@ type Lesson struct {
 	LastInjectedAt *Instant
 	// InjectionCount is how many injected blocks delivered it in this scope; 0 when never or not tracked.
 	InjectionCount int64
+	// MeasuredBenefit is what the injection holdout measured for this lesson (contract 1.10): set only when the query
+	// asked for it (IncludeMeasuredBenefit); nil otherwise, when no assigned run in the window named it, or when the
+	// store does not track the holdout.
+	MeasuredBenefit *LessonBenefit
 }
 
 // LessonsPage is one page of lessons from one scope.
@@ -216,6 +228,12 @@ type LessonsOptions struct {
 	ExcludeModelAuthored bool
 	// Clock stamps a page's GeneratedAt; Now when nil.
 	Clock func() Instant
+	// RetrievalPolicy is the injection's retrieval policy (contract 1.12): its MinimumConfidence is the floor a lesson
+	// is held against, and its MaxAge expires a lesson, at the page's clock. The zero policy is the default.
+	RetrievalPolicy RetrievalPolicy
+	// Benefit is the injection's benefit policy (contract 1.10): its Window, MinimumRunsPerArm and PerModel decide the
+	// estimate IncludeMeasuredBenefit reads (their defaults when zero), whether or not the policy is Enabled.
+	Benefit BenefitPolicy
 }
 
 // Lessons is the read-only lessons view over a store. It is safe for concurrent use when its store is.
@@ -224,6 +242,8 @@ type Lessons struct {
 	options LessonsOptions
 	// render writes the block of one record alone; RenderAlone, but for a test.
 	render func(*ExperienceRecord, BlockOptions) (string, error)
+	// policy is options.RetrievalPolicy, resolved.
+	policy RetrievalPolicy
 }
 
 // NewLessons is the lessons view over store, with the block options and model-authored flag the injection uses. It
@@ -235,10 +255,17 @@ func NewLessons(store LessonsReader, options LessonsOptions) (*Lessons, error) {
 	if err := options.BlockOptions.Validate(); err != nil {
 		return nil, err
 	}
+	if err := options.Benefit.Validate(); err != nil {
+		return nil, err
+	}
+	policy, err := options.RetrievalPolicy.Resolved()
+	if err != nil {
+		return nil, err
+	}
 	if options.Clock == nil {
 		options.Clock = Now
 	}
-	return &Lessons{store: store, options: options, render: RenderAlone}, nil
+	return &Lessons{store: store, options: options, render: RenderAlone, policy: policy}, nil
 }
 
 // ListFor lists the lessons in identity's scope, under its authorization bounds: List(identity.Authorization(),
@@ -256,12 +283,19 @@ func (l *Lessons) ListFor(ctx context.Context, identity Identity, query LessonQu
 //
 // Listing lessons discloses them: serve the view only behind the host's own authorization.
 func (l *Lessons) List(ctx context.Context, bounds AuthorizationBounds, scope Scope, query LessonQuery) (LessonsPage, error) {
+	page, _, err := l.read(ctx, bounds, scope, query)
+	return page, err
+}
+
+// read is List, with the record each listed lesson was described from, at the same index.
+func (l *Lessons) read(ctx context.Context, bounds AuthorizationBounds, scope Scope, query LessonQuery) (LessonsPage,
+	[]*ExperienceRecord, error) {
 	if err := query.Validate(); err != nil {
-		return LessonsPage{}, err
+		return LessonsPage{}, nil, err
 	}
 	limit := query.EffectiveLimit()
 	if !bounds.Permits(scope) {
-		return LessonsPage{Scope: scope, Outcome: LessonsDenied, Lessons: []Lesson{}, GeneratedAt: l.options.Clock()}, nil
+		return LessonsPage{Scope: scope, Outcome: LessonsDenied, Lessons: []Lesson{}, GeneratedAt: l.options.Clock()}, nil, nil
 	}
 	// One record past the limit tells "exactly the limit" from "more exist". Leaving ineligible lessons out may skip
 	// any number of records, so then as many as the store answers are read.
@@ -272,15 +306,16 @@ func (l *Lessons) List(ctx context.Context, bounds AuthorizationBounds, scope Sc
 	read, err := l.store.ListLessonRecords(ctx, bounds, scope, distinctStatuses(query.Statuses), probe)
 	if err != nil {
 		if errors.Is(err, ErrAuthorizationDenied) {
-			return LessonsPage{Scope: scope, Outcome: LessonsDenied, Lessons: []Lesson{}, GeneratedAt: l.options.Clock()}, nil
+			return LessonsPage{Scope: scope, Outcome: LessonsDenied, Lessons: []Lesson{}, GeneratedAt: l.options.Clock()}, nil, nil
 		}
-		return LessonsPage{}, err
+		return LessonsPage{}, nil, err
 	}
 	page := LessonsPage{Scope: scope, Outcome: LessonsFound, Lessons: []Lesson{}, GeneratedAt: l.options.Clock(),
 		InjectionsTracked: read.InjectionsTracked}
+	var records []*ExperienceRecord
 	for i := range read.Records {
 		if err := ctx.Err(); err != nil {
-			return LessonsPage{}, err
+			return LessonsPage{}, nil, err
 		}
 		held := &read.Records[i]
 		// Only the caller's own scope: a store that answered with anything else is not shown it.
@@ -288,7 +323,7 @@ func (l *Lessons) List(ctx context.Context, bounds AuthorizationBounds, scope Sc
 			page.OutOfScopeDropped++
 			continue
 		}
-		lesson := l.describe(&held.Record)
+		lesson := l.describe(&held.Record, page.GeneratedAt)
 		if read.InjectionsTracked && held.Injection != nil {
 			at := held.Injection.LastInjectedAt
 			lesson.LastInjectedAt, lesson.InjectionCount = &at, held.Injection.InjectionCount
@@ -301,6 +336,7 @@ func (l *Lessons) List(ctx context.Context, bounds AuthorizationBounds, scope Sc
 			break
 		}
 		page.Lessons = append(page.Lessons, lesson)
+		records = append(records, &held.Record)
 	}
 	// A store that answered as many records as were asked for may hold more than were read.
 	answered := read.Answered
@@ -308,11 +344,44 @@ func (l *Lessons) List(ctx context.Context, bounds AuthorizationBounds, scope Sc
 		answered = len(read.Records)
 	}
 	page.HasMore = page.HasMore || answered >= probe
-	return page, nil
+	// Contract 1.10: opt-in, so the default page reads nothing more.
+	if query.IncludeMeasuredBenefit && len(page.Lessons) > 0 {
+		if err := l.addMeasuredBenefit(ctx, bounds, scope, &page); err != nil {
+			return LessonsPage{}, nil, err
+		}
+	}
+	return page, records, nil
 }
 
+// addMeasuredBenefit sets each listed lesson's MeasuredBenefit from one estimate for the page's scope, over the benefit
+// policy's window before the page's GeneratedAt (.NET's AddMeasuredBenefitAsync). Left nil for a lesson no assigned run
+// named, and for every lesson when the store does not track the holdout or refused the read.
+func (l *Lessons) addMeasuredBenefit(ctx context.Context, bounds AuthorizationBounds, scope Scope, page *LessonsPage) error {
+	policy := l.options.Benefit
+	estimate, err := estimateBenefit(ctx, l.store, bounds, scope, policy.EstimatorOptions(),
+		ptrTo(policy.AssignedFrom(page.GeneratedAt)))
+	if err != nil {
+		return err
+	}
+	if !usable(estimate) {
+		return nil
+	}
+	measured := make(map[UUID]*LessonBenefit, len(estimate.Lessons))
+	for i := range estimate.Lessons {
+		if _, ok := measured[estimate.Lessons[i].ExperienceID]; !ok {
+			measured[estimate.Lessons[i].ExperienceID] = &estimate.Lessons[i]
+		}
+	}
+	for i := range page.Lessons {
+		page.Lessons[i].MeasuredBenefit = measured[page.Lessons[i].ExperienceID]
+	}
+	return nil
+}
+
+func ptrTo[T any](value T) *T { return &value }
+
 // describe is one record as a lesson. A record that cannot be rendered is a lesson marked so, never a failure.
-func (l *Lessons) describe(record *ExperienceRecord) (lesson Lesson) {
+func (l *Lessons) describe(record *ExperienceRecord, now Instant) (lesson Lesson) {
 	lesson = Lesson{
 		ExperienceID: record.ExperienceID,
 		TaskID:       record.TaskID,
@@ -344,13 +413,16 @@ func (l *Lessons) describe(record *ExperienceRecord) (lesson Lesson) {
 	case record.Status != StatusValidated && record.Status != StatusReinforced:
 		lesson.Ineligibility = IneligibleStatus
 		lesson.IneligibleReason = "status " + string(record.Status) + " is never retrieved"
-	case !(record.ReuseConfidence >= DefaultMinConfidence):
+	case !(record.ReuseConfidence >= *l.policy.MinimumConfidence):
 		lesson.Ineligibility = IneligibleBelowConfidenceFloor
 		lesson.IneligibleReason = "confidence " + shortNumber(record.ReuseConfidence) +
-			" is below the retrieval floor " + shortNumber(DefaultMinConfidence)
+			" is below the retrieval floor " + shortNumber(*l.policy.MinimumConfidence)
 	case l.options.ExcludeModelAuthored && IsModelAuthored(record.Reflection):
 		lesson.Ineligibility = IneligibleModelAuthored
 		lesson.IneligibleReason = "model-authored lessons are excluded"
+	case l.policy.MaxAge > 0 && now.Sub(record.UpdatedAt).Ticks() > int64(l.policy.MaxAge/100):
+		lesson.Ineligibility = IneligibleExpired
+		lesson.IneligibleReason = "its last activity is older than the retrieval policy's maximum age"
 	case len(text) > maxBytes:
 		lesson.Ineligibility = IneligibleOverByteBudget
 		lesson.IneligibleReason = "its block (" + strconv.Itoa(len(text)) + " bytes) is larger than the " +

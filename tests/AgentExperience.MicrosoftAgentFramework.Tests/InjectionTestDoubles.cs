@@ -790,6 +790,57 @@ internal sealed class FakeExperienceWorld : IExperienceCandidateSource, IExperie
         OnRecordInjection?.Invoke(authorization, scope, experienceIds, injectedAt, cancellationToken)
             ?? Task.FromResult(ExperienceInjectionRecordResult.NotTracked);
 
+    /// <summary>Whether this fake claims to record holdout assignments. <see langword="false"/>, the port's default, unless a test sets it.</summary>
+    public bool TracksHoldout { get; set; }
+
+    /// <summary>
+    /// What <see cref="RecordHoldoutAssignmentAsync"/> does, when set; otherwise it answers as the port's default
+    /// implementation (nothing recorded, not tracked).
+    /// </summary>
+    public Func<AuthorizationContext, Scope, HoldoutAssignment, CancellationToken, Task<ExperienceHoldoutRecordResult>>? OnRecordHoldout { get; set; }
+
+    public Task<ExperienceHoldoutRecordResult> RecordHoldoutAssignmentAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        HoldoutAssignment assignment,
+        CancellationToken cancellationToken) =>
+        OnRecordHoldout?.Invoke(authorization, scope, assignment, cancellationToken)
+            ?? Task.FromResult(ExperienceHoldoutRecordResult.NotTracked);
+
+    /// <summary>What <see cref="QueryHoldoutOutcomesAsync"/> answers, when set; otherwise the port's default (nothing, not tracked).</summary>
+    public Func<AuthorizationContext, HoldoutOutcomeQuery, CancellationToken, Task<HoldoutOutcomeQueryResult>>? OnQueryHoldout { get; set; }
+
+    public Task<HoldoutOutcomeQueryResult> QueryHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        HoldoutOutcomeQuery query,
+        CancellationToken cancellationToken) =>
+        OnQueryHoldout?.Invoke(authorization, query, cancellationToken)
+            ?? Task.FromResult(HoldoutOutcomeQueryResult.NotTracked);
+
+    /// <summary>What <see cref="IExperienceRecordStore.TracksProviderHoldout"/> answers. <see langword="false"/> by default, like the port.</summary>
+    public bool TracksProviderHoldout { get; set; }
+
+    /// <summary>What <see cref="RecordProviderHoldoutAssignmentAsync"/> does, when set; otherwise the port's default (not tracked).</summary>
+    public Func<AuthorizationContext, Scope, ProviderHoldoutAssignment, CancellationToken, Task<ExperienceHoldoutRecordResult>>? OnRecordProviderHoldout { get; set; }
+
+    public Task<ExperienceHoldoutRecordResult> RecordProviderHoldoutAssignmentAsync(
+        AuthorizationContext authorization,
+        Scope scope,
+        ProviderHoldoutAssignment assignment,
+        CancellationToken cancellationToken) =>
+        OnRecordProviderHoldout?.Invoke(authorization, scope, assignment, cancellationToken)
+            ?? Task.FromResult(ExperienceHoldoutRecordResult.NotTracked);
+
+    /// <summary>What <see cref="QueryProviderHoldoutOutcomesAsync"/> answers, when set; otherwise the port's default (nothing, not tracked).</summary>
+    public Func<AuthorizationContext, ProviderHoldoutOutcomeQuery, CancellationToken, Task<ProviderHoldoutOutcomeQueryResult>>? OnQueryProviderHoldout { get; set; }
+
+    public Task<ProviderHoldoutOutcomeQueryResult> QueryProviderHoldoutOutcomesAsync(
+        AuthorizationContext authorization,
+        ProviderHoldoutOutcomeQuery query,
+        CancellationToken cancellationToken) =>
+        OnQueryProviderHoldout?.Invoke(authorization, query, cancellationToken)
+            ?? Task.FromResult(ProviderHoldoutOutcomeQueryResult.NotTracked);
+
     public Task<ExperienceRecordHistoryResult> GetHistoryAsync(AuthorizationContext authorization, ExperienceRecordHistoryQuery query, CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Injection must not read history.");
 

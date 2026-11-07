@@ -1,0 +1,6 @@
+{
+  "description": "A first independent confirmation after finalization: 3/4.",
+  "operation": "score",
+  "supportingValidations": 2,
+  "contradictions": 0
+}

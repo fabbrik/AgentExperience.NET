@@ -9,8 +9,10 @@ namespace AgentExperience.MicrosoftAgentFramework.Diagnostics;
 /// <summary>
 /// The MAF adapter's one emission seam: the <see cref="ActivitySource"/> and <see cref="Meter"/>
 /// named <c>AgentExperience.MicrosoftAgentFramework</c>, the same three instruments Core emits, and
-/// the operations this assembly owns: <c>inject</c>, and <c>record_injection</c>, which records an injection after the
-/// block was handed over and emits measurements only, never a span.
+/// the operations this assembly owns: <c>inject</c>; <c>record_injection</c>, which records an injection after the
+/// block was handed over; <c>record_holdout</c>, which records a run's holdout assignment; <c>record_provider_holdout</c>,
+/// which records a run's assignment in a measured memory provider's holdout; and <c>benefit_refresh</c>, which refreshes
+/// the cached benefit estimate. The last four emit measurements only, never a span.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -87,6 +89,28 @@ internal static class InjectionDiagnostics
     /// </summary>
     internal const string HistoryReadAttribute = "agentexperience.history_read";
 
+    /// <summary>
+    /// Why an injection that ran every step injected nothing, when the match floor (<c>ExperienceInjectionOptions.MinimumMatch</c>)
+    /// kept at least one record out of it: <see cref="WeakMatchReason"/>. Set only then, on a <c>NothingToInject</c> outcome.
+    /// </summary>
+    internal const string NothingReasonAttribute = "agentexperience.nothing_reason";
+
+    /// <summary>The <see cref="NothingReasonAttribute"/> value for a block the match floor emptied.</summary>
+    internal const string WeakMatchReason = "weak_match";
+
+    /// <summary>
+    /// The operation recall at the moment of failure emits, once per failed tool call it looks at
+    /// (<c>ExperienceRecallOptions</c>): a span like <see cref="Inject"/>'s, with one of the
+    /// <c>ExperienceRecallOutcome</c> member names as its outcome.
+    /// </summary>
+    internal const string Recall = "recall";
+
+    /// <summary>How many records a recall hint named (or, held out, would have named). A count; the IDs stay on the typed result.</summary>
+    internal const string RecordCountAttribute = "agentexperience.record_count";
+
+    /// <summary>How a recall's records matched the failure's signature: <c>Exact</c> or <c>Coarse</c>. Restated from Core, where the signature lookup sets it.</summary>
+    internal const string SignatureMatchAttribute = "agentexperience.signature.match";
+
     // ---------------------------------------------------------------------------------------------
     // Restated from Core. Every one of these is asserted equal to Core's own value by
     // AgentExperience.MicrosoftAgentFramework.Tests' diagnostics-agreement test.
@@ -141,6 +165,32 @@ internal static class InjectionDiagnostics
     /// </summary>
     internal const string RecordInjection = "record_injection";
 
+    /// <summary>
+    /// The third operation this assembly owns: recording, in the background, which arm of the injection holdout a captured
+    /// run was assigned to and the records its block named. No span, like <see cref="RecordInjection"/>, and the same
+    /// outcomes.
+    /// </summary>
+    internal const string RecordHoldout = "record_holdout";
+
+    /// <summary>
+    /// Recording, in the background, which arm of a measured memory provider's holdout a captured run was assigned to
+    /// (<c>ExperienceHoldoutContextProvider</c>). No span, like <see cref="RecordInjection"/>, and the same outcomes.
+    /// </summary>
+    internal const string RecordProviderHoldout = "record_provider_holdout";
+
+    /// <summary>
+    /// The fourth operation this assembly owns: refreshing, in the background, the cached benefit estimate the injection
+    /// acts on (<c>ExperienceInjectionOptions.Benefit</c>). No span, like <see cref="RecordInjection"/>; its outcomes are
+    /// <see cref="RefreshedOutcome"/>, <see cref="NotRefreshedOutcome"/> and <see cref="OutcomeUnknownOutcome"/>.
+    /// </summary>
+    internal const string BenefitRefresh = "benefit_refresh";
+
+    /// <summary>The store answered and the cached estimate was replaced (one the store could not give has no effect).</summary>
+    internal const string RefreshedOutcome = "Refreshed";
+
+    /// <summary>The refresh failed: the previous estimate is kept.</summary>
+    internal const string NotRefreshedOutcome = "NotRefreshed";
+
     /// <summary>The store recorded the injection.</summary>
     internal const string RecordedOutcome = "Recorded";
 
@@ -150,7 +200,7 @@ internal static class InjectionDiagnostics
     /// <summary>The store refused or failed the write: nothing was recorded.</summary>
     internal const string NotRecordedOutcome = "NotRecorded";
 
-    /// <summary>The write timed out or was cancelled: it may or may not have been recorded.</summary>
+    /// <summary>The write timed out or was cancelled: it may or may not have been recorded. For <see cref="BenefitRefresh"/>, the refresh was abandoned and the previous estimate kept.</summary>
     internal const string OutcomeUnknownOutcome = "OutcomeUnknown";
 
     /// <summary>
@@ -196,23 +246,28 @@ internal static class InjectionDiagnostics
     /// process does not even pay for composing the span name.
     /// </summary>
     /// <returns>The trace to thread through the call and hand back to <see cref="Succeeded"/> or <see cref="Faulted"/>.</returns>
-    internal static InjectionTrace Start()
+    internal static InjectionTrace Start() => Start(Inject);
+
+    /// <summary>Starts the span for one <paramref name="operation"/>, <see cref="Inject"/> or <see cref="Recall"/>, as <see cref="Start()"/> does.</summary>
+    /// <param name="operation"><see cref="Inject"/> or <see cref="Recall"/>.</param>
+    /// <returns>The trace to thread through the call.</returns>
+    internal static InjectionTrace Start(string operation)
     {
         if (!Source.HasListeners())
         {
-            return new InjectionTrace(null, Stopwatch.GetTimestamp());
+            return new InjectionTrace(null, Stopwatch.GetTimestamp(), operation);
         }
 
-        var activity = Source.StartActivity(SpanNamePrefix + Inject, ActivityKind.Internal);
-        activity?.SetTag(OperationAttribute, Inject);
-        return new InjectionTrace(activity, Stopwatch.GetTimestamp());
+        var activity = Source.StartActivity(SpanNamePrefix + operation, ActivityKind.Internal);
+        activity?.SetTag(OperationAttribute, operation);
+        return new InjectionTrace(activity, Stopwatch.GetTimestamp(), operation);
     }
 
     /// <summary>
     /// Writes one span attribute, and never lets writing it become the invocation's problem. The same
     /// rule Core applies: telemetry is a side effect of the operation, never a precondition of it.
     /// </summary>
-    /// <param name="trace">The trace <see cref="Start"/> produced.</param>
+    /// <param name="trace">The trace <see cref="Start()"/> produced.</param>
     /// <param name="name">The attribute name.</param>
     /// <param name="value">The attribute value, or <see langword="null"/> to write nothing at all.</param>
     internal static void Tag(InjectionTrace trace, string name, object? value)
@@ -236,7 +291,7 @@ internal static class InjectionDiagnostics
     /// Closes a span whose injection returned -- including one that injected nothing, which is a
     /// decision rather than a failure and is therefore still <see cref="ActivityStatusCode.Ok"/>.
     /// </summary>
-    /// <param name="trace">The trace <see cref="Start"/> produced.</param>
+    /// <param name="trace">The trace <see cref="Start()"/> produced.</param>
     /// <param name="outcome">The <c>InjectionOutcome</c> member name, verbatim.</param>
     internal static void Succeeded(InjectionTrace trace, string outcome)
     {
@@ -246,7 +301,7 @@ internal static class InjectionDiagnostics
         {
             trace.Activity?.SetTag(OutcomeAttribute, outcome);
             trace.Activity?.SetStatus(ActivityStatusCode.Ok);
-            Record(outcome, trace.StartTimestamp);
+            Record(trace.Operation, outcome, trace.StartTimestamp);
         }
         catch (Exception)
         {
@@ -259,7 +314,7 @@ internal static class InjectionDiagnostics
     /// <c>ProvideAIContextAsync</c>, so in practice this classifies that -- but it classifies whatever
     /// arrives, and it hands telemetry the exception's type name and nothing else.
     /// </summary>
-    /// <param name="trace">The trace <see cref="Start"/> produced.</param>
+    /// <param name="trace">The trace <see cref="Start()"/> produced.</param>
     /// <param name="exception">The exception about to propagate unchanged to the caller.</param>
     /// <param name="cancellationToken">The invocation's token, which is what distinguishes <see cref="ExperienceOperationErrorClass.Cancelled"/> from <see cref="ExperienceOperationErrorClass.Infrastructure"/>.</param>
     internal static void Faulted(InjectionTrace trace, Exception exception, CancellationToken cancellationToken)
@@ -293,7 +348,7 @@ internal static class InjectionDiagnostics
     /// is why it is classified <see cref="ExperienceOperationErrorClass.Unexpected"/> and carries no
     /// <c>error.type</c>: no exception was involved.
     /// </remarks>
-    /// <param name="trace">The trace <see cref="Start"/> produced.</param>
+    /// <param name="trace">The trace <see cref="Start()"/> produced.</param>
     internal static void Closed(InjectionTrace trace)
     {
         if (trace.Reported)
@@ -364,13 +419,13 @@ internal static class InjectionDiagnostics
         activity?.SetTag(OutcomeAttribute, FaultedOutcome);
         activity?.SetStatus(ActivityStatusCode.Error);
 
-        Record(FaultedOutcome, trace.StartTimestamp);
+        Record(trace.Operation, FaultedOutcome, trace.StartTimestamp);
 
         if (Failures.Enabled)
         {
             Failures.Add(1, new TagList
             {
-                { OperationDimension, Inject },
+                { OperationDimension, trace.Operation },
                 { ErrorClassDimension, Name(errorClass) },
                 { NestedDimension, NotNested },
             });
@@ -384,13 +439,24 @@ internal static class InjectionDiagnostics
     /// <param name="outcome">One of the record outcomes above.</param>
     /// <param name="startTimestamp">The <see cref="Stopwatch.GetTimestamp"/> taken when the record was started.</param>
     /// <param name="errorClass">The failure's class, or <see langword="null"/> when the store answered.</param>
-    internal static void InjectionRecorded(string outcome, long startTimestamp, ExperienceOperationErrorClass? errorClass)
+    internal static void InjectionRecorded(string outcome, long startTimestamp, ExperienceOperationErrorClass? errorClass) =>
+        BackgroundRecorded(RecordInjection, outcome, startTimestamp, errorClass);
+
+    /// <summary>
+    /// Counts and times one background operation, <see cref="RecordInjection"/>, <see cref="RecordHoldout"/>,
+    /// <see cref="RecordProviderHoldout"/> or <see cref="BenefitRefresh"/>, and counts a failure when <paramref name="errorClass"/> is set. Never throws.
+    /// </summary>
+    /// <param name="operation"><see cref="RecordInjection"/>, <see cref="RecordHoldout"/>, <see cref="RecordProviderHoldout"/> or <see cref="BenefitRefresh"/>.</param>
+    /// <param name="outcome">One of the record outcomes above.</param>
+    /// <param name="startTimestamp">The <see cref="Stopwatch.GetTimestamp"/> taken when the record was started.</param>
+    /// <param name="errorClass">The failure's class, or <see langword="null"/> when the store answered.</param>
+    internal static void BackgroundRecorded(string operation, string outcome, long startTimestamp, ExperienceOperationErrorClass? errorClass)
     {
         try
         {
             var tags = new TagList
             {
-                { OperationDimension, RecordInjection },
+                { OperationDimension, operation },
                 { OutcomeDimension, outcome },
                 { NestedDimension, NotNested },
             };
@@ -409,7 +475,7 @@ internal static class InjectionDiagnostics
             {
                 Failures.Add(1, new TagList
                 {
-                    { OperationDimension, RecordInjection },
+                    { OperationDimension, operation },
                     { ErrorClassDimension, Name(failed) },
                     { NestedDimension, NotNested },
                 });
@@ -425,7 +491,7 @@ internal static class InjectionDiagnostics
     /// Records the injection's count and duration. Both writes are guarded by the instrument's own
     /// <c>Enabled</c>, so an unsubscribed process composes no tags and records nothing.
     /// </summary>
-    private static void Record(string outcome, long startTimestamp)
+    private static void Record(string operation, string outcome, long startTimestamp)
     {
         var counting = Operations.Enabled;
         var timing = Durations.Enabled;
@@ -436,7 +502,7 @@ internal static class InjectionDiagnostics
 
         var tags = new TagList
         {
-            { OperationDimension, Inject },
+            { OperationDimension, operation },
             { OutcomeDimension, outcome },
             { NestedDimension, NotNested },
         };
@@ -466,8 +532,12 @@ internal static class InjectionDiagnostics
 /// </remarks>
 /// <param name="activity">The started span, or <see langword="null"/> when nobody is listening or a sampler declined it.</param>
 /// <param name="startTimestamp">The <see cref="Stopwatch.GetTimestamp"/> taken when the injection began.</param>
-internal sealed class InjectionTrace(Activity? activity, long startTimestamp)
+/// <param name="operation">The operation this trace measures: <see cref="InjectionDiagnostics.Inject"/> unless named.</param>
+internal sealed class InjectionTrace(Activity? activity, long startTimestamp, string operation = InjectionDiagnostics.Inject)
 {
+    /// <summary>The operation this trace measures, <c>inject</c> or <c>recall</c>.</summary>
+    internal string Operation { get; } = operation;
+
     /// <summary>The started span, or <see langword="null"/> when nobody is listening or a sampler declined it.</summary>
     internal Activity? Activity { get; } = activity;
 

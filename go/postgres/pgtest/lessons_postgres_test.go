@@ -40,6 +40,19 @@ func seedLessons(t *testing.T, store *postgres.Store, owner *pgx.Conn, c *ct.Les
 			t.Fatal(err)
 		}
 	}
+	// Contract 1.10: the holdout's rows, from their PostgreSQL text form, as the owner.
+	for _, row := range c.Assignments {
+		values := make([]any, len(ct.AssignmentColumns))
+		for i, column := range ct.AssignmentColumns {
+			values[i], _ = row.Raw.Get(column)
+		}
+		if _, err := owner.Exec(ctx, "INSERT INTO agent_experience.experience_holdout_assignments (run_id, "+
+			"experience_id, revision, arm, tenant_id, application_id, project_id, team_id, agent_id, user_id, "+
+			"assigned_at) VALUES ($1::text::uuid, $2::text::uuid, $3::text::bigint, $4, $5, $6, $7, $8, $9, $10, "+
+			"$11::text::timestamptz)", values...); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func lessonsView(t *testing.T, store ae.LessonsReader, now ae.Instant, options ae.LessonsOptions) *ae.Lessons {
@@ -62,9 +75,24 @@ func TestLessonsView(t *testing.T) {
 			}
 			database := createDatabase(t, admin, "lessons_"+name)
 			store := newStore(t, admin, database)
-			seedLessons(t, store, ownerConn(t, admin, database), c)
-			page, err := lessonsView(t, store, c.Now, ae.LessonsOptions{}).List(context.Background(),
+			owner := ownerConn(t, admin, database)
+			seedLessons(t, store, owner, c)
+			if c.HoldoutReadRevoked {
+				// Contract 1.10: the holdout read fails, and the list with it, as a store failure.
+				if _, err := owner.Exec(context.Background(), "REVOKE SELECT ON "+
+					"agent_experience.experience_holdout_assignments FROM "+pgtest.ApplicationRole); err != nil {
+					t.Fatal(err)
+				}
+			}
+			options := c.Options()
+			page, err := lessonsView(t, store, c.Now, options).List(context.Background(),
 				ae.BoundsOf(c.Scope), c.Scope, c.Query())
+			if class := c.ExpectedErrorClass(); class != "" {
+				if err == nil || ae.ClassifyError(err) != class {
+					t.Fatalf("the list answered %v (%s), not a failure of class %s", err, ae.ClassifyError(err), class)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

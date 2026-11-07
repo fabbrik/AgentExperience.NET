@@ -505,13 +505,16 @@ public sealed class PostgresExperienceCandidateSource : IExperienceCandidateSour
 
             // The level the predicate matched the record under travels with the shared flag, and only with it. A
             // shared row whose level is missing or unknown has none here, which every consumer reads as LessonOnly.
+            // The relevance is the coverage (story 20.2), so it is reported as the term coverage too (story 28.5).
+            var relevance = ReadRelevance(row);
             candidates.Add(new ExperienceCandidate(
                 record,
-                ReadRelevance(row),
+                relevance,
                 shared,
                 ExperienceRecordRows.ReadPermittingGrant(row))
             {
                 GrantDisclosure = shared ? disclosure : null,
+                TermCoverage = relevance,
             });
             disclosures.Add(disclosure);
         }

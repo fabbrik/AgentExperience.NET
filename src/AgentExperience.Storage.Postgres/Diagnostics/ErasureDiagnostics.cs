@@ -67,6 +67,22 @@ internal static class ErasureDiagnostics
     /// <summary>One bounded sealed-authorship backfill batch (<c>PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync</c>).</summary>
     internal const string AuthorshipBackfill = "record.authorship.backfill";
 
+    /// <summary>One bounded failure-signature backfill batch (<c>PostgresExperienceRecordStore.BackfillFailureSignaturesAsync</c>).</summary>
+    internal const string SignatureBackfill = "record.signature.backfill";
+
+    /// <summary>
+    /// A record created without its failure signatures (<c>PostgresExperienceRecordStore.CreateAsync</c>): the signature
+    /// table, a column it needs, or the role's privilege on it was missing. Reported once per skipped write, with
+    /// <see cref="SkippedOutcome"/>; a write that succeeds reports nothing.
+    /// </summary>
+    internal const string SignatureWrite = "record.signature.write";
+
+    /// <summary>The outcome a skipped signature write reports.</summary>
+    internal const string SkippedOutcome = "Skipped";
+
+    /// <summary>The SQLSTATE that made a signature write skip: <c>42P01</c>, <c>42703</c> or <c>42501</c>. Nothing else from the error.</summary>
+    internal const string SqlStateAttribute = "agentexperience.sqlstate";
+
     /// <summary>How many sealed records an authorship backfill batch wrote a flag for. A count: which ones, and what flag, stays on the database.</summary>
     internal const string BackfilledCountAttribute = "agentexperience.backfilled_count";
 
@@ -248,6 +264,27 @@ internal static class ErasureDiagnostics
         if (Enum.IsDefined(match))
         {
             Tag(trace, ScopeMatchAttribute, match == ScopeMatch.Subtree ? nameof(ScopeMatch.Subtree) : nameof(ScopeMatch.Exact));
+        }
+    }
+
+    /// <summary>
+    /// Reports one skipped signature write: a <see cref="SignatureWrite"/> span carrying only the SQLSTATE, and one count
+    /// under <see cref="SkippedOutcome"/>. Never throws.
+    /// </summary>
+    /// <param name="sqlState">The SQLSTATE that made the write skip.</param>
+    internal static void SignatureWriteSkipped(string sqlState)
+    {
+        using var trace = Start(SignatureWrite);
+        Tag(trace, SqlStateAttribute, sqlState);
+        try
+        {
+            trace.Activity?.SetTag(OutcomeAttribute, SkippedOutcome);
+            trace.Activity?.SetStatus(ActivityStatusCode.Ok);
+            Record(trace.Operation, SkippedOutcome, trace.StartTimestamp);
+        }
+        catch (Exception)
+        {
+            // Frozen rule 6: the record was created; telemetry must not report otherwise.
         }
     }
 

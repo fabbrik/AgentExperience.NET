@@ -1,0 +1,9 @@
+{
+  "description": "The default's RuleId is compared ordinally: another casing is a different rule.",
+  "operation": "rule",
+  "engine": {
+    "ruleId": "Reuse-Heuristic",
+    "ruleVersion": "1.0.0",
+    "score": "bayes"
+  }
+}

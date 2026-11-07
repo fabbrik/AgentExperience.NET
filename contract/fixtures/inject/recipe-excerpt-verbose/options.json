@@ -1,0 +1,15 @@
+{
+  "rendering": "Verbose",
+  "failureDetail": "ErrorClass",
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "approachArguments": {
+    "pin_dependency": [
+      "package"
+    ]
+  },
+  "recipeExcerpts": [
+    "pin_dependency",
+    "write_config"
+  ]
+}

@@ -1,0 +1,542 @@
+{
+  "minimumRunsPerArm": 20,
+  "overall": {
+    "treatment": {
+      "runs": 10,
+      "successes": 6,
+      "rate": 0.6
+    },
+    "holdout": {
+      "runs": 6,
+      "successes": 4,
+      "rate": 0.6666666666666666
+    },
+    "difference": -0.06666666666666665,
+    "lower": -0.43884660385708213,
+    "upper": 0.36714170837476456,
+    "verdict": "NoEvidence",
+    "unverified": 0,
+    "pending": 0,
+    "mixedArm": 0
+  },
+  "lessons": [
+    {
+      "experienceId": "2210162f-6473-850b-8175-742e43ec5550",
+      "comparison": {
+        "treatment": {
+          "runs": 2,
+          "successes": 1,
+          "rate": 0.5
+        },
+        "holdout": {
+          "runs": 1,
+          "successes": 1,
+          "rate": 1
+        },
+        "difference": -0.5,
+        "lower": -0.9054687942657693,
+        "upper": 0.39104934410983583,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "python-agent-model",
+          "runModel": "python-agent-model",
+          "comparison": {
+            "treatment": {
+              "runs": 2,
+              "successes": 1,
+              "rate": 0.5
+            },
+            "holdout": {
+              "runs": 1,
+              "successes": 1,
+              "rate": 1
+            },
+            "difference": -0.5,
+            "lower": -0.9054687942657693,
+            "upper": 0.39104934410983583,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "24faf466-07ec-8f7a-8761-de8d7ef3011f",
+      "comparison": {
+        "treatment": {
+          "runs": 4,
+          "successes": 2,
+          "rate": 0.5
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 2,
+          "rate": 0.6666666666666666
+        },
+        "difference": -0.16666666666666663,
+        "lower": -0.6098037218501158,
+        "upper": 0.41053364139570436,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "go-agent-model",
+          "runModel": "go-agent-model",
+          "comparison": {
+            "treatment": {
+              "runs": 4,
+              "successes": 2,
+              "rate": 0.5
+            },
+            "holdout": {
+              "runs": 3,
+              "successes": 2,
+              "rate": 0.6666666666666666
+            },
+            "difference": -0.16666666666666663,
+            "lower": -0.6098037218501158,
+            "upper": 0.41053364139570436,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "35d7540c-e85a-8464-81f7-54276e4201f6",
+      "comparison": {
+        "treatment": {
+          "runs": 5,
+          "successes": 3,
+          "rate": 0.6
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 2,
+          "rate": 0.6666666666666666
+        },
+        "difference": -0.06666666666666665,
+        "lower": -0.5252103363450596,
+        "upper": 0.4722447487427823,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "python-agent-model",
+          "runModel": "python-agent-model",
+          "comparison": {
+            "treatment": {
+              "runs": 5,
+              "successes": 3,
+              "rate": 0.6
+            },
+            "holdout": {
+              "runs": 3,
+              "successes": 2,
+              "rate": 0.6666666666666666
+            },
+            "difference": -0.06666666666666665,
+            "lower": -0.5252103363450596,
+            "upper": 0.4722447487427823,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "6faa0876-5a2e-8181-b79b-195af5594b58",
+      "comparison": {
+        "treatment": {
+          "runs": 2,
+          "successes": 1,
+          "rate": 0.5
+        },
+        "holdout": {
+          "runs": 2,
+          "successes": 1,
+          "rate": 0.5
+        },
+        "difference": 0,
+        "lower": -0.5734194679697172,
+        "upper": 0.5734194679697172,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "go-agent-model",
+          "runModel": "go-agent-model",
+          "comparison": {
+            "treatment": {
+              "runs": 2,
+              "successes": 1,
+              "rate": 0.5
+            },
+            "holdout": {
+              "runs": 2,
+              "successes": 1,
+              "rate": 0.5
+            },
+            "difference": 0,
+            "lower": -0.5734194679697172,
+            "upper": 0.5734194679697172,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "87d250fb-a1e5-83fa-af03-0222dbb2a0a5",
+      "comparison": {
+        "treatment": {
+          "runs": 4,
+          "successes": 2,
+          "rate": 0.5
+        },
+        "holdout": {
+          "runs": 1,
+          "successes": 1,
+          "rate": 1
+        },
+        "difference": -0.5,
+        "lower": -0.8499610108478506,
+        "upper": 0.36720049563459156,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "python-agent-model",
+          "runModel": "python-agent-model",
+          "comparison": {
+            "treatment": {
+              "runs": 4,
+              "successes": 2,
+              "rate": 0.5
+            },
+            "holdout": {
+              "runs": 1,
+              "successes": 1,
+              "rate": 1
+            },
+            "difference": -0.5,
+            "lower": -0.8499610108478506,
+            "upper": 0.36720049563459156,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "93fb186a-d292-8c6a-ae85-9854396c9224",
+      "comparison": {
+        "treatment": {
+          "runs": 2,
+          "successes": 1,
+          "rate": 0.5
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 2,
+          "rate": 0.6666666666666666
+        },
+        "difference": -0.16666666666666663,
+        "lower": -0.6548292253357504,
+        "upper": 0.4457812328619246,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "go-agent-model",
+          "runModel": "go-agent-model",
+          "comparison": {
+            "treatment": {
+              "runs": 2,
+              "successes": 1,
+              "rate": 0.5
+            },
+            "holdout": {
+              "runs": 3,
+              "successes": 2,
+              "rate": 0.6666666666666666
+            },
+            "difference": -0.16666666666666663,
+            "lower": -0.6548292253357504,
+            "upper": 0.4457812328619246,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "c895e81b-adb8-8d14-9f96-dd916b89fb56",
+      "comparison": {
+        "treatment": {
+          "runs": 2,
+          "successes": 1,
+          "rate": 0.5
+        },
+        "holdout": {
+          "runs": 0,
+          "successes": 0,
+          "rate": null
+        },
+        "difference": null,
+        "lower": null,
+        "upper": null,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "go-agent-model",
+          "runModel": "go-agent-model",
+          "comparison": {
+            "treatment": {
+              "runs": 2,
+              "successes": 1,
+              "rate": 0.5
+            },
+            "holdout": {
+              "runs": 0,
+              "successes": 0,
+              "rate": null
+            },
+            "difference": null,
+            "lower": null,
+            "upper": null,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "cfdc22a2-a2b7-86af-a54f-0ca2ac5ffbd4",
+      "comparison": {
+        "treatment": {
+          "runs": 5,
+          "successes": 3,
+          "rate": 0.6
+        },
+        "holdout": {
+          "runs": 2,
+          "successes": 1,
+          "rate": 0.5
+        },
+        "difference": 0.09999999999999998,
+        "lower": -0.4484245614142879,
+        "upper": 0.5941082576402724,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "python-agent-model",
+          "runModel": "python-agent-model",
+          "comparison": {
+            "treatment": {
+              "runs": 5,
+              "successes": 3,
+              "rate": 0.6
+            },
+            "holdout": {
+              "runs": 2,
+              "successes": 1,
+              "rate": 0.5
+            },
+            "difference": 0.09999999999999998,
+            "lower": -0.4484245614142879,
+            "upper": 0.5941082576402724,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "e6076b39-50de-8a05-a237-fa4c01d2ba2d",
+      "comparison": {
+        "treatment": {
+          "runs": 5,
+          "successes": 3,
+          "rate": 0.6
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 2,
+          "rate": 0.6666666666666666
+        },
+        "difference": -0.06666666666666665,
+        "lower": -0.5252103363450596,
+        "upper": 0.4722447487427823,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "go-agent-model",
+          "runModel": "go-agent-model",
+          "comparison": {
+            "treatment": {
+              "runs": 5,
+              "successes": 3,
+              "rate": 0.6
+            },
+            "holdout": {
+              "runs": 3,
+              "successes": 2,
+              "rate": 0.6666666666666666
+            },
+            "difference": -0.06666666666666665,
+            "lower": -0.5252103363450596,
+            "upper": 0.4722447487427823,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "e9ef3e8c-ddb6-8799-9e7d-d57fe9924934",
+      "comparison": {
+        "treatment": {
+          "runs": 2,
+          "successes": 1,
+          "rate": 0.5
+        },
+        "holdout": {
+          "runs": 0,
+          "successes": 0,
+          "rate": null
+        },
+        "difference": null,
+        "lower": null,
+        "upper": null,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "python-agent-model",
+          "runModel": "python-agent-model",
+          "comparison": {
+            "treatment": {
+              "runs": 2,
+              "successes": 1,
+              "rate": 0.5
+            },
+            "holdout": {
+              "runs": 0,
+              "successes": 0,
+              "rate": null
+            },
+            "difference": null,
+            "lower": null,
+            "upper": null,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    }
+  ],
+  "byConsumingModel": [
+    {
+      "model": "go-agent-model",
+      "comparison": {
+        "treatment": {
+          "runs": 5,
+          "successes": 3,
+          "rate": 0.6
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 2,
+          "rate": 0.6666666666666666
+        },
+        "difference": -0.06666666666666665,
+        "lower": -0.5252103363450596,
+        "upper": 0.4722447487427823,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      }
+    },
+    {
+      "model": "python-agent-model",
+      "comparison": {
+        "treatment": {
+          "runs": 5,
+          "successes": 3,
+          "rate": 0.6
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 2,
+          "rate": 0.6666666666666666
+        },
+        "difference": -0.06666666666666665,
+        "lower": -0.5252103363450596,
+        "upper": 0.4722447487427823,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      }
+    }
+  ],
+  "tracked": true,
+  "outcome": "Found"
+}

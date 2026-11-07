@@ -458,7 +458,7 @@ public sealed class ChatClientExperienceReflector : IExperienceReflector, IRefle
             unknown.Add("Application version");
         }
 
-        foreach (var entry in environment.Metadata.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        foreach (var entry in environment.Metadata.Where(kv => !AgentExperience.Core.Holdout.ModelMetadata.IsModelKey(kv.Key)).OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             if (string.IsNullOrWhiteSpace(entry.Value))
             {

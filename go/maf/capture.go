@@ -62,6 +62,16 @@ func (c *captureScope) report(stage CaptureStage, reason string, err error) {
 	c.settings.OnCaptureFailure(CaptureFailure{Stage: stage, Reason: reason, RunID: runID, Err: err})
 }
 
+// run is the invocation's run ID, when its run started and is not finalized yet.
+func (c *captureScope) run() (ae.UUID, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.capture == nil || c.runID == nil || c.finalized {
+		return ae.UUID{}, false
+	}
+	return *c.runID, true
+}
+
 // captured reports whether the invocation is being captured (it has an identity, and its run started).
 func (c *captureScope) captured() bool {
 	c.mu.Lock()
@@ -266,13 +276,13 @@ func (c *captureScope) finishWork(ctx context.Context, status ae.RunExecutionSta
 	}
 
 	finalizedAt := s.Clock()
-	finalized, err := ae.FinalizeContext(ctx, run, ae.Verification{
+	finalized, err := ae.FinalizeContextWith(ctx, run, ae.Verification{
 		ClosedRound:             &ae.ClosedVerificationRound{RoundID: roundID, ArtifactRevision: verdict.ArtifactRevision},
 		RequiredChecks:          verdict.RequiredChecks,
 		Evidence:                verdict.Evidence,
 		CurrentArtifactRevision: verdict.ArtifactRevision,
 		FinalizedAt:             finalizedAt,
-	})
+	}, ae.FinalizeOptions{Reflector: s.Reflector})
 	if err != nil {
 		return report(StageFinalize, "Finalizing the run failed; the run is not stored.", err)
 	}

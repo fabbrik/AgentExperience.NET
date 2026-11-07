@@ -1,0 +1,9 @@
+{
+  "outcome": "Quarantined",
+  "reflectionFailure": {
+    "kind": "OutputTooLarge",
+    "causeType": null,
+    "message": "The model's answer to the reflection request was over the answer size limit and was not read."
+  },
+  "screening": null
+}

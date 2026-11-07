@@ -24,7 +24,8 @@ public static class AgentExperienceCoreServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the sanitizer, the in-memory capture service, the default reflector, the lifecycle
-    /// service, and the finalization service as singletons.
+    /// service, the finalization service and the consolidation service (it runs only when the host
+    /// calls it) as singletons.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -42,6 +43,13 @@ public static class AgentExperienceCoreServiceCollectionExtensions
     /// Both also pick up an <see cref="ExperienceIndexingService"/> when one is registered -- so a
     /// committed record is embedded and a record that leaves eligibility is de-indexed -- and work
     /// without one, which is the text-only deployment. Registration order does not matter.
+    /// </para>
+    /// <para>
+    /// <b>Finalizing later.</b> When an <see cref="IExperienceRunStore"/> is registered (the SQLite storage registers one),
+    /// the capture service saves each run it completes there, and finalization reads a run from there when the capture
+    /// service no longer holds it, so a run captured in one process can be finalized in another. Without one, runs live in
+    /// memory only. A registered <see cref="ExperienceRunStoreOptions"/> decides which runs are saved and how long a
+    /// completion waits for a save.
     /// </para>
     /// <para>
     /// No sanitization policy or capture limit is invented here: both are host decisions with real
@@ -115,10 +123,14 @@ public static class AgentExperienceCoreServiceCollectionExtensions
         services.TryAddSingleton(sanitizationOptions);
         services.TryAddSingleton(captureLimits);
         services.TryAddSingleton<ISanitizer>(_ => new DefaultSanitizer(sanitizationOptions));
+        // Story 28.7: a registered run store (UseSqlite registers one) keeps each completed run, so a later process can
+        // finalize it; without one, runs live in memory only, as before.
         services.TryAddSingleton<IExperienceCaptureService>(provider => new InMemoryExperienceCaptureService(
             provider.GetRequiredService<ISanitizer>(),
             captureLimits,
-            provider.GetService<TimeProvider>() ?? TimeProvider.System));
+            provider.GetService<TimeProvider>() ?? TimeProvider.System,
+            provider.GetService<IExperienceRunStore>(),
+            provider.GetService<ExperienceRunStoreOptions>()));
         services.TryAddSingleton<IExperienceReflector, DefaultExperienceReflector>();
         // Both hooks are resolved through an explicit factory rather than by constructor selection,
         // because the optional ExperienceIndexingService has to come back as null when nothing
@@ -146,7 +158,14 @@ public static class AgentExperienceCoreServiceCollectionExtensions
             indexingTimeout: null,
             provenanceSigning: null,
             provider.GetRequiredService<ISanitizer>(),
-            provider.GetService<ExperienceFinalizationOptions>()));
+            provider.GetService<ExperienceFinalizationOptions>(),
+            provider.GetService<IExperienceRunStore>()));
+
+        // Story 28.6: on demand only; nothing resolves or runs it unless the host does.
+        services.TryAddSingleton(provider => new ExperienceConsolidationService(
+            provider.GetRequiredService<IExperienceRecordStore>(),
+            provider.GetRequiredService<ExperienceLifecycleService>(),
+            provider.GetService<TimeProvider>()));
 
         return services;
     }
@@ -338,6 +357,13 @@ public static class AgentExperienceCoreServiceCollectionExtensions
                 provider.GetService<ConfidenceDecayPolicy>(),
                 ProvenanceSigningFrom(provider, services));
         });
+
+        // Story 28.2: the failure-signature lookup, under the same policy and clock. It resolves only where a storage
+        // package registered the optional IExperienceSignatureSource; nothing resolves it otherwise.
+        services.TryAddSingleton(provider => new ExperienceSignatureRetrievalService(
+            provider.GetRequiredService<IExperienceSignatureSource>(),
+            effectivePolicy,
+            provider.GetRequiredService<TimeProvider>()));
 
         return services;
     }

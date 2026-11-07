@@ -1,0 +1,10 @@
+{
+  "description": "An undefined verification mode is refused, before anything else.",
+  "operation": "options",
+  "options": {
+    "verification": "Sometimes",
+    "assessmentTokenKey": null,
+    "assessmentTokenLifetimeTicks": 0,
+    "nowUnixMs": 1772442000000
+  }
+}

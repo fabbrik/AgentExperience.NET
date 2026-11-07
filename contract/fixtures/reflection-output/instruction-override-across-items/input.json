@@ -1,0 +1,119 @@
+{
+  "description": "Instruction-override phrasing split across two list items: no item holds it alone, all the fields joined do, so it is refused as UnsafeContent across the fields.",
+  "options": {
+    "allowedArgumentNames": null
+  },
+  "run": {
+    "runId": "00000178-0000-4000-8000-000000000000",
+    "taskId": "refund-stuck-pending",
+    "taskDescription": "Refund ticket 42 is stuck in pending",
+    "scope": {
+      "tenantId": "contract-tenant",
+      "applicationId": "contract-app",
+      "projectId": "contract-project",
+      "teamId": null,
+      "agentId": "refund-agent",
+      "userId": null
+    },
+    "environment": {
+      "hostName": "contract-host",
+      "runtimeVersion": "runtime-1",
+      "operatingSystem": "linux",
+      "applicationVersion": "1.0.0",
+      "metadata": {
+        "region": "eu-west"
+      }
+    },
+    "provenance": {
+      "source": "contract-fixture",
+      "sourceVersion": "1",
+      "recordedAt": "2026-03-02T09:00:00+00:00",
+      "correlationId": null,
+      "exposedTo": []
+    },
+    "attempts": [
+      {
+        "attemptId": "00000178-0000-4000-8000-0000000000a0",
+        "sequenceNumber": 0,
+        "startedAt": "2026-03-02T09:00:01+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000178-0000-4000-8000-00000000c000",
+            "sequenceNumber": 0,
+            "toolName": "run_refund_check",
+            "arguments": {},
+            "startedAt": "2026-03-02T09:00:01+00:00",
+            "duration": "00:00:01.2500000",
+            "result": null,
+            "error": "System.InvalidOperationException: the refund lock is held by another worker"
+          }
+        ],
+        "result": null,
+        "error": "System.InvalidOperationException: the refund lock is held by another worker"
+      },
+      {
+        "attemptId": "00000178-0000-4000-8000-0000000000a1",
+        "sequenceNumber": 1,
+        "startedAt": "2026-03-02T09:00:05+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000178-0000-4000-8000-00000000c100",
+            "sequenceNumber": 0,
+            "toolName": "wait_for_lock",
+            "arguments": {},
+            "startedAt": "2026-03-02T09:00:05+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "Lock released; see https://status.example.com/incident/42 (host 10.0.0.7).",
+            "error": null
+          },
+          {
+            "toolCallId": "00000178-0000-4000-8000-00000000c101",
+            "sequenceNumber": 1,
+            "toolName": "run_refund_check",
+            "arguments": {},
+            "startedAt": "2026-03-02T09:00:06+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "refund issued",
+            "error": null
+          }
+        ],
+        "result": "Refund issued.",
+        "error": null
+      }
+    ],
+    "executionStatus": "Completed",
+    "outcome": null,
+    "startedAt": "2026-03-02T09:00:00+00:00",
+    "endedAt": "2026-03-02T09:00:20+00:00"
+  },
+  "completionEventId": "00000178-0000-4000-8000-0000000000e0",
+  "verification": {
+    "closedRound": {
+      "roundId": "0000007e-0000-4000-8000-000000000001",
+      "artifactRevision": "rev-1"
+    },
+    "requiredChecks": [
+      {
+        "checkId": "refund-issued",
+        "expectedKind": "integration-test"
+      }
+    ],
+    "evidence": [
+      {
+        "evidenceId": "00000178-0000-4000-8000-00000000e100",
+        "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+        "artifactRevision": "rev-1",
+        "checkId": "refund-issued",
+        "kind": "integration-test",
+        "result": "Pass",
+        "producer": "contract-ci",
+        "detail": "all assertions passed",
+        "capturedAt": "2026-03-02T09:00:25+00:00"
+      }
+    ],
+    "currentArtifactRevision": "rev-1",
+    "finalizedAt": "2026-03-02T09:00:30+00:00"
+  }
+}

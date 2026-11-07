@@ -6,7 +6,808 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### MAF 1.28.0 compatibility probe
+
+- The MAF probe's latest leg now floats the compatibility proof's `Microsoft.Extensions.*` floors, so a MAF release that raises one (1.28.0 asks for `Microsoft.Extensions.AI.Evaluation` 10.11.0) no longer fails on the proof's own pin. The adapter itself passes against 1.28.0.
+
+### The benefit estimate in Python and Go: contract 1.9 (story 27.1)
+
+- **Contract 1.9** ([what it adds](contract/README-1.9.md)) brings the benefit estimate into the language-neutral
+  contract, add-only: the run's model as bookkeeping metadata (`model-metadata` fixtures), the read of the holdout's
+  outcome rows a page at a time (`sql/query-holdout-outcomes.sql`, the .NET store's statements line for line, with
+  `holdout-outcomes` fixtures on PostgreSQL) and the estimate's arithmetic (`benefit-estimate` fixtures: Wilson per
+  arm, Newcombe's hybrid interval for the difference, the verdict; overall, per lesson and per model pair). Every
+  1.0-1.8 file is unchanged.
+- **The Python and Go ports read the estimate**: Python `estimate_benefit(store, authorization, scope, options)`, Go
+  `EstimateBenefit(ctx, store, authorization, scope, opts)`, over their in-memory and PostgreSQL stores, with the same
+  fields as `ExperienceBenefitEstimate`. Their agents record the chat client's model under `agentexperience.model`, so a
+  split by model counts their runs. A run whose record is sealed counts as `Pending` in a port, and a sealed lesson's
+  model reads as `unknown` there (in an encrypted store its per-model pairs can differ from .NET's). A .NET test
+  estimates over rows a Python and a Go agent wrote and gets the counts and verdicts each port computes over the same
+  rows, with every other number equal within 1e-12. The benefit
+  policy and measuring another memory provider stay .NET-only.
+
+### Acting on the estimate in Python and Go: contract 1.10 (story 27.2)
+
+- **Contract 1.10** ([what it adds](contract/README-1.10.md)) brings the benefit policy into the language-neutral
+  contract, add-only: `benefit-select` fixtures (ranked records, the cached estimate and the policy in; the selection,
+  the block and every omission with its reason and byte-exact detail out, generated through the .NET provider's own
+  selection), and four `lessons-view` cases with the measured benefit, including a holdout read that fails. Every
+  1.0-1.9 file is unchanged.
+- **The Python and Go agents act on the estimate**, behind the same opt-in policy and defaults (Python `BenefitPolicy`,
+  Go `ae.BenefitPolicy`): a lesson measured `Hurts` is omitted as `MeasuredHarmful`, a scope measured `Hurts` gets no
+  lessons, `PreferMeasuredHelpful` moves lessons measured `Helps` first, and `PerModel` acts on the invoking model's
+  verdicts. The estimate is cached per scope and principal and refreshed in the background, never on the request path,
+  reported as `benefit_refresh`. Injection results now carry their omissions with reasons and details. The lessons
+  views show each lesson's measured benefit on request. The holdout is unchanged. A .NET-written fleet in which one
+  lesson measures `Hurts` is omitted by Python and Go agents over the same PostgreSQL rows. Measuring another memory
+  provider stays .NET-only.
+- **Behaviour change in both ports: the injection callback now also fires when nothing is injected.** Python
+  `on_injected` and Go `OnInjected` are called with outcome `NothingToInject` and the omissions, as .NET's
+  `OnContextInjected` is, so a host can tell "the policy omitted everything" from "nothing matched". A host that
+  treated every callback as a delivery should check the outcome (`Injected`).
+
+### Measuring another memory provider in Python and Go: contract 1.11 (story 27.3)
+
+- **Contract 1.11** ([what it adds](contract/README-1.11.md)) brings the provider holdout into the language-neutral
+  contract, add-only: the assignment (`provider-holdout-assign` fixtures: run ID, key and salt to the length-prefixed
+  provider salt, fraction and arm), the write and the paged read of migration `0029`'s rows
+  (`sql/record-provider-holdout-assignment.sql` and `sql/query-provider-holdout-outcomes.sql`, the .NET store's
+  statements line for line, with `provider-holdout-record` fixtures on PostgreSQL covering the key, a duplicate write,
+  the exact scope and the erasure trigger), the grants (`sql/application-role-privileges-1.11.sql`) and the estimate
+  (`provider-benefit-estimate` fixtures). Every 1.0-1.10 file is unchanged; no schema object is added.
+- **New in both ports (an addition hosts can observe): measuring another memory provider.** Python
+  `use_measured_memory(agent, memory, key, holdout=...)` (`ExperienceHoldoutContextProvider` around an agent-framework
+  `ContextProvider`) and Go `maf.UseMeasuredMemory(&config, memory, key, maf.MeasuredMemoryOptions{...})` (around an
+  `agent.ContextProvider`) withhold what the wrapped provider added on a deterministic share of captured runs, exactly
+  as .NET's `UseMeasuredMemory`: the wrapped provider's two hooks still run in both arms, the caller's context is never
+  changed, and each run's arm is recorded in the background as the new telemetry operation `record_provider_holdout`
+  in both ports. Python `estimate_provider_benefit` and Go `ae.EstimateProviderBenefit` read the estimate with the
+  fields of `ExperienceProviderBenefitEstimate`. Off by default (rate 0). Go has no `authorize` callback, and an empty
+  salt means the default there. The shutdown path a host already uses awaits the wrapper's records too (Go
+  `ContextProviderOf(config).Close`, Python `wait_for_injection_records`), and the wrapper's own callback never runs on
+  the invocation's path. A contract test runs a .NET, a Python and a Go agent under one key in one PostgreSQL
+  database and checks that the three estimates agree. On PostgreSQL, apply the 1.11 privileges file after the others, or
+  run the .NET privileges call last.
+
+### The retrieval policy in Python and Go: contract 1.12 (story 27.4)
+
+- **Contract 1.12** ([what it adds](contract/README-1.12.md)) brings `RetrievalPolicy` and `ConfidenceDecayPolicy`
+  into the language-neutral contract, add-only: `retrieval-policy` fixtures generated through
+  `ExperienceRetrievalService` (candidates, the instant and the policy in; what the store is asked for, the outcome,
+  truncation, the ranked records with every component and the exclusions with their reasons out), covering `MaxAge`
+  at, under and over the limit, decay by one domain, several, an unlisted one and a custom domain key, decay against
+  the confidence floor, a custom recency half-life, the candidate limit and the default policy, plus
+  `policy-validation.json` for every rule .NET refuses, hybrid cases (the policy's vector floor, per-channel limits,
+  the floor before the count, the final cut to the candidate limit) and the model-authored exclusion's order; and a
+  `lessons-view` case with a confidence floor and `MaxAge`. Every 1.0-1.11 file is unchanged.
+- **The Python and Go agents take the same policy**, with .NET's defaults and validation: Python
+  `use_agent_experience(..., retrieval_policy=RetrievalPolicy(...), confidence_decay=ConfidenceDecayPolicy(...))`, Go
+  `maf.Options.RetrievalPolicy` and `maf.Options.ConfidenceDecay` (zero means the default; negatives are refused).
+  With the defaults they rank exactly as before. A PostgreSQL test runs one seed under `MaxAge` plus per-domain decay
+  through .NET, Python and Go and gets the same ordered IDs and scores within 1e-12.
+- **Behaviour change in both ports: retrieval is bounded.** The text search and the vector channel together now run
+  under the policy's `Timeout` (500 ms by default); before, an injection waited on the store indefinitely. Past it
+  nothing is injected and the outcome is `RetrievalTimedOut` (`retrieve`: `TimedOut`), also when only the vector
+  channel was still running, as in .NET; the ports' own `vector_timeout` / `VectorTimeout` is a text-only fallback only
+  when it is shorter than `Timeout`. In Go a store error that arrives once the deadline has passed is a timeout too. The search is abandoned and
+  counted until it ends, and while `MaxAbandonedSearches` (16) are still running an injection is `RetrievalTimedOut`
+  at once, without searching, with a failure naming the cap. A host with a slow store should raise `Timeout`.
+- **Behaviour change in both ports: a scope outside the identity's bounds is `RetrievalDenied`** (`retrieve`:
+  `Denied`) before anything is searched or embedded; before, the store refused it and the injection was
+  `RetrievalFailed`. Python's `on_injected` now also receives `RetrievalTimedOut` and `RetrievalDenied`.
+- **Behaviour change in Go: the caller's cancellation propagates.** `ContextProvider.Invoking` now returns
+  `context.Canceled` when the caller cancels during retrieval, so the run ends with it (as .NET's
+  `OperationCanceledException`), and the `inject` and `retrieve` operations are reported cancelled; before, it was a
+  `RetrievalFailed` with an injection failure. Every other failure still returns no error.
+- **The integration's vector floor replaces the policy's**, as .NET's `MinimumSemanticSimilarity` does: Python
+  `min_vector_relevance` and Go `Options.MinVectorRelevance`, when set, win over `minimum_vector_relevance` /
+  `MinimumVectorRelevance`.
+- **The ports' lessons views apply the policy**: the floor is the policy's `MinimumConfidence` (named in the reason), and
+  a lesson whose last activity is older than `MaxAge` is `Expired`, as in .NET.
+- **Hybrid ranking is cut to the candidate limit**, as .NET cuts it: Go `RankHybrid` and Python `rank_hybrid` return at
+  most 50 records with the defaults (up to 100 before), and the vector floor is applied to every vector row before the
+  channel's count.
+- **Exclusions are reported.** `RankedResult` and the injection result carry `excluded` / `Excluded` with .NET's
+  reasons (`IneligibleStatus`, `ModelAuthored`, `Expired`); a record a store returned with an ineligible status, or a
+  model-authored one under the exclusion, was dropped silently before. The `Confidence` component carries the stored
+  value as `undecayed_value` / `UndecayedValue` when a half-life applied. The `retrieve` and `inject` telemetry
+  operations gain the outcomes `TimedOut`, `Denied`, `RetrievalTimedOut` and `RetrievalDenied`.
+- **Limits are .NET's**: Go `SearchParameters.Validate` accepts a limit from 1 to 200 (it accepted only 51) and the
+  in-memory store's `Search` honours it; Go `VectorQuery.Validate` and Python `SearchParameters` and `VectorQuery` now
+  refuse a limit outside 1 to 200, and Python a `minimum_matched_terms` above 2147483647. Go `RankHybrid` refuses a
+  vector floor outside 0 to 1. Go's invalid task text is refused by the store and reported `RetrievalFailed`, as
+  before.
+- **Go: `RankingComponent` has a new field, `UndecayedValue`**, so an unkeyed composite literal
+  (`ae.RankingComponent{kind, value, weight}`) no longer compiles; use field names. Python's text search runs on its own daemon
+  thread, so a hung search no longer holds the event loop's shutdown.
+- Still .NET-only: required environment attributes and a custom environment scorer.
+  The injection options (deciding and resolving the request, capabilities and tool risk) are story 27.4b.
+
+### The injection options in Python and Go: contract 1.13 (story 27.4b)
+
+- **Contract 1.13** ([what it adds](contract/README-1.13.md)) brings the deterministic injection options into the
+  language-neutral contract, add-only: `inject-options` fixtures generated through the .NET provider's own selection and
+  writer (ranked records, the options and the receiving agent in; the request retrieval is asked for, the block, the
+  message role, every omission with its reason and detail, and the outcome out), covering each `ToolRiskClass`, the
+  tool check, run tools, the gated retrieval window, each `ModelAuthoredLessonPolicy`, approach arguments, each
+  `FailureDetail`, the system role and limits with the gate. Every 1.0-1.12 file is unchanged. .NET gains no public
+  API; its provider gains two internal entries the fixtures are generated through.
+- **New in both ports (additions hosts can observe), all off by default:** the receiving agent's capability gate
+  (Python `receiving_agent=ReceivingAgent(...)`, Go `Options.ReceivingAgent`), which omits a record as
+  `ToolUnavailable` or `RiskClassExceeded` (no detail) before the record limit and widens retrieval while a gate can
+  reject; the model-authored policy (`model_authored_lessons` / `ModelAuthoredLessons`, `Include` or `Exclude`; the
+  earlier `exclude_model_authored` / `ExcludeModelAuthored` still works); the host's request resolver (`resolve_request`
+  / `ResolveRequest`: `None`/nil is the `inject` outcome `Skipped`, a failure `Failed`, a request retrieval refuses
+  `RetrievalFailed`); and the host's injection decision (`decide_injection` / `DecideInjection`), fail-closed, whose
+  denials are the new omission reason `HostDenied`. With none of them set, the block, the omissions and the outcomes
+  are exactly what they were.
+- **Both ports put a request's correlation ID on the `inject` span** as `agentexperience.correlation_id`, as .NET does.
+- **The ports' injection results can carry three new omission reasons**, `ToolUnavailable`, `RiskClassExceeded` and
+  `HostDenied` (Go `OmittedToolUnavailable`, `OmittedRiskClassExceeded`, `OmittedHostDenied`); a host that switches
+  over the reasons should handle them.
+- **Port differences:** Python's `use_run_tools` sees the agent's own tools and those an earlier context provider
+  added, never tools passed to one `run` call (agent-framework does not hand them to a context provider); Go sees both.
+  The ports have no final re-read, so the decision sees the ranked record. Session tracking and withdrawal (27.6),
+  unconfirmed content (27.7), grant fields (27.8) and required environment attributes stay .NET-only.
+- **Behaviour change in both ports: the injected callback hears every attempt**, as .NET's `OnContextInjected` does.
+  Python `on_injected` and Go `OnInjected` are now also called with `Skipped` (no identity, or the resolver returned
+  nothing), `Failed` and `RetrievalFailed`, and Go's also with `RetrievalTimedOut` and `RetrievalDenied` (Python's
+  already was), each with nothing delivered; the `inject` span carries `agentexperience.omitted_count` 0 on those
+  paths. The failure callback is still called. A host that counts every callback as a delivery should check the
+  outcome. The ports' result still has no `CorrelationId` or `Failure` field.
+- **Behaviour change in both ports: a byte budget of 754 bytes or less is refused** when the agent is built
+  (Python `ValueError`, Go an error from `UseAgentExperience`; Go's 0 still means the default), as .NET refuses a
+  budget that cannot fit the verbose block's fixed frame. New constants: Python `block.BLOCK_OVERHEAD_BYTES`, Go
+  `ae.BlockOverheadBytes`.
+- **Python:** an async `decide_injection` is refused with `TypeError` (the decision is synchronous, as in .NET); a
+  `CancelledError` the resolver raises while the invocation itself is not being cancelled is `Failed` instead of
+  propagating (Python 3.11+); `RequestContext.messages` holds the replayed history and the new input.
+- **Go:** `maf.InjectionRequest.Limit` is an `*int` (nil for none, and 0 is refused as `RetrievalFailed`, as .NET
+  refuses it); `Deny("")` reports an empty detail, as .NET does, while a zero `InjectionDecision` reports the default;
+  `ae.ApplyHostDecisions` and `ae.HostDecision` are public.
+- **Both ports: a capability gate built directly with run tools fails closed** when it is checked without the
+  invocation's tools: every approach that calls a tool is `ToolUnavailable`.
+
+### Exporting lessons, the lessons page and the model-backed reflector in Python and Go: contract 1.14 (story 27.5)
+
+- **Contract 1.14** ([what it adds](contract/README-1.14.md)) brings three .NET features into the language-neutral
+  contract, add-only, every fixture generated by the .NET classes run as a host runs them: `lesson-export` (the
+  lessons view and holdout rows in; what `ExportMeasuredAsync` hands a `MarkdownLessonFileSink`, its counts and the
+  file's bytes out, including a file edited by hand), `lessons-html` (a lessons page in; `ExperienceLessonsHtml`'s
+  document out), `reflection-prompt` (a captured run in; the exact messages, request options and shown content the
+  `ChatClientExperienceReflector` sends out) and `reflection-output` (a scripted answer in; the record finalization
+  stores, or the failure kind and screening refusal, out). Every 1.0-1.13 file is unchanged; .NET gains no API.
+- **New in both ports (additions hosts can observe):**
+  - **Exporting measured lessons**: Python `ExperienceLessons.export_measured` / `export_measured_async` with
+    `MarkdownLessonFileSink` and a `LessonSink` protocol; Go `Lessons.ExportMeasured` with `ae.MarkdownLessonFileSink`
+    and `ae.LessonSink`. Same selection, order, file and counts as .NET; the file is written atomically. As in .NET,
+    only a blank path is refused: the path is not confined.
+  - **The lessons page**: Python `render_lessons_html` and `lessons_html_response` (status, headers and body for any
+    ASGI or WSGI app), Go `ae.RenderLessonsHTML` and `ae.LessonsHTMLHandler` (an `http.Handler`), byte-identical to
+    .NET's, sent with `no-store`, `X-Frame-Options: DENY` and a CSP header. Authorization stays the host's.
+  - **The model-backed reflector**, opt-in: Python `ChatClientExperienceReflector` (`use_agent_experience(...,
+    reflector=...)`), Go `maf.NewChatClientReflector` (`maf.Options.Reflector`), with .NET's options, prompt, request
+    options, strict reading, failure kinds and messages, and records marked model-authored. The deterministic
+    reflector stays the default.
+  - **A reflector seam**: Python `finalize(..., reflector=)` and `finalize_async`, Go `ae.Reflector` and
+    `ae.FinalizeContextWith`. A reflector that fails, or returns a reflection that does not match its request, stores
+    the record `Quarantined` with no lesson, reported as Python `reflection_failure` and Go `ReflectionFailure`.
+  - **The content guard for model-authored reflections**, as .NET's: credential shapes, mixed-script words,
+    instruction-override phrasing, always-refused links, and URLs, hostnames and IP addresses the run never showed
+    the reflector, refused as `UnsafeContent`. Screening refusals now carry .NET's code besides the reason (Python
+    `screening_refusal_code`, Go `*ae.ScreeningRefusalError`), and the `finalize` span carries
+    `agentexperience.reflection.screening_refusal`.
+- **Behaviour change in both ports: a model-authored reflection is screened, not refused outright.** Before, screening
+  refused any reflection that was model-authored, so such a record was always quarantined; now it passes when the
+  content guard and the limits allow it, as in .NET.
+- **Python: the agent's finalization is asynchronous** (`finalize_async`), so a host reflector may be async.
+- **Go: the content guard needs a Unicode normalizer.** The core module requires no other module, so `maf` registers
+  one (`golang.org/x/text`) when imported; a host that screens model-written text without `maf` calls
+  `ae.SetUnicodeNormalizer`, or every model-written field is refused. Go reads zero option values as the defaults, and
+  `AgentChatClient` takes a host function that maps the model, temperature and output cap onto the provider's options.
+- **The exported file is created as .NET creates it**, read and write for everyone less the umask (`0644` under the
+  usual umask), never owner-only; a previous file with a byte order mark, or white space around a heading's GUID, is
+  read as .NET reads it.
+- **The lessons page's handlers answer as .NET's endpoint does**: `GET` only (any other method, `HEAD` included, is
+  `405` with `Allow: GET`), `403` with no identity and `500` on a failure, all with no body, and exactly .NET's four
+  headers on success (Go no longer sends `X-Content-Type-Options` or `Content-Length`). Python's
+  `lessons_html_response` takes `method=` and an identity or a resolver function.
+- **A binding check or screening that raises or panics** quarantines the record with the refusal `Unreadable` and the
+  exception's type only (Python `screening_exception_type`, Go `ScreeningRefusalError.ExceptionType` and
+  `ae.RefusalUnreadable`), as .NET's backstop does. In Go nil evidence IDs fail the binding check.
+- **The content guard's work is bounded**: linear matchers, and, as .NET's one-second match timeout, a run-content
+  text that cannot be read in time admits no link and a field that cannot be checked in time is refused (Go: one
+  second per text; Python: texts over 1,048,576 UTF-16 code units). It leaves U+0130 as it is, as .NET's invariant
+  lower-casing does. Go `ae.ModelTextLinksIn` now also returns whether the text was read in time (breaking). Go
+  screening removes each byte of invalid UTF-8, and the Go block writer writes a space for it, as .NET treats a lone
+  surrogate. The reflector's strict reading accepts numbers of any length in members it does not map.
+- **Where the ports differ from .NET:** a failure's cause type is the port's own type name; Python cannot refuse a
+  function-invoking chat client, and Go only one that says so (give the reflector a client with no tools); a client
+  that blocks Python's event loop cannot be timed out; Unicode tables differ by language, which can change the content
+  guard's verdict on rare characters.
+
+### The confidence engine in Python and Go: contract 1.15 (story 27.6a)
+
+- **Contract 1.15** ([what it adds](contract/README-1.15.md)) brings the confidence engine into the language-neutral
+  contract, add-only: `confidence-engine` fixtures generated through .NET's own `ReuseConfidenceHeuristic`,
+  `ReuseConfidenceHeuristicEngine`, the lifecycle service's engine check (`ConfidenceEngineRule`) and the assessment
+  token issuer and codec. They cover the default rule and its boundaries; applying evidence against every status
+  (both directions and both sources against a `Validated` record, both directions against `Reinforced` and `Contested`
+  ones, a machine contradiction against the rest) and against stored scores outside [0, 1]; repeated and conflicting
+  evidence; the independence keys, a host engine's
+  identity and every score it may or may not return, the assessment token's options, the issuer's refusals in order,
+  the token's exact bytes and every path by which a token is refused. Every 1.0-1.14 file is unchanged.
+- **The Python and Go ports compute confidence** as .NET does, with .NET's defaults, validation, refusal parameter names
+  and, where the library wrote one, messages: Python `agentexperience.confidence` (`score`, `apply`, `status_after`,
+  `independence_key_for`, `ConfidenceEngineRule`, the `ExperienceConfidenceEngine` protocol, `AssessmentTokenIssuer`),
+  Go `ConfidenceScore`, `ApplyConfidenceEvidence`, `StatusAfter`, `IndependenceKeyFor`, `NewConfidenceEngineRule`, the
+  `ConfidenceEngine` interface and `NewAssessmentTokenIssuer`. A host can supply its own engine, checked and recorded
+  as `{RuleId}/{RuleVersion}` as in .NET. They only compute: applying an update to a stored record, verifying a key's
+  inputs and reuse feedback stay .NET-only. Where a port differs, forced by its language: Go reads a zero token lifetime
+  as the default rather than refusing it; Python states a lifetime in whole microseconds, and its `ExperienceIdentity`
+  refuses a blank reviewer principal (`ValueError`) before the issuer can; Go's `Identity.Authorization()` with nil
+  `Bounds` is the identity's own scope.
+
+### The lifecycle in Python and Go: contract 1.16 (story 27.6b)
+
+- **Contract 1.16** ([what it adds](contract/README-1.16.md)) lifts contract 1.0's "a port never moves a stored
+  record's status, counters or revision", add-only. `sql/lifecycle.sql` publishes the .NET PostgreSQL store's own
+  lifecycle statements (generated from its source and checked against it on every build) with the order a commit runs
+  them in; three new fixture families pin the rest: `lifecycle-commit` and `lifecycle-apply` (generated through .NET's
+  `ExperienceLifecycleService` over the in-memory store: every transition the table allows from every status and every
+  one it refuses, stale revisions, status mismatches, scope, denial, validation with every error message, event-ID and
+  evidence-ID replay and conflict, supersession inside and outside the commit, history paging, the reuse evidence and
+  event IDs (tags 4 and 5), duplicate keys, a host engine and its refusals, `RecordedOnly`, and confidence reads) and
+  `lifecycle-sql` (through the PostgreSQL store, with the tables each case leaves). Contract 1.15's `apply` cases are
+  now generated through `ApplyEvidenceAsync` wherever it can express them, with every 1.0-1.15 file unchanged; the one
+  thing 1.15 left unsaid is stated in 1.16: the service refuses evidence when either stored counter is saturated. No
+  schema object and no privilege is added.
+- **New in both ports (hosts can observe it): the ports now write lifecycle events and change a stored record's status,
+  counters, score, revision and `updated_at`.** Python `ExperienceLifecycleService(store)` with `commit`,
+  `apply_evidence` and `read_confidence`, and Go `NewLifecycleService(store, LifecycleOptions{})` with `Commit`,
+  `ApplyEvidence` and `ReadConfidence`, over their in-memory and PostgreSQL stores, which gain `commit_lifecycle_event`
+  / `CommitLifecycleEvent`, `get_history` / `GetHistory` and `check_supersession` / `CheckSupersession` (and a record
+  read with .NET's outcomes). A port's evidence is admitted `HostTrusted` (the service runs as .NET's does under
+  `IndependenceVerification.TrustHostSuppliedIdentifiers`; verification is story 27.7), so .NET's `ReadConfidenceAsync`
+  with `ExcludeHostTrusted` leaves it out.
+- **A port's default differs from .NET's: `HostTrustedEvidence = RecordedOnly`.** Until the ports can verify evidence,
+  evidence a port applies is by default recorded on an event that moves only the revision: not the counters, the score,
+  the status or `updated_at`, so any authorised caller of a port cannot inflate or contest a lesson with invented run IDs.
+  `Counted` (.NET's behaviour under `TrustHostSuppliedIdentifiers`) is an explicit opt-in. A port's PostgreSQL commit
+  refuses a record .NET seals while the commit runs (it checks once it holds the row lock), and Go refuses a host
+  transaction that is not `READ COMMITTED`. A port's commit removes no embedding (27.6d), applies no reuse feedback (27.6c), and answers
+  `NotFound` for a record .NET sealed in crypto-shredding mode, which it cannot read or write. Both ports report the
+  `lifecycle.commit` and `confidence.apply` telemetry operations.
+- **Behaviour change in both in-memory stores:** a finalized record's initial lifecycle event is now part of a history
+  that further events extend, read through `get_history` / `GetHistory`, as in the .NET in-memory store.
+- **A cross-language race on PostgreSQL** (`CrossLanguageLifecycleRacePostgresTests`, CI job `cross-language-lifecycle`):
+  in each of six rounds a .NET, a Python and a Go process commit a transition on one record at revision 1, released
+  together behind an advisory lock; the test asserts that exactly one reports `Committed`, the other two
+  `StaleRevision` at revision 2, that the record's history holds the winner's event alone, and that the three read that
+  history identically.
+
+### Reuse feedback in Python and Go: contract 1.17 (story 27.6c)
+
+- **Contract 1.17** ([what it adds](contract/README-1.17.md)) brings reuse feedback into the language-neutral contract,
+  add-only. `sql/reuse-feedback.sql` publishes the .NET PostgreSQL ledger's own statements (generated from its source
+  and checked against it on every build) with the order a submission runs them in; three new fixture families pin the
+  rest: `reuse-feedback` (generated through .NET's `ExperienceReuseFeedbackService` over the in-memory stores: exposure
+  only, human and comparative attribution, harm contesting, `RecordedOnly`, duplicate keys, ineligible, unresolved and
+  refused records, every fatal and degrading validation error in order, denial, a host engine that throws or returns no
+  score, store failures and their retry, the ledger's own validation and idempotency, and the derived evidence and
+  event IDs, tags 1 and 2 under their own namespace), `finalize-reuse-evidence` (finalization with `ReuseEvidence =
+  SameTask` and `ContradictOnFailure`, finalized twice to pin the replay) and `reuse-feedback-sql` (through the
+  PostgreSQL ledger, with the two tables each case leaves). Every 1.0-1.16 file is unchanged. No schema object and no
+  privilege is added.
+- **New in both ports (hosts can observe it): the ports now write the reuse-feedback ledger and, for attributed
+  records, confidence evidence.** Python `ExperienceReuseFeedbackService(store, lifecycle).record(...)` and Go
+  `NewReuseFeedbackService(store, lifecycle)` with `Record`, over in-memory and PostgreSQL ledgers (Python
+  `PostgresExperienceReuseFeedbackStore`, Go `postgres`), with .NET's validation, dispositions, reasons and retry
+  semantics. Attributed evidence goes through the contract 1.16 lifecycle service, so it keeps that service's port
+  default, `HostTrustedEvidence = RecordedOnly`: an attribution is recorded and moves no score until the host opts into
+  `Counted`. A port verifies no attribution (story 27.7) and holds no key store, so it writes the rationale in
+  plaintext and a resubmission of a submission .NET sealed is a `Conflict`.
+- **New in both ports: finalization's reuse evidence**, Python `apply_reuse_evidence(...)` and Go
+  `ApplyReuseEvidence(...)`, off unless asked for (`SameTask`, with `contradict_on_failure` / `ContradictOnFailure`
+  off by default). A port's finalization is a pure function, so the host calls this step once the finalized record is
+  stored, and again with the stored record on a run already finalized; the MAF adapters do not run it yet. The
+  `finalize` span's `reuse_evidence.submitted` attribute is not written by a port.
+- **Telemetry:** both ports report the `reuse_feedback` operation (`feedback_id`, `run_id`), with a nested
+  `confidence.apply` for each attributed record.
+- **A cross-language test on PostgreSQL** (`CrossLanguageReuseFeedbackPostgresTests`, run by the CI job
+  `cross-language-lifecycle`): feedback a .NET, a Python and a Go agent submit on the same lessons is one row (the
+  others `AlreadyRecorded`, a changed resubmission `Conflict` from all three), all three read the same history and
+  confidence, and each agent alone leaves the same ledger, evidence, event and record rows in its own database.
+
+### A scoped supersession lock and ranking to the bit: contract 1.18 (story 28.1)
+
+- **A supersession locks only rows in the caller's scope.** The PostgreSQL store locked the record and its proposed
+  replacement by ID alone, so with row-level security off a caller naming another tenant's record ID as the
+  replacement held a row lock on that tenant's record for its transaction: no read or write, but a way to make another
+  tenant's writes wait and to time them. The lock now carries the same exact-scope predicate as every other lifecycle
+  statement. The outcome is unchanged (a replacement in another scope is `ReplacementNotAllowed`, as one that does not
+  exist), and a test proves a supersession naming a row another transaction holds no longer waits for it.
+- **Contract 1.18** ([what it adds](contract/README-1.18.md)), add-only: `sql/lifecycle-1.18.sql`, the scoped lock
+  (`lock-supersession-rows-scoped`), which ports run in place of 1.16's `lock-supersession-rows`; and
+  `retrieval-policy/ranking-near-tie`, two pairs of records whose scores differ by one ulp, ranked against their
+  experience-ID tie-break, so a port whose arithmetic differs from .NET's in the last bit orders them differently
+  and fails. Every 1.0-1.17 file is unchanged.
+- **The Python and Go ports run the scoped lock**, with PostgreSQL tests. **Go's decay now agrees with .NET's on the
+  fixture**: its `math.Pow` was 2 ulps off on the new fixture's input (about 30% of inputs are off by an ulp or more),
+  which tied two records .NET orders, so the Go port computes `2^x` with its own correctly rounded double-double
+  `exp2`, which agrees with .NET's C-library `pow` except on rare inputs where that `pow` misrounds (about 1 in 1,500
+  measured on glibc); and it rounds each ranking component's product before adding it, so the compiler cannot fuse the
+  two (an FMA, which Go does on arm64). Python, which calls the platform's `pow` as .NET does, already matched. Only
+  the fixture's inputs are pinned: near-tied records whose recency or decay factor falls on a misrounded input may
+  still be ordered differently across runtimes.
+
+### The failure signature (story 28.2)
+
+- **A failed tool call now has a failure signature**: `ExperienceFailureSignature` (Abstractions), its tool name, its
+  error class (the token its `[failed: …]` marker shows) and a fingerprint, the first 16 bytes of the SHA-256 of the
+  error's normalized first line, or its last line after a bare header such as a Python traceback's (GUIDs, hex runs,
+  paths, quoted literals, ISO timestamps and numbers replaced by fixed placeholders, with ASCII-only rules so ports
+  match; `SignatureVersion = 1`). The same failure in a sibling run, with other paths, numbers and IDs, has the
+  same signature. `ExperienceFailureSignatures.Of(record)` lists a record's, de-duplicated, each `Resolved` when a later
+  call in the same verified record succeeded. Nothing new is captured: it is derived from `ToolName` and `Error`.
+- **A new optional port, `IExperienceSignatureSource`** (`FindBySignatureAsync`), finds reusable records by an exact
+  signature or by tool and error class, with text search's eligibility (scope and grants, live records, statuses,
+  confidence floor, authorship exclusion) and its refusals. `InMemoryExperienceSignatureSource` and
+  `PostgresExperienceSignatureSource` implement it, both storage registrations register it, and the conformance suite
+  gains `SignatureSourceConformanceTests`. `IExperienceCandidateSource` is unchanged.
+- **Core's `ExperienceSignatureRetrievalService`** applies the retrieval policy's floor and expiry over the port, turns
+  refusals and failures into outcomes, and emits a `retrieve.signature` span (`agentexperience.retrieval.channel`,
+  `agentexperience.signature.match`). Injection, ranking and the provider are unchanged: stories 28.3 and 28.5 use it.
+- **PostgreSQL: migration `0030`** adds `agent_experience.experience_failure_signatures` (tool, class, fingerprint,
+  resolved, version and the record's scope; never error text), written in the record's own transaction, removed by
+  erasure through a trigger, with row-level security policies the privileges call creates and verifies, and two
+  tenant-leading lookup indexes. **Re-run `ApplyApplicationRolePrivilegesAsync` after migrating**: until then records
+  are created without their signatures. Then run `BackfillFailureSignaturesAsync`, which writes the signatures of
+  plaintext records stored earlier; a sealed record gains them only when it is finalized again. In encrypted mode the
+  signatures are stored in the clear, like the other search data (KL-2). The Python and Go ports neither write nor
+  read the table; no contract file changes.
+- **The retrieval benchmark measures the signature channel**: 18 sibling-run failures against both stores. Exact
+  matching finds 13 of the 15 records that hold the same failure with no false positive; coarse matching finds all 15
+  with 0.22 unexpected candidates per query.
+
+### Recall at the moment of failure (story 28.3)
+
+- **A failing run is shown what worked**, opt-in: `AgentExperienceOptions.Recall` (or `ExperienceInjectionOptions.Recall`
+  under the explicit wiring) set to an `ExperienceRecallOptions`. When a tool call in a captured run throws, or
+  `ClassifyToolResult` names an error class for it, and a reusable lesson holds the same failure signature as resolved,
+  one short labelled hint (`=== BEGIN HISTORICAL REFERENCE: EARLIER FIX FOR THIS FAILURE … ===`, at most 600 bytes by
+  default) naming the calls that worked, rendered as the block's `Tried:` line renders them, is appended to the
+  instructions of the model's next call in that run. It is never part of the tool's result: capture records the tool's
+  own result or error, and a thrown exception is rethrown unchanged. Off by default; with it off nothing changes.
+- **The block's rules apply**: the signature source's eligible records, exact match first (coarse only with
+  `AllowCoarseMatch`), then the same final eligibility re-read, grant disclosure (a `LessonOnly` grant gives no hint),
+  model-authored policy, capability gate and host decision. A lookup is bounded by `LookupTimeout` (300 ms); a run
+  answers at most `MaxHintsPerRun` (3) failures, looks a signature up once (again only after a timeout or failure) and
+  starts at most four times that many lookups; a record the run or session already holds is not hinted again, parallel
+  failures never hint one record twice; a hint is charged to the session's budget, which is read before the arm is drawn.
+  The hint is delivered as system-level instructions for the rest of the run: its labels are hygiene, not a control.
+- **Measured by the holdout**: the same arm as the block. A held-out run gets no hint and its would-be hinted records are
+  recorded as its assignment; a treatment run's hinted records are recorded as assignment and exposure. Assignment rows
+  do not say whether a block or a hint delivered a record, so the estimate covers both; recall rows arise only after a
+  matched failure, so the guide says how to read them.
+- **Reported** through `ExperienceRecallOptions.OnRecall` (`ExperienceRecallResult`: run, signature, outcome, record
+  IDs) and a new `recall` telemetry operation (`agentexperience.record_count`, `agentexperience.signature.match`);
+  `docs/telemetry-names.json` gains both. Without a signature source recall is reported once through
+  `OnCaptureFailure` at the new stage `Recall`. The quick-start demo shows a hint with `--recall`. .NET only: the
+  Python and Go ports and the contract are unchanged.
+
+### The recipe: what the working call produced (story 28.4)
+
+- **A vouched result excerpt on the working attempt.** `ExperienceCaptureOptions.RecipeResultExcerpt` (off by default)
+  lets the host vouch, per call that returned, for a short excerpt of its result. Capture sanitizes it with the
+  `ToolResult` policy, cuts it after sanitization to `CaptureLimits.MaxRecipeExcerptLength` (200) characters, never
+  between a surrogate pair, and stores it as `ToolCallRecord.RecipeExcerpt` (an init-only property, in the payload only
+  when set). A failed call never gets one; a callback that throws records nothing and is reported once per run at the
+  new stage `ExperienceCaptureFailureStage.RecipeExcerpt`, by type only. Injection shows it only on the `Worked:`
+  attempt, for a tool `ExperienceInjectionOptions.RecipeExcerpts` names, as `tool(...) [returned: "…"]`, quoted and
+  bounded like an argument string; the recall hint's `worked:` line renders the same way. With none of it set, every
+  record, payload, block and fixture is byte for byte what it was.
+- **One place to consent.** `AgentExperienceOptions.Recipe(toolName, arguments, resultExcerpt)` sets the capture
+  argument allowlist, `ApproachArguments`, the excerpt callback and `RecipeExcerpts` for a tool together. The
+  quick-start sample's `--recipe` switch shows one.
+- **Signed: claims version 4, fail closed.** `SignClaimsVersion = 4` signs `HMAC-SHA256.aexp-prov.v4`
+  (`ExperienceProvenanceSignature.HmacSha256ClaimsV4`), version 3 plus each call's excerpt. The default stays 3, which
+  signs every record as before and leaves excerpts unsigned, so with signing on an excerpt is shown only under a version
+  4 signature that verifies (`ExperienceRetrievalService.AreRecipeExcerptsConfirmed`); records trusted unsigned or listed
+  as reviewed never show one. To show recipe excerpts with signing on, set `SignClaimsVersion = 4` once every verifying
+  node runs this release (an earlier build refuses a version 4 signature). `HistoricalReferenceWriteSettings` shows
+  excerpts only with `AreRecipeExcerptsConfirmed` or the explicit `ShowRecipeExcerptsWithoutSigning`. A lone surrogate
+  in an excerpt becomes U+FFFD at capture, so the record can always be signed and stored; an excerpt that is empty once
+  cleaned keeps the call's `[returned]` marker.
+- **Grants.** `ExperienceGrantRequest.RecipeExcerpts` / `ExperienceGrant.RecipeExcerpts` name the tools whose excerpts
+  an owner consents to show a recipient (only under a level that shows the approach), surfaced on reads as
+  `ExperienceRecordGetResult.GrantRecipeExcerpts`, `RankedExperience.GrantRecipeExcerpts` and
+  `ExperienceInjectionDecisionContext.GrantRecipeExcerpts`. PostgreSQL migration `0031_grant_recipe_excerpts.sql` adds
+  the immutable `experience_grants.recipe_excerpts` column; reads use `to_jsonb`, so they keep working on a schema not
+  yet migrated, and only issuing a grant that names recipe excerpts needs it.
+- **Contract 1.19** ([what it adds](contract/README-1.19.md)), add-only: a tool call's optional `recipeExcerpt`
+  payload member, `schema/experience-record.v1-1.19.json` (the 1.0 schema plus that member, which a 1.19 port validates
+  against), the inject option `recipeExcerpts` and three `inject` cases (`recipe-excerpt`, `-verbose`,
+  `-not-allowlisted`). Every 1.0-1.18 file is unchanged. **The Python and Go ports** read, keep and write the excerpt
+  back unchanged, and render it under `recipe_excerpts` / `RecipeExcerpts` exactly as .NET does; they do not capture or
+  sign one, and grants stay .NET-only. **Port limitation:** a port cannot verify signatures, so with its allowlist on it
+  renders any stored excerpt, signed or not, where a signing .NET reader would suppress an unconfirmed one (off by
+  default; see [contract 1.19](contract/README-1.19.md)).
+- **Experiment.** `experiments/AgentExperience.LiveReuse/recipe-amendment.md` proposes (not registered, not run) a
+  recipe arm for the real-task experiment.
+
+### A SQLite store and durable capture (story 28.7)
+
+- **New package `AgentExperience.Storage.Sqlite`**: durable storage in one local SQLite file, for a single agent on one
+  machine (a coding agent, a CLI, an MCP server). `.UseSqlite(path)` on the one-call builder (or
+  `AddAgentExperienceSqliteStorage(path)`) registers `SqliteExperienceRecordStore`, `SqliteExperienceCandidateSource`
+  (FTS5 full-text search), `SqliteExperienceSignatureSource` and a reuse-feedback ledger over the file. Each passes the
+  same store conformance suite as the PostgreSQL and in-memory stores, with every request validated by the PostgreSQL
+  store's own rules, and the record payload is the PostgreSQL store's version-1 JSON.
+- **Schema**: `ExperienceSqliteSchema.MigrateAsync(path)` applies journaled, versioned scripts, each in one transaction
+  with its journal row (safe to repeat and to run from two processes at once), and puts the file in write-ahead-log
+  mode. Nothing migrates on its own unless `SqliteStorageOptions.MigrateSchemaOnFirstUse` is set. Connections run with
+  foreign keys on and a busy timeout, and every write is one `BEGIN IMMEDIATE` transaction, so two connections or
+  processes committing from one revision have exactly one winner.
+- **Search** reads a query's terms exactly as the in-memory source does, with the same any-term `MinimumMatchedTerms`
+  rule and coverage ranking, through an FTS5 index stemmed with Porter, so "invoices" matches "invoice" as it does in
+  PostgreSQL. The retrieval benchmark gains a SQLite column (`GoldenSqliteReport.txt`).
+- **Erasure**: `SqliteExperienceRecordStore.DeleteAsync` leaves a payload-free tombstone and removes the record's search
+  text, signatures, events, evidence, injection summary and holdout rows in one transaction, with `secure_delete` on, the
+  FTS5 index rewritten and the write-ahead log checkpointed afterwards. A new database file is created owner-only, and a
+  store refuses a missing, older or newer schema on its first operation.
+- **Durable capture**: a new optional port, `IExperienceRunStore` (save a completed run by run ID and completion event,
+  read it within an authorization, list a scope's unfinalized runs, mark one finalized, delete one), implemented by
+  `SqliteExperienceRunStore` (registered by `UseSqlite`) and `PostgresExperienceRunStore` (opt-in,
+  `AddAgentExperiencePostgresRunStore`, migration `0032_experience_runs.sql` with its grants and row-level security
+  policies; refused in crypto-shredding mode). With one registered, the capture service saves each run as it completes
+  it (new `InMemoryExperienceCaptureService` constructor; `CompleteRunResult.RunStoreFailure` reports a failed save, which
+  never fails the run, and the MAF adapter reports it at the new `ExperienceCaptureFailureStage.RunStore`), and
+  finalization reads a run the capture service no longer holds from the store (new `ExperienceFinalizationService`
+  constructor), with the same verification, closed-round and idempotency rules, then marks it finalized. Erasing a
+  record turns the stored run it came from into a tombstone, so a capture retry can never save it again. A save runs
+  off the caller's thread, bounded by `ExperienceRunStoreOptions.SaveTimeout` (5 s; SQLite waits at most
+  `RunSaveBusyTimeout`, 2 s, for a busy file); `ExperienceRunStoreOptions.ShouldPersistRun` keeps runs out of the store;
+  a run the host's storage decision refuses (`StorageDenied`) is deleted from it, a failed delete reported on
+  `FinalizeExperienceResult.RunStoreFailure`. The run store conformance suite runs on both stores; a run completed in
+  one service provider is finalized by another on SQLite and on PostgreSQL. Without a run store nothing changes.
+- **Try it**: the quick-start sample takes `--sqlite <path>` (one run per process: run it twice, and the second process
+  is handed the lesson the first stored), and the CI triage experiment takes `--storage sqlite:<path>`, with which a
+  failure still waiting for its fix is triaged and its run finalized by a later pass once the fix lands
+  (`--scripted --scripted-later` shows it offline).
+- **Not provided**: sharing grants and the access log, encryption and crypto-shredding, row-level security and database
+  roles, vectors, retention sweeps. Internally, the PostgreSQL payload's attempt, outcome, environment and provenance
+  mappings are each one method now, shared with the SQLite store; nothing stored changes.
+
+### Precision before recall: an injection-time match floor (story 28.5)
+
+- **`ExperienceInjectionOptions.MinimumMatch`** (type `ExperienceMatchFloor`, off by default): a record is injected only
+  when it has an exact failure-signature match on the current run (a recall hint), text coverage at least
+  `MinimumTextCoverage` (the share of the request's distinct terms it contains, relative to the store's terms; required,
+  no default), or semantic similarity at least `MinimumSemanticSimilarity` (by default the retrieval policy's
+  `MinimumVectorRelevance`; with neither set the semantic leg is off). A weaker record is omitted as the new
+  `InjectionOmissionReason.WeakMatch`, with a content-free detail, before the capability gate and the record limit, so
+  it takes no slot and a stronger one backfills; a host-limited request is widened like the capability gate's. A block
+  that injects nothing with a `WeakMatch` omission ends `NothingToInject`, and its `inject` span carries
+  `agentexperience.nothing_reason = weak_match`. The holdout splits after the floor. Under a floor, recall never asks
+  for a coarse signature match. Which candidates retrieval returns is unchanged, and with the floor off everything is
+  byte for byte what it was.
+- **Each channel's strength travels with the record.** `ExperienceCandidate.TermCoverage` (the in-memory, PostgreSQL and
+  SQLite text sources set it), `RankedExperience.TextCoverage` and `RankedExperience.VectorRelevance` (set by
+  retrieval). Ranking is unchanged.
+- **Chosen by a rule fixed before measuring, and the rule said off.** The retrieval benchmark's goldens gain an
+  `INJECTION FLOOR` sweep (0 to 0.6). No floor kept unexpected records at or below 0.15 in the first 8 on both stores, and
+  none removed the distractor-overlap noise (distractors containing every word of a short query), while every floor
+  cost long, realistic requests their lesson; so the floor stays off and has no recommended value
+  ([the table](docs/benchmarks.md#the-injection-floor-story-285)).
+- The Python and Go ports and the contract are unchanged; the ports do not apply a floor yet.
+
+### Any agent, through MCP and a CLI (story 28.8)
+
+- **New package `AgentExperience.Cli`**, a .NET tool installing the command `aexp`: verified-lesson memory for agents
+  outside the Agent Framework (coding agents, scripts, other frameworks), as a command line and as an MCP stdio server
+  (`aexp mcp`, on the official MCP C# SDK's `ModelContextProtocol.Core` 2.3.0), over a local SQLite file by default or
+  PostgreSQL (`postgres:<ENV_VAR>`, naming the variable that holds the connection string). It calls no model.
+- **Configuration from the project only**: `.aexp/config.json` (or `--config`, `AEXP_CONFIG`) sets the store, the
+  identity and scope, the verifier (an argument vector run without a shell, exit code 0 = pass, with a timeout and a
+  check ID), the argument allowlist, the recipe consents, the block's limits and the holdout rate, and recall. Identity,
+  scope, paths and commands are never taken from a command option or a tool argument, and the verifier is the only
+  command the tool runs; `finalize --exit-code` (a verdict the host obtained itself) is refused unless
+  `verify.acceptExitCode` is set. Unknown settings, a literal connection string, or a missing identity or verifier stop
+  the tool before anything runs.
+- **Commands**: `aexp run start|call|end`, `aexp finalize` (runs the verifier and finalizes; works in any later process,
+  from the run store), `aexp recall --task|--run` (the block), `aexp recall --run --failure --tool --error` (the hint),
+  `aexp lessons [--all] [--html]`, `aexp export --markdown`, `aexp benefit`. **MCP tools**: `experience_recall`,
+  `experience_failure_hint`, `experience_record_call`, `experience_finish` and `experience_lessons`, one open run per
+  session started lazily, outputs bounded to 16 KB, errors as MCP tool errors.
+- **A config is code, so a person approves it**: `aexp trust` prints the verifier command, the program it resolves to
+  and `acceptExitCode`, and records the config's path and SHA-256 in the user's own config directory (owner-only);
+  `finalize` and `experience_finish` refuse a config that is not approved or changed since, and read-only commands warn.
+  The verifier's program is resolved by `aexp` (`PATH` only for a bare name, never the current directory; a relative path
+  inside the project). Discovery stops at the repository root or the home directory; a config another user owns is
+  refused. `finalize` checks the run before spawning anything; a timed-out verifier is killed with its process tree;
+  `experience_finish` keeps an ended run for a retry and names `aexp finalize --run <id>`. Open runs are written
+  atomically under a lock file and pruned with `aexp runs prune --older-than`; files are written inside the project
+  only; MCP errors carry fixed messages, with detail on standard error.
+- **The library's own answers**: the block and the hint come from a probe `ChatClientAgent` wired with
+  `UseAgentExperience` over a scripted stand-in model, so retrieval, eligibility, the writer, recall's rules and the
+  holdout are exactly the adapter's; with a run, the holdout arm and what was delivered are recorded against it. A call
+  passes the capture rules before it is written to the open run's owner-only file, and a failed call is kept as its
+  error class only, as the adapter records a classified failure. Capture and finalization drive Core directly.
+- **Library change**: none to any public API. The MAF adapter grants the tool access to its internals
+  (`InternalsVisibleTo`) to wait for its background injection records before a short-lived process exits and to note
+  what a run was already given before recall answers; the tool ships that exact assembly inside its own package.
+- **Release train**: eight packages. `AgentExperience.Cli` is a tool package (no declared dependencies, everything under
+  `tools/net10.0/any/`), checked by `eng/verify-packages.cs` for its command and for bundling this release's libraries;
+  its public API baseline is empty. Being a tool, its references are not library floors, and its tests run the graph it
+  ships, in which the MCP SDK lifts two library floors (DI abstractions 10.0.13, `Microsoft.Extensions.AI.Abstractions`
+  10.11.0) inside the tool only. Guide: [CLI and MCP](docs/guide/cli-and-mcp.md).
+
+### One living lesson per situation (story 28.6)
+
+- **`ExperienceConsolidationService.ConsolidateAsync(authorization, scope, options, ct)`** (Core, registered by the
+  one-call setup; `provider.GetAgentExperienceLessons().ConsolidateAsync(identity)` from the lessons view) merges the
+  validated records of one scope that failed the same way and were fixed the same way into one consolidated record.
+  Only records the library finalized and can vouch for are sources: `Origin == Finalized`, a verifying provenance
+  signature when signing is on, verified, with a library-written, confirmed lesson; never a hand-written record, never
+  another scope's or a grant's. The grouping key is exact: the set of resolved failure signature keys (story 28.2) and
+  the working attempt's tool sequence, plus the values of the argument keys `ExperienceConsolidationOptions.ArgumentKeys`
+  names (the recipe's by default from the lessons view), so `retry(delay=0)` and `retry(delay=30)` stay two lessons. A
+  group merges once it holds records from `MinimumSources` (3) distinct runs. Deterministic and explicit: no model,
+  nothing runs it automatically.
+- **The consolidated record** renders as its most recent source does (its content is copied from that source only),
+  with the lesson `Verified in N independent runs (latest yyyy-MM-dd). Failed first with <class> from <tool> in K of
+  them. Worked: …` (template version 1). Its counters are verified evidence only, deduplicated by independence key: one
+  validation per source, plus the `Verified` updates in the sources' histories; host-trusted evidence and raised
+  counters are never carried. `ReadConfidenceAsync(VerifiedOnly)` counts them as verified when signing is on and the
+  record's signature (over the producer and the source list) verifies. Its ID is derived from its source IDs, so a
+  re-run is idempotent and a later verified run is folded in by a new record that supersedes the old one. It is marked
+  in its provenance (`ExperienceConsolidation.ProvenanceSource`; `Provenance.ExposedTo` lists its sources, a signed
+  claim), so no store, schema, port or contract changes.
+- **Its sources are superseded** through the ordinary lifecycle: re-read right before the record is created (a changed
+  one is left out), then one compare-and-set commit each; a source that changed in between is left untouched and
+  reported. Until then the record and its sources coexist: `ExperienceConsolidationGroupResult.Complete` and the
+  result's `IncompleteGroups` say so, and the next pass finishes. A record already at the derived ID is adopted only when
+  its signature, producer, sources, lesson and starting counters match. Groups beyond 256 sources, or whose records kept
+  changing, are reported `Deferred`.
+- **Erasure does not reach a copy**: `FindConsolidatedContainingAsync` (service and lessons view) finds the consolidated
+  records that list a source, to erase with it; the next pass leaves an erased source out. Contesting or revoking a
+  consolidated record works as for any record; its sources stay superseded. The lessons view shows
+  `ExperienceLesson.ConsolidatedFrom` ("consolidated from N" on the HTML page), and the benefit estimate treats a
+  consolidated lesson as a new lesson: holdout rows that named its sources stay as they are.
+
+### A Claude Code recipe (story 28.9)
+
+- **`aexp hook <event>`** turns Claude Code's hooks into runs, with no code: `SessionStart`, `UserPromptSubmit`,
+  `PostToolUse`, `PostToolUseFailure`, `Stop` and `SessionEnd`, read from the hook JSON on standard input and answered
+  with the hooks output contract (as published in October 2026). The first prompt opens a run and gets the block once;
+  every tool call is recorded through the config's capture rules; a failed one (Bash's `Exit code N` kept as `exit N`)
+  gets the failure hint; `Stop` ends a turn that changed something and finalizes it with the configured verifier inside
+  the hook's timeout, reporting the verdict as a one-line `systemMessage` (never `additionalContext`, which would keep
+  Claude going); a verifier that cannot finish in time leaves the run stored for `aexp finalize --run <id>`. A turn that
+  only read keeps its run open; a resumed or compacted session continues its run and gets its block again; `SessionEnd`
+  stores a run still open. Sessions map to runs in `.aexp/sessions/` under the same locks and atomic writes as runs.
+  Every hook exits 0, says nothing to the model but aexp's own texts, and logs to a bounded, owner-only
+  `.aexp/hook.log` that never holds a prompt or tool content.
+- **The session is the holdout's unit**: a session's arm is the library's assignment of an ID derived from the session
+  ID, and every run of the session gets a run ID the library assigns to that arm (a deterministic derived sequence,
+  bounded; if the bound is hit the run gets no block or hint and records nothing to the holdout), so block and hints
+  never mix arms within a session. The guide says how to read the run-level estimate with correlated turns.
+- **Trust holds on the hook path**: with an untrusted or changed config the hooks record and inject, but `Stop` does not
+  run the verifier and says why; nothing in the hook input decides the config, identity, scope or command, and a hook
+  without `CLAUDE_PROJECT_DIR` (or `--config`/`AEXP_CONFIG`) does nothing rather than guess from its working directory.
+  A malformed hook command line exits 0 too. A call's result text is kept only under a recipe consent for its tool.
+- **What a turn changed** decides whether `Stop` verifies it: calls outside a read-only tool list, which the config can
+  replace (`claudeCode.readOnlyTools`) and extend with read-only Bash prefixes (`claudeCode.readOnlyBashPrefixes`, no
+  chaining, pipes or redirects). `aexp runs prune` also removes stale session files.
+- **`aexp setup claude-code [--print]`** merges the hooks into `.claude/settings.json` (keeping every existing hook and
+  setting, never adding one twice, leaving a settings file it cannot read whole untouched), writes a default
+  `.aexp/config.json` only when there is none (verifier detected for `dotnet test`, `npm test`, `pytest` or
+  `go test ./...`, else a placeholder that refuses to run), adds `.aexp/` to `.gitignore`, and prints the permission
+  deny rules for the user's own settings (no edits to any `.aexp/`, `.claude/` or the trust file's directory; no
+  `aexp trust` in its usual spellings), saying plainly that Bash can still write unless it is restricted. It keeps the
+  settings file's BOM, line endings and mode, writes through a link to its target, and escapes no character needlessly.
+  Idempotent; it never trusts the config.
+- **`aexp export --claude-md [file]` / `--agents-md [file]`** (and the same flags on the `Stop` hook) sync the lessons
+  measured as helping into a fenced section (`<!-- aexp:lessons:begin -->` ... `<!-- aexp:lessons:end -->`) of the file,
+  every lesson an indented code block under the untrusted-reference preamble with its measured benefit; every byte
+  outside the section is kept, and the same lessons give the same bytes. The read-modify-write holds a lock file, and
+  the file keeps its mode (and, when another user owns it, its owner and group, by an in-place rewrite).
+- **Library change**: none. Guide: [Claude Code](docs/guide/claude-code.md).
+
+### Dogfood on this repository (story 28.10)
+
+- **`aexp benefit --markdown <file>`** writes the holdout's estimate as a results page: counts per arm, rates, the
+  difference with its 95% interval, the verdict, the pending, unverified and mixed-arm runs, the reading rules, and what
+  the page can and cannot say (among them that runs of one Claude Code session are correlated and the store cannot count
+  sessions). No path or run ID, only the date, so it can be committed. Inside the project root only, never through a
+  link. `aexp benefit` without it prints what it did before.
+- **[`dogfood/`](dogfood/README.md)**: everything to run the Claude Code recipe on this repository's own sessions, up to
+  switching it on, which stays a person's step. A config (`dogfood/aexp.config.json`: SQLite under `.aexp/`, holdout
+  0.5, recall on, only file paths kept, no recipe consents, each choice commented), the verifier (`dogfood/verify.sh`:
+  `dotnet build`, then every Docker-free test project from CONTRIBUTING.md, kept equal to that list by a test), and a
+  pre-registration written before any session ran (`dogfood/preregistration.json`: the session as the randomized unit,
+  the run as the analysed one, 20 verified runs per arm before the one reading, a stated second look at 50, a deadline,
+  exclusions and limits, and the SHA-256 of both files, which a test checks). `.gitignore` now excludes `.aexp/`.
+- **README**: leads with what the library is for, the block a second run gets after a first run failed and recovered,
+  the evidence so far (now with the real-task and CI-triage results: no overall benefit shown; lesson content beat a
+  placebo, p = 0.035; wrong lessons did worse than none; CI triage `NoEvidence` for lack of runs) and the three ways in.
+  Detail moved down; a "Real work" section says the dogfood run has no result yet.
+- **Library change**: none.
+
+## 0.1.0-preview.17
+
+This preview measures whether injected lessons help. An opt-in holdout withholds the block on a deterministic share of
+runs and records both arms; `AgentExperienceBenefit.EstimateAsync` compares the arms' verified outcomes, overall, per
+lesson and optionally per model; the injection provider can act on the measured benefit; the same holdout measures any
+other MAF memory provider; and lessons measured as helping can be exported to other memory stores. PostgreSQL gains
+migrations `0027` to `0029` (re-run `ApplyApplicationRolePrivilegesAsync` after migrating). The Python and Go ports
+take part in the holdout through contract 1.8 (add-only). Every new option is off by default, and the public API
+changes are additions. The same tag releases the six NuGet packages, the Python distribution `agenticexperience` and
+the six Go modules at one version.
+
+### The holdout in Python and Go: contract 1.8 (story 25.6)
+
+- **Contract 1.8** ([what it adds](contract/README-1.8.md)) brings the injection holdout into the language-neutral
+  contract: the assignment function (`holdout-assign` fixtures: run ID and salt to fraction and arm), the withholding
+  on the injection path, the statement that records an assignment (`sql/record-holdout-assignment.sql`, the .NET
+  store's line for line, with `holdout-record` fixtures on PostgreSQL) and the application role's grants on migration
+  `0027`'s table (`sql/application-role-privileges-1.8.sql`, run after the 1.0, 1.4 and 1.6 files). Every 1.0-1.7 file
+  is unchanged.
+- **The Python and Go ports take part**, behind the same opt-in option, off by default: Python
+  `use_agent_experience(..., holdout=HoldoutOptions(rate=..., salt=...))`, Go `HoldoutOptions{Rate, Salt}` on the Agent
+  Framework options. A held-out run's block is withheld (outcome `Withheld`), both arms are recorded in the background
+  (telemetry operation `record_holdout`), and an invalid rate or an empty salt is refused at construction. In a mixed
+  fleet sharing one PostgreSQL store, `AgentExperienceBenefit.EstimateAsync` counts the Python and Go agents' runs with
+  the .NET ones; a .NET test estimates over rows a Python and a Go agent wrote. The estimate, the benefit policy,
+  measuring another memory provider, exporting lessons and recording the run's model stay .NET-only.
+- **Upgrading a mixed fleet:** apply `sql/application-role-privileges-1.8.sql` after the contract's other privileges
+  files (or run the .NET privileges call last); without it a port's assignments are reported `NotRecorded` and
+  injection carries on.
+
+### The injection holdout: withhold the block on a share of runs and record both arms (story 25.1)
+
+- **`ExperienceInjectionOptions.Holdout`** (`ExperienceHoldoutOptions { Rate, Salt }`, off by default with `Rate = 0`).
+  On a deterministic, run-ID-derived share of captured runs that have a block to inject, the provider builds the block
+  and then withholds it: no message, nothing staged in the session, no exposure, no "last injected", and the result is
+  the new `InjectionOutcome.Withheld` with `ExperienceInjectionResult.WithheldExperienceIds`. The other runs are
+  injected as before. The arm is SHA-256 over the run ID (RFC 4122 byte order) and the salt, so every invocation of a
+  run lands in the same arm. Only invocations captured by the agent's own `UseExperienceCapture` take part. A rate
+  outside 0..1 or not a number, or an empty salt, throws when the provider is constructed. See
+  [Measuring benefit: the holdout](docs/guide/injection.md#measuring-benefit-the-holdout).
+- **Both arms are recorded**, in the background, through the new optional store capability
+  `IExperienceRecordStore.TracksHoldout` / `RecordHoldoutAssignmentAsync(authorization, scope, HoldoutAssignment, ct)`
+  (`HoldoutArm`, `HoldoutAssignment`, `ExperienceHoldoutRecordResult`); the default records nothing, so existing stores
+  keep compiling. The outcome is the new `record_holdout` telemetry operation (`Recorded`, `NotTracked`, `NotRecorded`,
+  `OutcomeUnknown`). Rows hold IDs, revisions, the arm, the scope and an instant, never content, and only for records in
+  the invocation's own scope.
+- **PostgreSQL: migration `0027_experience_holdout_assignments.sql`** adds `agent_experience.experience_holdout_assignments`
+  (keyed on run and record, `ON CONFLICT DO NOTHING`), an erasure trigger that removes a record's rows and its own run's
+  rows, and its row-level security policies. Re-run `ApplyApplicationRolePrivilegesAsync` after migrating: the role gets
+  `SELECT` and `INSERT`. The table is .NET-only, so the contract is unchanged; in a mixed fleet run the .NET privileges
+  call after the contract's files. The in-memory store records assignments too.
+
+### Estimate benefit from verified outcomes (story 25.2)
+
+- **`AgentExperienceBenefit.EstimateAsync(services, authorization, scope, options?, ct)`** compares how often the
+  holdout's two arms verified, overall and per lesson: per arm the runs, successes and rate, the difference (treatment
+  minus holdout) with a 95% Newcombe hybrid-score interval, and a verdict (`ExperienceBenefitVerdict.NoEvidence`,
+  `Helps`, `Hurts`) that stays `NoEvidence` until each arm has `MinimumRunsPerArm` runs (20 by default) and the interval
+  excludes zero. A run's outcome is its own finalized record's; `Unknown` outcomes, runs not finalized yet and runs
+  recorded in both arms are left out of the rates and counted. The arithmetic is the pure
+  `ExperienceBenefitEstimator.Estimate` in Core. Nothing about ranking, confidence or injection changes. See
+  [Reading the estimate](docs/guide/injection.md#reading-the-estimate).
+- **New optional store read `IExperienceRecordStore.QueryHoldoutOutcomesAsync`** (`HoldoutOutcomeQuery`,
+  `HoldoutOutcomeCursor`, `HoldoutOutcomeRow`, `HoldoutOutcomeQueryResult`): a keyset-paged read of one scope's
+  assignment rows, each with its run's outcome status, under the caller's authorization. The default reads nothing and
+  reports not tracked; a store overrides `TracksHoldout`, `RecordHoldoutAssignmentAsync` and this read together, which
+  the conformance suite's `AssertHoldoutTrackingIsConsistent` now checks. The in-memory and PostgreSQL stores implement
+  it (PostgreSQL in one statement per page, opening sealed records; no migration).
+
+### Act on measured benefit (story 25.3)
+
+- **`ExperienceInjectionOptions.Benefit`** (`ExperienceBenefitPolicy { Enabled, RefreshInterval, RefreshTimeout, Window,
+  MinimumRunsPerArm, PreferMeasuredHelpful }`, off by default). With it on, a lesson the holdout measured as hurting is
+  omitted before selection with the new `InjectionOmissionReason.MeasuredHarmful`; a scope whose overall verdict is
+  `Hurts` gets no lessons (withdrawal notices still go out); and with `PreferMeasuredHelpful` lessons measured as
+  helping move ahead of the rest before the record limit. The estimate is cached per scope, tenant and principal and
+  refreshed in the background (every 10 minutes by default, each refresh bounded by 30 seconds), counting only
+  assignments from the last 30 days, so verdicts can reverse; it never delays or fails an invocation, and an estimate
+  the store could not give is never acted on. The holdout keeps running unchanged. Invalid bounds throw
+  `ArgumentOutOfRangeException` when the provider is constructed. See
+  [Acting on the estimate](docs/guide/injection.md#acting-on-the-estimate).
+- **New telemetry operation `benefit_refresh`** (measurements only: `Refreshed`, `NotRefreshed`, `OutcomeUnknown`), in
+  `docs/telemetry-names.json` too.
+
+### Know which model learned and which model used it (story 25.4)
+
+- **Capture records the model.** At run start `UseExperienceCapture` adds `Environment.Metadata["agentexperience.model"]`
+  (`HoldoutOutcomeRow.ModelMetadataKey`): the agent's chat client's `ChatClientMetadata.DefaultModelId`, found through the
+  agent's `GetService`, trimmed and capped at 256 characters. A host environment that already sets the key keeps its
+  value; with no model id the key is absent. A record keeps its source run's environment, so a lesson names the model
+  that learned it. Nothing is inferred from text. No contract or schema change. The key is the holdout's bookkeeping
+  only: the default reflector does not list it as a precondition, the block's environment line does not show it, and
+  retrieval ignores it in required and preferred environment attributes and hides it from the environment scorer, so a
+  lesson learned on one model reads and ranks the same for an agent on any other.
+- **The holdout read carries both models.** `HoldoutOutcomeRow.RunModel` (the run's own record) and `LessonModel` (the
+  named lesson's record), new optional init-only members, `null` when absent. The in-memory and PostgreSQL stores fill
+  them from the records the read already opens; PostgreSQL reads the lessons in the same statement and decodes sealed
+  ones in the same key-store batch.
+- **`ExperienceBenefitOptions.SplitByModel`** (default `false`, when the estimate is unchanged). On, the estimate adds
+  `ByConsumingModel` (`ExperienceModelBenefit` per run model, unrecorded ones as `ExperienceBenefitEstimate.UnknownModel`)
+  and each lesson `ByModelPair` (`ExperienceModelPairBenefit` per producing and consuming model), every group decided
+  by the same rules and minimum. `ExperienceBenefitAccumulator` and `AgentExperienceBenefit.EstimateAsync` pass it through.
+- **`ExperienceBenefitPolicy.PerModel`** (default `false`). On, the benefit policy acts on the verdicts for the invoking
+  agent's own model, falling back to the pooled verdict wherever that model's group has `NoEvidence`. See
+  [Per model](docs/guide/injection.md#per-model).
+
+### Holdout hardening (story 25.10)
+
+- **The lessons view can show what the holdout measured.** `ExperienceLessonsQuery.IncludeMeasuredBenefit` (default
+  `false`) fills each lesson's new `ExperienceLesson.MeasuredBenefit` (an `ExperienceLessonBenefit`, or `null` when no
+  assigned run named it or the store does not record the holdout) from one estimate for the page's scope, over the
+  context provider's benefit window and threshold, so a host can see why a lesson stopped being injected. Off, nothing
+  more is read and the page is unchanged.
+- **The estimate holds one page at a time.** The new `ExperienceBenefitAccumulator` (Core) folds holdout rows run by run
+  and gives exactly what `ExperienceBenefitEstimator.Estimate` gives over the same rows, in memory that grows with runs
+  and lessons rather than rows. `AgentExperienceBenefit.EstimateAsync` and the benefit policy's refresh use it; a store
+  that pages one run's rows apart is refused with `InvalidOperationException` instead of counting the run twice.
+- **PostgreSQL: a holdout write that overlaps an erasure of its run's own record is refused.** The insert now also locks
+  the run's own records `FOR KEY SHARE` and writes nothing when all of them are by then tombstones, so an erasure under
+  way when the write starts makes it record nothing, and one that starts during the write removes its rows. Only a write
+  that overlaps the erasure is handled. **Known limit:** a write that starts after the erasure has committed still
+  records its rows, because an erased record keeps no run ID; those rows hold IDs only, never join an outcome, and are
+  counted as `Pending`.
+- **PostgreSQL: migration `0028_experience_records_source_run_id.sql`** adds `ix_experience_records_source_run` on
+  `experience_records (tenant_id, source_run_id)`, which the holdout's outcome read and the write's run lookup use
+  instead of scanning the tenant's records. It is a plain `CREATE INDEX` (the migrator runs in a transaction), which
+  blocks writes to `experience_records` while it builds; on a large table build it `CONCURRENTLY` first, as
+  [Applying the schema](docs/guide/deployment.md#applying-the-schema) shows. No privilege changes.
+
+### Measure any memory provider (story 25.8)
+
+- **`ExperienceHoldoutContextProvider`** wraps any MAF `AIContextProvider` (Mem0, Zep, Letta, your own) under the
+  holdout, recorded against a key you choose (1-100 characters of `[A-Za-z0-9._-]`; anything else throws
+  `ArgumentException`). The wrapped provider is always invoked, and its `InvokedAsync` and state keys forwarded, so it
+  keeps learning in both arms; its exceptions propagate unchanged. On a deterministic share of captured runs whose
+  wrapped context is not empty (salt `"{providerKey.Length}:{providerKey}/{Salt}"`, independent of the lessons' holdout and of other
+  providers) the context it added is withheld. Off by default (rate 0). With the one-call setup,
+  `services.UseMeasuredMemory(memory, "mem0", holdout?)` builds it over the container's store, for
+  `ChatClientAgentOptions.AIContextProviders`. No vendor SDK dependency. See
+  [Measuring another memory provider](docs/guide/injection.md#measuring-another-memory-provider).
+- **`AgentExperienceBenefit.EstimateProviderAsync(services, authorization, scope, providerKey, options?, ct)`** returns
+  an `ExperienceProviderBenefitEstimate`: the overall comparison of the provider's arms, by the same rules and verdict as
+  the lessons' estimate (no per-item comparison; the provider's items are opaque).
+- **New optional store capability** `IExperienceRecordStore.TracksProviderHoldout`,
+  `RecordProviderHoldoutAssignmentAsync(authorization, scope, ProviderHoldoutAssignment, ct)` and
+  `QueryProviderHoldoutOutcomesAsync(authorization, ProviderHoldoutOutcomeQuery, ct)` (`ProviderHoldoutOutcomeRow`,
+  `ProviderHoldoutOutcomeQueryResult`); the defaults record and read nothing, so existing stores keep compiling.
+  `RecordStoreConformanceTests.AssertProviderHoldoutTrackingIsConsistent` checks all-or-none. The in-memory and
+  PostgreSQL stores implement it. New telemetry operation `record_provider_holdout` (`Recorded`, `NotTracked`,
+  `NotRecorded`, `OutcomeUnknown`).
+- **PostgreSQL: migration `0029_experience_provider_holdout_assignments.sql`** adds
+  `agent_experience.experience_provider_holdout_assignments` (keyed on tenant, run and provider key, `ON CONFLICT DO
+  NOTHING`, behind 25.10's late-write guard), an erasure trigger that removes a run's rows when the run's last live
+  record in the tenant is erased (`0027`'s trigger now does the same for its run rows), and its row-level security
+  policies. Re-run `ApplyApplicationRolePrivilegesAsync` after migrating:
+  the role gets `SELECT` and `INSERT`. .NET-only; the contract is unchanged.
+
+### Export measured lessons to other memory stores (story 25.9)
+
+- **`AgentExperienceLessons.ExportMeasuredAsync(identity, sink, options?, ct)`** hands an `IExperienceLessonSink` the
+  complete current set of lessons in exactly the identity's scope that are eligible, verified and measured `Helps` (over
+  the benefit policy's window, and `MinimumRunsPerArm` unless `ExperienceBenefitOptions` is passed), each an
+  `ExportedLesson`: ID, revision, task ID, the lesson text without the block's wrapper, the measured comparison and the
+  export instant. The sink upserts what is new or changed and removes what is absent, so a lesson revoked, erased or no
+  longer measured as helping leaves the copy too. A store that does not track the holdout gives an empty set (the sink is
+  still called); a denied read returns the store's outcome without calling the sink; sink exceptions propagate. It
+  returns `ExperienceLessonExportResult` with the sink's `ExperienceLessonSyncResult(Added, Updated, Removed)`. Explicit
+  only: nothing exports automatically. No vendor SDK dependency.
+- **`MarkdownLessonFileSink(path, timeProvider?)`** keeps one deterministic Markdown file (sorted by experience ID; the
+  scope, the export instant, and each lesson's revision, measured benefit and text, the untrusted parts as indented code
+  blocks), written atomically (temporary file, then move), for `AGENTS.md`, `CLAUDE.md` or a skill folder. See
+  [Sharing measured lessons with other tools](docs/guide/injection.md#sharing-measured-lessons-with-other-tools).
 
 ## 0.1.0-preview.16
 

@@ -123,6 +123,21 @@ public sealed record CaptureLimits(
         init => field = value is { } age ? EnsurePositive(age, nameof(MaxOpenRunAge)) : null;
     }
 
+    /// <summary>The default <see cref="MaxRecipeExcerptLength"/>: 200 characters.</summary>
+    public const int DefaultMaxRecipeExcerptLength = 200;
+
+    /// <summary>
+    /// The most characters a stored recipe excerpt (<see cref="AgentExperience.Abstractions.ToolCallRecord.RecipeExcerpt"/>)
+    /// keeps. Unlike a result, a longer excerpt is <em>cut</em> to it -- after sanitization, so a redaction is never split,
+    /// and never between a surrogate pair -- and the cut is reported as a truncated field. Defaults to
+    /// <see cref="DefaultMaxRecipeExcerptLength"/>; must be strictly positive.
+    /// </summary>
+    public int MaxRecipeExcerptLength
+    {
+        get;
+        init => field = EnsurePositive(value, nameof(MaxRecipeExcerptLength));
+    } = DefaultMaxRecipeExcerptLength;
+
     private static int EnsurePositive(int value, string paramName) =>
         value > 0 ? value : throw new ArgumentOutOfRangeException(paramName, value, "Capture limits must be strictly positive.");
 

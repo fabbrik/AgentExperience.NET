@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Agent experience lessons</title>
+<style>
+:root{color-scheme:light dark;--bg:#ffffff;--fg:#1b1f24;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--banner:#fff8c5;--banner-line:#d4a72c;--ok:#1a7f37;--warn:#9a6700;--bad:#cf222e}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--banner:#2e2a14;--banner-line:#9e7a1d;--ok:#3fb950;--warn:#d29922;--bad:#f85149}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:960px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:16px 0 4px}
+h2{font-size:1.05rem;margin:0;word-break:break-all}
+.banner{background:var(--banner);border:1px solid var(--banner-line);border-radius:6px;padding:8px 12px;margin-top:8px}
+.muted{color:var(--muted)}
+.lesson{border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:16px 0}
+.meta{display:flex;flex-wrap:wrap;gap:4px 16px;margin:6px 0;font-size:.9rem}
+.badge{display:inline-block;border:1px solid currentColor;border-radius:999px;padding:0 8px;font-size:.8rem}
+.eligible{color:var(--ok)}.ineligible,.warn{color:var(--warn)}.failed{color:var(--bad)}
+table{border-collapse:collapse;font-size:.9rem;margin:6px 0}
+th,td{border:1px solid var(--line);padding:2px 8px;text-align:left;word-break:break-all}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;font-size:.82rem}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}</style>
+</head>
+<body>
+<main>
+<p class="banner" role="note"><strong>Development view: these are the lessons stored in this scope. It discloses them, so serve it only behind your own authorization.</strong></p>
+<h1>What it learned</h1>
+<p class="muted">Scope: <code>tenant tenant &lt;&amp;&gt; / application app &quot;quoted&quot; / project project &#39;single&#39; / team team &#233; / agent agent &#128512; / user user &#255;</code> · read 2026-03-03 09:00:00 UTC</p>
+<p class="muted">Showing 1 lesson, newest first.</p>
+<section class="lesson">
+<h2>task &lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt; &amp; &quot;quoted&quot; &#233; &#255; &#160; Ā 雪 &#128512; 	</h2>
+<div class="meta"><span class="badge">Validated</span><span class="badge ineligible">not eligible for retrieval: status &lt;Stale&gt; &amp; &quot;never&quot; retrieved</span></div>
+<div class="meta muted"><span>confidence 0.88</span><span>stored 2026-03-02 09:00:00 UTC</span><span>last activity 2026-03-02 09:01:00 UTC</span><span>last injected 2026-03-02 09:00:59 UTC (2 times)</span><span>experience <code>00000151-0000-4000-8000-000000000001</code></span></div>
+<table>
+<tr><th>Check</th><th>Evidence kind</th><th>Result</th></tr>
+<tr><td><code>check &lt;1&gt;</code></td><td>kind &amp; &quot;kind&quot;</td><td class="eligible">Pass</td></tr>
+<tr><td><code>check &#39;two&#39;</code></td><td>smoke-test</td><td class="failed">Fail</td></tr>
+<tr><td><code>check &#233;</code></td><td>manual-review</td><td class="warn">Unknown</td></tr>
+</table>
+<p class="muted">What an agent in this scope would be shown for it, were it eligible:</p>
+<pre><code>--- BEGIN HISTORICAL REFERENCE ---
+Lesson: &lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt; &amp; &quot;quoted&quot; &#233; &#255; &#160; Ā 雪 &#128512; 	
+--- END HISTORICAL REFERENCE ---
+</code></pre>
+</section>
+</main>
+</body>
+</html>

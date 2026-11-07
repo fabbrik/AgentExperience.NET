@@ -1,0 +1,11 @@
+{
+  "description": "PerModel for model-c, whose runs together were measured Hurts: every record is omitted with the scope's detail.",
+  "enabled": true,
+  "preferMeasuredHelpful": true,
+  "perModel": true,
+  "model": "model-c",
+  "requestLimit": null,
+  "maxRecords": 8,
+  "maxBytes": 16384,
+  "excludeModelAuthored": false
+}

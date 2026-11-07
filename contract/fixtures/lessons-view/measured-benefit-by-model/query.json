@@ -1,0 +1,18 @@
+{
+  "description": "IncludeMeasuredBenefit with the policy's PerModel on: the estimate is split by model, so each lesson's measured benefit carries its model pairs.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "statuses": null,
+  "limit": 50,
+  "includeIneligible": true,
+  "now": "2026-03-02T15:00:00+00:00",
+  "includeMeasuredBenefit": true,
+  "minimumRunsPerArm": 2,
+  "perModel": true
+}

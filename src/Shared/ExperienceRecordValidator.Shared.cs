@@ -1,20 +1,22 @@
 using AgentExperience.Abstractions;
 
 // Shared source (story 11.2): the validation rules for the core storage ports, which depend on nothing but
-// AgentExperience.Abstractions. Both AgentExperience.Storage.Postgres and AgentExperience.Storage.InMemory link this
-// file, so the two stores refuse exactly the same requests. Each project defines exactly one of the constants below,
+// AgentExperience.Abstractions. AgentExperience.Storage.Postgres, AgentExperience.Storage.InMemory and (story 28.7)
+// AgentExperience.Storage.Sqlite link this file, so the stores refuse exactly the same requests. Each project defines exactly one of the constants below,
 // which puts the validator in that project's own namespace. Keep this file free of every type only one store has:
 // the PostgreSQL-only rules (erasure, retention, sealing, grants) are in that project's
 // ExperienceRecordValidator.cs. Where a comment below says "the database", it is the PostgreSQL store's schema,
 // which states the same rule again as a CHECK.
-#if AGENTEXPERIENCE_POSTGRES && AGENTEXPERIENCE_INMEMORY
-#error Define exactly one of AGENTEXPERIENCE_POSTGRES and AGENTEXPERIENCE_INMEMORY.
+#if (AGENTEXPERIENCE_POSTGRES && AGENTEXPERIENCE_INMEMORY) || (AGENTEXPERIENCE_POSTGRES && AGENTEXPERIENCE_SQLITE) || (AGENTEXPERIENCE_INMEMORY && AGENTEXPERIENCE_SQLITE)
+#error Define exactly one of AGENTEXPERIENCE_POSTGRES, AGENTEXPERIENCE_INMEMORY and AGENTEXPERIENCE_SQLITE.
 #elif AGENTEXPERIENCE_POSTGRES
 namespace AgentExperience.Storage.Postgres;
 #elif AGENTEXPERIENCE_INMEMORY
 namespace AgentExperience.Storage.InMemory;
+#elif AGENTEXPERIENCE_SQLITE
+namespace AgentExperience.Storage.Sqlite;
 #else
-#error Define AGENTEXPERIENCE_POSTGRES or AGENTEXPERIENCE_INMEMORY to select the namespace of the shared validator.
+#error Define AGENTEXPERIENCE_POSTGRES, AGENTEXPERIENCE_INMEMORY or AGENTEXPERIENCE_SQLITE to select the namespace of the shared validator.
 #endif
 
 /// <summary>
@@ -144,6 +146,169 @@ internal static partial class ExperienceRecordValidator
         }
 
         ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>
+    /// Validates a holdout assignment write: the run, a defined arm, at most one batch of records, none with an empty ID
+    /// or a negative revision, a set instant, and the scope.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateHoldoutAssignment(Scope scope, HoldoutAssignment? assignment)
+    {
+        var errors = new List<StoreValidationError>();
+        if (assignment is null)
+        {
+            errors.Add(new("Assignment", "is required."));
+            ValidateScope(scope, "Scope", errors);
+            return errors;
+        }
+
+        if (assignment.RunId == Guid.Empty)
+        {
+            errors.Add(new("Assignment.RunId", "must not be empty."));
+        }
+
+        if (!Enum.IsDefined(assignment.Arm))
+        {
+            errors.Add(new("Assignment.Arm", "must be a defined HoldoutArm value."));
+        }
+
+        if (assignment.Records is null)
+        {
+            errors.Add(new("Assignment.Records", "is required."));
+        }
+        else
+        {
+            if (assignment.Records.Count > ExperienceRecordGetManyResult.MaxCount)
+            {
+                errors.Add(new("Assignment.Records", $"must name at most {ExperienceRecordGetManyResult.MaxCount} records."));
+            }
+
+            for (var i = 0; i < assignment.Records.Count; i++)
+            {
+                if (assignment.Records[i] is not { } exposure)
+                {
+                    errors.Add(new($"Assignment.Records[{i}]", "is required."));
+                    continue;
+                }
+
+                if (exposure.ExperienceId == Guid.Empty)
+                {
+                    errors.Add(new($"Assignment.Records[{i}].ExperienceId", "must not be empty."));
+                }
+
+                if (exposure.Revision < 0)
+                {
+                    errors.Add(new($"Assignment.Records[{i}].Revision", "must not be negative."));
+                }
+            }
+        }
+
+        if (assignment.AssignedAt == default)
+        {
+            errors.Add(new("Assignment.AssignedAt", "must be set."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>Validates a provider holdout write: the run, the provider key, a defined arm, a set instant, and the scope.</summary>
+    public static IReadOnlyList<StoreValidationError> ValidateProviderHoldoutAssignment(Scope scope, ProviderHoldoutAssignment? assignment)
+    {
+        var errors = new List<StoreValidationError>();
+        if (assignment is null)
+        {
+            errors.Add(new("Assignment", "is required."));
+            ValidateScope(scope, "Scope", errors);
+            return errors;
+        }
+
+        if (assignment.RunId == Guid.Empty)
+        {
+            errors.Add(new("Assignment.RunId", "must not be empty."));
+        }
+
+        if (!ProviderHoldoutAssignment.IsValidProviderKey(assignment.ProviderKey))
+        {
+            errors.Add(new("Assignment.ProviderKey", $"must be 1 to {ProviderHoldoutAssignment.MaxProviderKeyLength} characters of A-Z, a-z, 0-9, '.', '_' and '-'."));
+        }
+
+        if (!Enum.IsDefined(assignment.Arm))
+        {
+            errors.Add(new("Assignment.Arm", "must be a defined HoldoutArm value."));
+        }
+
+        if (assignment.AssignedAt == default)
+        {
+            errors.Add(new("Assignment.AssignedAt", "must be set."));
+        }
+
+        ValidateScope(scope, "Scope", errors);
+        return errors;
+    }
+
+    /// <summary>Validates a provider holdout read: the scope, the provider key, the page bound, and the optional resume point.</summary>
+    public static IReadOnlyList<StoreValidationError> ValidateProviderHoldoutOutcomeQuery(ProviderHoldoutOutcomeQuery? query)
+    {
+        var errors = new List<StoreValidationError>();
+        if (query is null)
+        {
+            errors.Add(new("Query", "is required."));
+            return errors;
+        }
+
+        ValidateScope(query.Scope, "Scope", errors);
+        if (!ProviderHoldoutAssignment.IsValidProviderKey(query.ProviderKey))
+        {
+            errors.Add(new("ProviderKey", $"must be 1 to {ProviderHoldoutAssignment.MaxProviderKeyLength} characters of A-Z, a-z, 0-9, '.', '_' and '-'."));
+        }
+
+        if (query.Limit is < ProviderHoldoutOutcomeQuery.MinLimit or > ProviderHoldoutOutcomeQuery.MaxLimit)
+        {
+            errors.Add(new("Limit", $"must be between {ProviderHoldoutOutcomeQuery.MinLimit} and {ProviderHoldoutOutcomeQuery.MaxLimit}."));
+        }
+
+        if (query.AfterRunId == Guid.Empty)
+        {
+            errors.Add(new("AfterRunId", "must not be empty."));
+        }
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Validates a holdout outcome read: the scope, the page bound, and the optional resume point, whose IDs
+    /// must both be set.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateHoldoutOutcomeQuery(HoldoutOutcomeQuery? query)
+    {
+        var errors = new List<StoreValidationError>();
+        if (query is null)
+        {
+            errors.Add(new("Query", "is required."));
+            return errors;
+        }
+
+        ValidateScope(query.Scope, "Scope", errors);
+        if (query.Limit is < HoldoutOutcomeQuery.MinLimit or > HoldoutOutcomeQuery.MaxLimit)
+        {
+            errors.Add(new("Limit", $"must be between {HoldoutOutcomeQuery.MinLimit} and {HoldoutOutcomeQuery.MaxLimit}."));
+        }
+
+        if (query.After is { } after)
+        {
+            if (after.RunId == Guid.Empty)
+            {
+                errors.Add(new("After.RunId", "must not be empty."));
+            }
+
+            if (after.ExperienceId == Guid.Empty)
+            {
+                errors.Add(new("After.ExperienceId", "must not be empty."));
+            }
+        }
+
         return errors;
     }
 
@@ -830,6 +995,74 @@ internal static partial class ExperienceRecordValidator
         if (query.MinimumMatchedTerms < 1)
         {
             errors.Add(new("MinimumMatchedTerms", "must be at least 1."));
+        }
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Validates a signature search: the scope, a signature whose parts are what a derivation could
+    /// produce, the eligibility filters as <see cref="ValidateCandidateQuery"/> checks them, the match and the limit.
+    /// </summary>
+    public static IReadOnlyList<StoreValidationError> ValidateSignatureQuery(Scope scope, ExperienceSignatureQuery query)
+    {
+        var errors = new List<StoreValidationError>();
+        ValidateScope(scope, "Scope", errors);
+
+        if (query.Signature is not { } signature)
+        {
+            errors.Add(new("Signature", Required));
+        }
+        else
+        {
+            if (!ExperienceFailureSignature.IsKeyableToolName(signature.ToolName))
+            {
+                errors.Add(new(
+                    "Signature.ToolName",
+                    $"must be non-blank, at most {ExperienceFailureSignature.MaxToolNameLength} characters, well-formed, and free of control characters."));
+            }
+
+            if (string.IsNullOrWhiteSpace(signature.ErrorClass)
+                || signature.ErrorClass.Length > ExperienceFailureSignature.MaxErrorClassLength
+                || signature.ErrorClass.Any(char.IsControl)
+                || signature.ErrorClass.Any(char.IsSurrogate))
+            {
+                errors.Add(new(
+                    "Signature.ErrorClass",
+                    $"must be non-blank, at most {ExperienceFailureSignature.MaxErrorClassLength} characters, and free of control characters."));
+            }
+
+            if (signature.Fingerprint is not { Length: ExperienceFailureSignature.FingerprintLength } fingerprint
+                || !fingerprint.All(c => char.IsAsciiDigit(c) || c is >= 'a' and <= 'f'))
+            {
+                errors.Add(new(
+                    "Signature.Fingerprint",
+                    $"must be {ExperienceFailureSignature.FingerprintLength} lowercase hexadecimal characters."));
+            }
+        }
+
+        if (query.EligibleStatuses is null)
+        {
+            errors.Add(new("EligibleStatuses", Required));
+        }
+        else if (query.EligibleStatuses.Count == 0)
+        {
+            errors.Add(new("EligibleStatuses", "must contain at least one status."));
+        }
+        else
+        {
+            for (var i = 0; i < query.EligibleStatuses.Count; i++)
+            {
+                RequireDefined(query.EligibleStatuses[i], $"EligibleStatuses[{i}]", errors);
+            }
+        }
+
+        RequireUnitInterval(query.MinimumConfidence, "MinimumConfidence", errors);
+        RequireDefined(query.Match, "Match", errors);
+
+        if (query.Limit is < ExperienceSignatureQuery.MinLimit or > ExperienceSignatureQuery.MaxLimit)
+        {
+            errors.Add(new("Limit", $"must be between {ExperienceSignatureQuery.MinLimit} and {ExperienceSignatureQuery.MaxLimit}."));
         }
 
         return errors;

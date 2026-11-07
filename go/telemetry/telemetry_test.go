@@ -273,6 +273,18 @@ type outcomes struct {
 	finalized int
 }
 
+// instructionMemory is another memory provider (contract 1.11): it adds one instruction, which the task text never
+// reads, and remembers nothing.
+type instructionMemory struct{}
+
+func (instructionMemory) Invoking(_ context.Context, invoking agent.InvokingContext) ([]*message.Message,
+	[]agent.Option, error) {
+	return invoking.Messages, append(slices.Clone(invoking.Options),
+		agent.WithInstructions("Remember: the lock is held by the nightly job.")), nil
+}
+
+func (instructionMemory) Invoked(context.Context, agent.InvokedContext) error { return nil }
+
 func newStore(t *testing.T) *inmemory.Store {
 	t.Helper()
 	store, err := inmemory.New()
@@ -283,7 +295,8 @@ func newStore(t *testing.T) *inmemory.Store {
 }
 
 // drive runs two tickets through an agent wired with the integration and waits for the background work.
-func drive(t *testing.T, st ae.Store, options maf.Options, first, second string) *outcomes {
+func drive(t *testing.T, st ae.Store, options maf.Options, first, second string,
+	configure ...func(*agent.Config)) *outcomes {
 	t.Helper()
 	seen := &outcomes{}
 	runs := 0
@@ -321,6 +334,9 @@ func drive(t *testing.T, st ae.Store, options maf.Options, first, second string)
 	}
 	if err := maf.UseAgentExperience(&config, options); err != nil {
 		t.Fatal(err)
+	}
+	for _, c := range configure {
+		c(&config)
 	}
 	model := &scriptedModel{}
 	triage := agent.New(agent.ProviderConfig{ProviderName: "scripted", Run: model.run,
@@ -378,14 +394,27 @@ func counted(points []point, operation string) []point {
 func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNames(t *testing.T) {
 	file := names(t)
 	s := enable(t)
-	seen := drive(t, newStore(t), maf.Options{Embedder: embedder{}}, ticket, nextTicket)
+	// With the holdout on, every ID is one the assignment puts in the treatment arm: the block is injected, and both
+	// record_injection and record_holdout are reported.
+	// Contract 1.10: the benefit policy on, so its background refresh (benefit_refresh) is reported too.
+	// Contract 1.11: another memory provider measured too, so record_provider_holdout is reported.
+	store := newStore(t)
+	seen := drive(t, store, maf.Options{Embedder: embedder{}, Holdout: maf.HoldoutOptions{Rate: 0.5},
+		NewID: treatedIDs, Benefit: ae.BenefitPolicy{Enabled: true}}, ticket, nextTicket, func(config *agent.Config) {
+		if _, err := maf.UseMeasuredMemory(config, instructionMemory{}, "stub-memory", maf.MeasuredMemoryOptions{
+			Holdout: &maf.HoldoutOptions{Rate: 0.5}}); err != nil {
+			t.Fatal(err)
+		}
+	})
 	if len(seen.recorded) != 1 || seen.recorded[0] != maf.InjectionRecorded {
 		t.Fatalf("recorded %v", seen.recorded)
 	}
+	lifecycle(t, store)
 
 	spans := s.spans.GetSpans()
 	for _, want := range []string{"inject", "retrieve", "capture.start_run", "capture.append_attempt",
-		"capture.complete_run", "verify", "reflect", "finalize", "index"} {
+		"capture.complete_run", "verify", "reflect", "finalize", "index", "lifecycle.commit", "confidence.apply",
+		"reuse_feedback"} {
 		spanNamed(t, spans, "agentexperience."+want)
 	}
 	for _, span := range spans {
@@ -410,6 +439,14 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	}
 	if slices.ContainsFunc(spans, func(span tracetest.SpanStub) bool { return span.Name == "agentexperience.record_injection" }) {
 		t.Error("record_injection is measurements only, no span")
+	}
+	if slices.ContainsFunc(spans, func(span tracetest.SpanStub) bool { return span.Name == "agentexperience.benefit_refresh" }) {
+		t.Error("benefit_refresh is measurements only, no span")
+	}
+	if slices.ContainsFunc(spans, func(span tracetest.SpanStub) bool {
+		return span.Name == "agentexperience.record_provider_holdout"
+	}) {
+		t.Error("record_provider_holdout is measurements only, no span")
 	}
 
 	points := s.points(t)
@@ -448,7 +485,8 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	}
 	nested := func(operation string) any { return counted(points, operation)[0].attributes["nested"] }
 	if nested("verify") != true || nested("reflect") != true || nested("finalize") != false ||
-		nested("retrieve") != false || nested("inject") != false || nested("record_injection") != false {
+		nested("retrieve") != false || nested("inject") != false || nested("record_injection") != false ||
+		nested("benefit_refresh") != false || nested("record_provider_holdout") != false {
 		t.Errorf("nested flags: verify %v reflect %v finalize %v retrieve %v", nested("verify"), nested("reflect"),
 			nested("finalize"), nested("retrieve"))
 	}
@@ -463,6 +501,95 @@ func TestAnAgentThatInjectsCapturesAndRecordsAnInjectionEmitsExactlyThePinnedNam
 	if attributes(finalize)["agentexperience.stage"] != "CreateRecord" {
 		t.Errorf("stage %v", attributes(finalize)["agentexperience.stage"])
 	}
+	apply := attributes(spanNamed(t, spans, "agentexperience.confidence.apply"))
+	commit := attributes(spanNamed(t, spans, "agentexperience.lifecycle.commit"))
+	if apply[ae.AttributeConfidenceAdmission] != "HostTrusted" || apply[ae.AttributeEventID] == nil ||
+		apply[ae.AttributeExperienceID] == nil || apply[telemetry.AttributeOutcome] != "Applied" ||
+		commit[telemetry.AttributeOutcome] != "Committed" || commit[ae.AttributeEventID] == nil {
+		t.Errorf("confidence.apply %v, lifecycle.commit %v", apply, commit)
+	}
+	feedback := spanNamed(t, spans, "agentexperience.reuse_feedback")
+	got := attributes(feedback)
+	if got[telemetry.AttributeOutcome] != "Recorded" || got[ae.AttributeFeedbackID] == nil || got[ae.AttributeRunID] == nil {
+		t.Errorf("reuse_feedback %v", got)
+	}
+	// The confidence.apply the feedback ran is its child and nested, as .NET reports it; the host's own is not.
+	var nestedApply, hostApply int
+	for _, span := range spans {
+		if span.Name != "agentexperience.confidence.apply" {
+			continue
+		}
+		if span.Parent.SpanID() == feedback.SpanContext.SpanID() {
+			nestedApply++
+		} else {
+			hostApply++
+		}
+	}
+	if nestedApply != 1 || hostApply != 1 {
+		t.Errorf("confidence.apply: %d under reuse_feedback, %d of the host's", nestedApply, hostApply)
+	}
+	var nestedFlags []any
+	for _, p := range counted(points, "confidence.apply") {
+		nestedFlags = append(nestedFlags, p.attributes["nested"])
+	}
+	if !slices.Contains(nestedFlags, true) || !slices.Contains(nestedFlags, false) {
+		t.Errorf("confidence.apply nested flags %v", nestedFlags)
+	}
+}
+
+// lifecycle applies a piece of evidence to a record and then commits a transition, through the core's lifecycle
+// service over the store (contract 1.16): confidence.apply and lifecycle.commit.
+func lifecycle(t *testing.T, store *inmemory.Store) {
+	t.Helper()
+	ctx := context.Background()
+	records := store.Records()
+	if len(records) == 0 {
+		t.Fatal("nothing was finalized")
+	}
+	record := records[0]
+	record.ExperienceID, record.SourceRunID = ae.NewRandomUUID(), ae.NewRandomUUID()
+	record.Status, record.Revision, record.SupportingValidations, record.Contradictions = ae.StatusValidated, 1, 1, 0
+	record.ReuseConfidence = 2.0 / 3
+	if err := store.InsertRecord(ctx, ae.BoundsOf(record.Scope), &record); err != nil {
+		t.Fatal(err)
+	}
+	service, err := ae.NewLifecycleService(store, ae.LifecycleOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization := ae.AuthorizationContext{PrincipalID: "telemetry-test", Bounds: ae.BoundsOf(record.Scope)}
+	round := ae.NewRandomUUID()
+	applied, err := service.ApplyEvidence(ctx, authorization, ae.ApplyConfidenceEvidenceRequest{
+		EventID: ae.NewRandomUUID(), ExperienceID: record.ExperienceID, Scope: record.Scope, EvidenceID: ae.NewRandomUUID(),
+		Kind: ae.EvidenceSupporting, Source: ae.EvidenceMachine, RunID: ae.NewRandomUUID(), VerificationRoundID: &round,
+		Reason: "reused, and the checks passed", Producer: "telemetry-test", OccurredAt: ae.Now()})
+	if err != nil || applied.Outcome != ae.ConfidenceApplied {
+		t.Fatalf("%+v %v", applied, err)
+	}
+	prior := ae.StatusValidated
+	committed, err := service.Commit(ctx, authorization, ae.CommitLifecycleTransitionRequest{
+		EventID: ae.NewRandomUUID(), ExperienceID: record.ExperienceID, Scope: record.Scope, PriorStatus: &prior,
+		CurrentStatus: ae.StatusReinforced, Reason: "reinforced by review", Producer: "telemetry-test",
+		OccurredAt: ae.Now(), ExpectedRevision: applied.Revision})
+	if err != nil || committed.Outcome != ae.TransitionCommitted {
+		t.Fatalf("%+v %v", committed, err)
+	}
+	// Contract 1.17: reuse feedback attributing improvement to the record, so reuse_feedback runs a nested
+	// confidence.apply.
+	feedback, err := ae.NewReuseFeedbackService(inmemory.NewReuseFeedbackLedger(), service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := feedback.Record(ctx, authorization, ae.ExperienceReuseFeedback{
+		FeedbackID: ae.NewRandomUUID(), RunID: ae.NewRandomUUID(), Scope: record.Scope,
+		ExposedExperienceIDs: []ae.UUID{record.ExperienceID}, RunOutcome: ae.VerificationVerified,
+		Measure: &ae.ReuseMeasure{Kind: "tool-calls", Value: 3}, ObservedAt: ae.Now(),
+		HumanAssessment: &ae.HumanReuseAssessment{AssessmentID: ae.NewRandomUUID(), Benefit: ae.BenefitImproved,
+			AttributedExperienceIDs: []ae.UUID{record.ExperienceID}, Rationale: "it helped", AssessedAt: ae.Now()}})
+	if err != nil || recorded.Outcome != ae.FeedbackRecorded ||
+		recorded.Exposures[0].Disposition != ae.ExposureEvidenceApplied {
+		t.Fatalf("%+v %v", recorded, err)
+	}
 }
 
 func TestInjectIsNothingToInjectThenInjected(t *testing.T) {
@@ -476,6 +603,44 @@ func TestInjectIsNothingToInjectThenInjected(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != "NothingToInject" || got[1] != "Injected" {
 		t.Fatalf("inject outcomes %v", got)
+	}
+}
+
+// treatedIDs are random IDs the holdout assigns to the treatment arm at rate 0.5 with the default salt.
+func treatedIDs() ae.UUID {
+	for {
+		if id := ae.NewRandomUUID(); ae.AssignHoldout(id, ae.DefaultHoldoutSalt, 0.5) == ae.HoldoutTreatment {
+			return id
+		}
+	}
+}
+
+func TestAHeldOutRunIsWithheldAndItsAssignmentIsRecordHoldoutWithNoSpan(t *testing.T) {
+	s := enable(t)
+	file := names(t)
+	drive(t, newStore(t), maf.Options{Holdout: maf.HoldoutOptions{Rate: 1}}, ticket, nextTicket)
+	var got []any
+	for _, span := range s.spans.GetSpans() {
+		if span.Name == "agentexperience.inject" {
+			got = append(got, attributes(span)[telemetry.AttributeOutcome])
+		}
+		if span.Name == "agentexperience.record_holdout" {
+			t.Error("record_holdout is measurements only, no span")
+		}
+	}
+	if len(got) != 2 || got[0] != "NothingToInject" || got[1] != "Withheld" {
+		t.Fatalf("inject outcomes %v", got)
+	}
+	recorded := counted(s.points(t), "record_holdout")
+	if len(recorded) != 1 || recorded[0].attributes["outcome"] != "Recorded" || recorded[0].value != 1 {
+		t.Fatalf("record_holdout %v", recorded)
+	}
+	pinned, ok := file.operation("record_holdout")
+	if !ok || !slices.Contains(pinned.Outcomes, "Recorded") || pinned.Span {
+		t.Fatalf("record_holdout in the file: %+v", pinned)
+	}
+	if len(counted(s.points(t), "record_injection")) != 0 {
+		t.Error("a withheld block was recorded as injected")
 	}
 }
 

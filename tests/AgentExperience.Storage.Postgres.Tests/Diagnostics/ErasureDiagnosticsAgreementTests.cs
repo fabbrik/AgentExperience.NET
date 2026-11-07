@@ -56,6 +56,10 @@ public class ErasureDiagnosticsAgreementTests
         "GrantAccessPurge",
         "RecordSeal",
         "AuthorshipBackfill",
+        "SignatureBackfill",
+        "SignatureWrite",
+        "SkippedOutcome",
+        "SqlStateAttribute",
         "SealedCountAttribute",
         "BackfilledCountAttribute",
         "ErasedCountAttribute",
@@ -105,14 +109,16 @@ public class ErasureDiagnosticsAgreementTests
 
         Assert.NotEmpty(coreOperations);
         Assert.Equal(
-            ["delete", "retention.sweep", "grant.purge", "grant.access.purge", "record.seal", "record.authorship.backfill"],
-            [ErasureDiagnostics.Delete, ErasureDiagnostics.RetentionSweep, ErasureDiagnostics.GrantPurge, ErasureDiagnostics.GrantAccessPurge, ErasureDiagnostics.RecordSeal, ErasureDiagnostics.AuthorshipBackfill]);
+            ["delete", "retention.sweep", "grant.purge", "grant.access.purge", "record.seal", "record.authorship.backfill", "record.signature.backfill", "record.signature.write"],
+            [ErasureDiagnostics.Delete, ErasureDiagnostics.RetentionSweep, ErasureDiagnostics.GrantPurge, ErasureDiagnostics.GrantAccessPurge, ErasureDiagnostics.RecordSeal, ErasureDiagnostics.AuthorshipBackfill, ErasureDiagnostics.SignatureBackfill, ErasureDiagnostics.SignatureWrite]);
         Assert.DoesNotContain(ErasureDiagnostics.Delete, coreOperations);
         Assert.DoesNotContain(ErasureDiagnostics.RetentionSweep, coreOperations);
         Assert.DoesNotContain(ErasureDiagnostics.GrantPurge, coreOperations);
         Assert.DoesNotContain(ErasureDiagnostics.GrantAccessPurge, coreOperations);
         Assert.DoesNotContain(ErasureDiagnostics.RecordSeal, coreOperations);
         Assert.DoesNotContain(ErasureDiagnostics.AuthorshipBackfill, coreOperations);
+        Assert.DoesNotContain(ErasureDiagnostics.SignatureBackfill, coreOperations);
+        Assert.DoesNotContain(ErasureDiagnostics.SignatureWrite, coreOperations);
     }
 
     /// <summary>The classification tables agree, arm for arm, including the two-token arm the adapter never exercises itself.</summary>

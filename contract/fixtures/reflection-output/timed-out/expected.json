@@ -1,0 +1,9 @@
+{
+  "outcome": "Quarantined",
+  "reflectionFailure": {
+    "kind": "TimedOut",
+    "causeType": null,
+    "message": "The model did not answer the reflection request within the configured timeout."
+  },
+  "screening": null
+}

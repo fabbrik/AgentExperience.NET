@@ -15,7 +15,8 @@ public static class AgentExperienceInMemoryServiceCollectionExtensions
     /// <summary>
     /// Registers <see cref="InMemoryExperienceRecordStore"/> as the singleton <see cref="IExperienceRecordStore"/>,
     /// <see cref="InMemoryExperienceCandidateSource"/> over that same store as the singleton
-    /// <see cref="IExperienceCandidateSource"/>, and an in-memory reuse-feedback ledger as the singleton
+    /// <see cref="IExperienceCandidateSource"/>, <see cref="InMemoryExperienceSignatureSource"/> over that same store as
+    /// the singleton <see cref="IExperienceSignatureSource"/>, and an in-memory reuse-feedback ledger as the singleton
     /// <see cref="IExperienceReuseFeedbackStore"/>. <b>For development and tests only.</b>
     /// </summary>
     /// <remarks>
@@ -110,6 +111,13 @@ public static class AgentExperienceInMemoryServiceCollectionExtensions
         {
             registration.Check(provider);
             return new InMemoryExperienceCandidateSource(provider.GetRequiredService<InMemoryExperienceRecordStore>());
+        });
+
+        // Story 28.2: the optional signature port, over the same records.
+        services.TryAddSingleton<IExperienceSignatureSource>(provider =>
+        {
+            registration.Check(provider);
+            return new InMemoryExperienceSignatureSource(provider.GetRequiredService<InMemoryExperienceRecordStore>());
         });
 
         services.TryAddSingleton<IExperienceReuseFeedbackStore>(provider =>

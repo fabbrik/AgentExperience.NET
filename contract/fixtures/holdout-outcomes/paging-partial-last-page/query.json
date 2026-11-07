@@ -1,0 +1,12 @@
+{
+  "description": "Eight rows read three at a time: the third page has two rows, fewer than the limit, so the read stops there.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "limit": 3
+}

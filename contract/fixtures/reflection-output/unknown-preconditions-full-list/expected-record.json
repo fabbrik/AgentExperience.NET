@@ -1,0 +1,199 @@
+{
+  "columns": {
+    "experience_id": "6af89ca3-2517-8997-a9e0-dfffe2f683b7",
+    "source_run_id": "00000173-0000-4000-8000-000000000000",
+    "tenant_id": "contract-tenant",
+    "application_id": "contract-app",
+    "project_id": "contract-project",
+    "team_id": null,
+    "agent_id": "refund-agent",
+    "user_id": null,
+    "task_id": "refund-stuck-pending",
+    "status": "Validated",
+    "reuse_confidence": 0.6666666666666666,
+    "supporting_validations": 1,
+    "contradictions": 0,
+    "revision": 1,
+    "created_at": "2026-03-02T09:00:30+00:00",
+    "updated_at": "2026-03-02T09:00:30+00:00",
+    "payload_version": 1
+  },
+  "payload": {
+    "taskSummary": "Refund ticket 42 is stuck in pending",
+    "attempts": [
+      {
+        "attemptId": "00000173-0000-4000-8000-0000000000a0",
+        "sequenceNumber": 0,
+        "startedAt": "2026-03-02T09:00:01+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000173-0000-4000-8000-00000000c000",
+            "sequenceNumber": 0,
+            "toolName": "run_refund_check",
+            "arguments": {},
+            "startedAt": "2026-03-02T09:00:01+00:00",
+            "duration": "00:00:01.2500000",
+            "result": null,
+            "error": "System.InvalidOperationException: the refund lock is held by another worker"
+          }
+        ],
+        "result": null,
+        "error": "System.InvalidOperationException: the refund lock is held by another worker"
+      },
+      {
+        "attemptId": "00000173-0000-4000-8000-0000000000a1",
+        "sequenceNumber": 1,
+        "startedAt": "2026-03-02T09:00:05+00:00",
+        "duration": "00:00:03.5000000",
+        "toolCalls": [
+          {
+            "toolCallId": "00000173-0000-4000-8000-00000000c100",
+            "sequenceNumber": 0,
+            "toolName": "wait_for_lock",
+            "arguments": {},
+            "startedAt": "2026-03-02T09:00:05+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "Lock released; see https://status.example.com/incident/42 (host 10.0.0.7).",
+            "error": null
+          },
+          {
+            "toolCallId": "00000173-0000-4000-8000-00000000c101",
+            "sequenceNumber": 1,
+            "toolName": "run_refund_check",
+            "arguments": {},
+            "startedAt": "2026-03-02T09:00:06+00:00",
+            "duration": "00:00:01.2500000",
+            "result": "refund issued",
+            "error": null
+          }
+        ],
+        "result": "Refund issued.",
+        "error": null
+      }
+    ],
+    "outcome": {
+      "status": "Verified",
+      "evidence": [
+        {
+          "evidenceId": "00000173-0000-4000-8000-00000000e100",
+          "verificationRoundId": "0000007e-0000-4000-8000-000000000001",
+          "artifactRevision": "rev-1",
+          "checkId": "refund-issued",
+          "kind": "integration-test",
+          "result": "Pass",
+          "producer": "contract-ci",
+          "detail": "all assertions passed",
+          "capturedAt": "2026-03-02T09:00:25+00:00"
+        }
+      ],
+      "reason": "Every required check conclusively resolved to Pass in the host-closed verification round for the current artifact revision.",
+      "evaluatedAt": "2026-03-02T09:00:30+00:00"
+    },
+    "completionScore": 1,
+    "reflection": {
+      "reflectionId": "bacd4b71-19c9-89d9-8bfa-264e69dcb89d",
+      "experienceRunId": "00000173-0000-4000-8000-000000000000",
+      "lesson": "Wait for the refund lock.",
+      "successfulApproaches": [],
+      "failedApproaches": [],
+      "preconditions": [
+        "Model precondition 1.",
+        "Model precondition 2.",
+        "Model precondition 3.",
+        "Model precondition 4.",
+        "Model precondition 5.",
+        "Model precondition 6.",
+        "Model precondition 7.",
+        "Model precondition 8.",
+        "Model precondition 9.",
+        "Model precondition 10.",
+        "Model precondition 11.",
+        "Model precondition 12.",
+        "Model precondition 13.",
+        "Model precondition 14.",
+        "Model precondition 15.",
+        "Model precondition 16.",
+        "Model precondition 17.",
+        "Model precondition 18.",
+        "Model precondition 19.",
+        "Model precondition 20.",
+        "Model precondition 21.",
+        "Model precondition 22.",
+        "Model precondition 23.",
+        "Model precondition 24.",
+        "Model precondition 25.",
+        "Model precondition 26.",
+        "Model precondition 27.",
+        "Model precondition 28.",
+        "Model precondition 29.",
+        "Model precondition 30.",
+        "Model precondition 31.",
+        "3 further environment preconditions were not captured and are unknown."
+      ],
+      "warnings": [
+        "Model warning 1.",
+        "Model warning 2.",
+        "Model warning 3.",
+        "Model warning 4.",
+        "Model warning 5.",
+        "Model warning 6.",
+        "Model warning 7.",
+        "Model warning 8.",
+        "Model warning 9.",
+        "Model warning 10.",
+        "Model warning 11.",
+        "Model warning 12.",
+        "Model warning 13.",
+        "Model warning 14.",
+        "Model warning 15.",
+        "Model warning 16.",
+        "Model warning 17.",
+        "Model warning 18.",
+        "Model warning 19.",
+        "Model warning 20.",
+        "Model warning 21.",
+        "Model warning 22.",
+        "Model warning 23.",
+        "Model warning 24.",
+        "Model warning 25.",
+        "Model warning 26.",
+        "Model warning 27.",
+        "Model warning 28.",
+        "Model warning 29.",
+        "Model warning 30.",
+        "Model warning 31.",
+        "3 further environment preconditions were not captured and are unknown."
+      ],
+      "reuseGuidance": null,
+      "evidenceIds": [
+        "00000173-0000-4000-8000-00000000e100"
+      ],
+      "verificationStatus": "Verified",
+      "completionScore": 1,
+      "verificationRuleVersion": "1.0.0",
+      "producer": "AgentExperience.ChatClientExperienceReflector/1.0.0 (gpt-4o-2024-08-06)",
+      "createdAt": "2026-03-02T09:00:30+00:00",
+      "authorship": "Model"
+    },
+    "environment": {
+      "hostName": "contract-host",
+      "runtimeVersion": "",
+      "operatingSystem": " ",
+      "applicationVersion": "1.0.0",
+      "metadata": {
+        "region": "",
+        "zone": "eu-1",
+        "agentexperience.model": " "
+      }
+    },
+    "provenance": {
+      "source": "contract-fixture",
+      "sourceVersion": "1",
+      "recordedAt": "2026-03-02T09:00:00+00:00",
+      "correlationId": null
+    },
+    "closedRoundId": "0000007e-0000-4000-8000-000000000001",
+    "origin": "Finalized"
+  }
+}

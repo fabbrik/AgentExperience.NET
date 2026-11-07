@@ -1,0 +1,12 @@
+{
+  "description": "runModel is the run's own record's environment metadata entry agentexperience.model, and lessonModel the named lesson's: null when the entry is absent, empty or white space only; any other value is returned exactly as stored, untrimmed.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "limit": 1000
+}

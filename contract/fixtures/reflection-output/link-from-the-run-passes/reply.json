@@ -1,0 +1,18 @@
+{
+  "modelId": "https://api.example.com/v1/models/x",
+  "messages": [
+    {
+      "role": "assistant",
+      "contents": [
+        {
+          "type": "text",
+          "text": "{\"lesson\":\"Read https://status.example.com/incident/42 first; status.example.com and 10.0.0.7 report the lock.\",\"warnings\":[\"See status.example.com.\"]}",
+          "callId": null,
+          "name": null
+        }
+      ]
+    }
+  ],
+  "throws": false,
+  "delayMilliseconds": 0
+}

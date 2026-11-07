@@ -1,0 +1,13 @@
+[
+  "Refund ticket 42 is stuck in pending",
+  "refund-issued",
+  "run_refund_check",
+  "System.InvalidOperationException: the refund lock is held by another worker",
+  "System.InvalidOperationException: the refund lock is held by another worker",
+  "wait_for_lock",
+  "Lock released; see https://status.example.com/incident/42 (host 10.0.0.7).",
+  "run_refund_check",
+  "refund issued",
+  "Refund issued.",
+  "region"
+]

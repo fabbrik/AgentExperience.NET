@@ -46,11 +46,27 @@
 //     one, implement ae.Embedder (ModelID, Dimension, Embed) over your provider's client and set Options.Embedder; no
 //     embedding model is a dependency of this module.
 //
+//   - The injection holdout (contract 1.8), with Options.Holdout. On a deterministic share (Rate) of captured runs whose
+//     block names a record, the block is built and then withheld: no message, no exposure, no injection record, and
+//     OnWithheld is told what was withheld. Every assigned run, either arm, is recorded in the background through a
+//     store that is an ae.HoldoutRecorder (the PostgreSQL store, the in-memory store), so the .NET benefit estimate
+//     compares the runs of every language. Off by default (rate 0): nothing then changes.
+//
+//   - Acting on the benefit estimate (contract 1.10), with Options.Benefit. A lesson the holdout measured Hurts is not
+//     injected (InjectionResult.Omitted names it, MeasuredHarmful), a scope measured Hurts gets no block, and with
+//     PreferMeasuredHelpful the lessons measured Helps go first. The estimate is cached per scope and principal and
+//     refreshed in a goroutine (the benefit_refresh operation), never on the request path. Off by default.
+//
 //   - The lessons view (contract 1.7), read-only. LessonsOf(&config) (or the provider's Lessons method, or NewLessons for
 //     the options alone) lists what has been learned in a scope: each lesson's status, confidence and checks, the
 //     block text an agent would be shown for it, why retrieval would not use it, and when it was last injected, from
 //     the same store, block options and model-authored flag the injection uses. It reads only, in the caller's own
-//     scope and authorization, and renders no HTML.
+//     scope and authorization. ae.RenderLessonsHTML renders a page as .NET's lessons page, and Lessons.ExportMeasured
+//     keeps a Markdown file of the lessons the holdout measured as helping (contract 1.14).
+//
+//   - The model-backed reflector (contract 1.14), with Options.Reflector and NewChatClientReflector: a model writes the
+//     lesson of a verified run, through structured output, and finalization screens it with the content guard. Off by
+//     default: the deterministic reflector writes it.
 //
 // Nothing here returns an error or panics into the agent: a store, identity, classifier or verifier failure means no
 // block, or no stored record, and is reported through OnInjectionFailure or OnCaptureFailure. Only the invocation's
@@ -63,10 +79,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"runtime"
 	"runtime/debug"
+	"slices"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -184,10 +203,48 @@ type InjectionFailure struct {
 // bytes, whether the search returned more candidates than the ranking considers, and, when the vector channel did not
 // contribute (contract 1.6), why: nil when it did.
 type InjectionResult struct {
+	// Outcome is the inject operation's outcome, as .NET's InjectionOutcome names it: Injected; NothingToInject (no
+	// task text, or every ranked record was omitted: Omitted says why, for example MeasuredHarmful); Withheld (in
+	// what OnWithheld is told); or, with nothing injected, Skipped (no identity, or ResolveRequest returned nil),
+	// Failed, RetrievalFailed, RetrievalTimedOut or RetrievalDenied (contract 1.13: every attempt is reported, as .NET's
+	// OnContextInjected is; OnInjectionFailure still says why one failed). Unlike .NET's ExperienceInjectionResult it
+	// carries no CorrelationId or Failure: the request's correlation ID is on the inject span, and a failure's reason
+	// and error go to OnInjectionFailure.
+	Outcome        string
 	ExperienceIDs  []ae.UUID
 	ByteCount      int
 	Truncated      bool
 	VectorFallback *ae.VectorFallback
+	// WithheldExperienceIDs are the records a held-out invocation's block named and did not deliver (contract 1.8):
+	// set only in what OnWithheld is told, where ExperienceIDs is empty and ByteCount 0.
+	WithheldExperienceIDs []ae.UUID
+	// Omitted are the ranked records that were not put in the block, and why, in the order .NET reports them:
+	// MeasuredHarmful (contract 1.10), ModelAuthored, ToolUnavailable and RiskClassExceeded (the capability gate, contract
+	// 1.13), OverRecordLimit, HostDenied (the host's DecideInjection, contract 1.13) and OverByteBudget.
+	Omitted []ae.OmittedRecord
+	// Excluded are the candidates ranking left out, and why (contract 1.12, .NET's Excluded): IneligibleStatus,
+	// ModelAuthored or Expired (RetrievalPolicy.MaxAge). Not a complete account: what the search filtered never shows.
+	Excluded []ae.Exclusion
+}
+
+// HoldoutOptions are the injection holdout (contract 1.8). The zero value is off.
+//
+// Who takes part: only an invocation captured by the same UseAgentExperience call (whose run started), whose built
+// block names at least one record. The arm is ae.AssignHoldout(run ID, Salt, Rate), a pure function, so every
+// invocation of a run lands in the same arm, and the arm is the one the .NET and Python integrations assign. A
+// held-out invocation gets no block (the block is built first, so what is withheld is exactly what would have been
+// delivered): no message, no exposure on the run, no injection record; the inject outcome is Withheld and OnWithheld
+// is told. A treatment invocation is injected exactly as without the holdout. Both arms are recorded in the
+// background (the record_holdout operation, OnHoldoutRecorded), and never delay or fail the invocation. This port has
+// no withdrawal notices, so a held-out invocation never owes any.
+type HoldoutOptions struct {
+	// Rate is the share of eligible runs whose block is withheld, from 0 (off, the default) to 1 (every one). NaN, a
+	// negative rate or one above 1 is refused by UseAgentExperience.
+	Rate float64
+	// Salt is mixed into every assignment, so two experiments over the same runs draw different arms;
+	// ae.DefaultHoldoutSalt when empty. (Go cannot tell an empty salt from an unset one, so empty means the default
+	// here, where .NET and Python refuse an explicitly empty salt.) Changing it re-draws every run.
+	Salt string
 }
 
 // IdentityContext is what an identity resolver is given: the agent and the caller's session. Never model output.
@@ -209,6 +266,11 @@ type Options struct {
 	// Verify decides from your own facts whether a run is stored (see ae.ToolSucceeded and the others); without it
 	// nothing is stored.
 	Verify ae.Verifier
+	// Reflector writes the lesson of a verified run (contract 1.14): the deterministic reflector when nil. Opt in to a
+	// model with NewChatClientReflector; its call runs inside FinalizationTimeout, so raise that above the reflector's
+	// own Timeout. A reflector that fails, or whose reflection screening refuses, stores the run Quarantined, with no
+	// lesson (FinalizedExperience.ReflectionFailure, ScreeningRefusal).
+	Reflector ae.Reflector
 	// ClassifyToolResult marks a returned tool call as failed (see ae.ExitCode and ae.HTTPStatus).
 	ClassifyToolResult ae.ToolResultClassifier
 	// TaskID is the task ID runs are captured under; when empty, the agent's name reduced to an identifier, else
@@ -220,22 +282,70 @@ type Options struct {
 	BlockOptions ae.BlockOptions
 	// Environment is the environment runs are recorded under; DefaultEnvironment() when nil.
 	Environment *ae.EnvironmentFingerprint
+	// Model is the model id the agent's chat client runs on (for example openaiprovider.AgentConfig.Model): Microsoft
+	// Agent Framework for Go does not expose it on the built agent, so the host passes it. Every captured run records
+	// it, normalized as ae.NormalizeModel does, under ae.ModelMetadataKey in its environment metadata, for the benefit
+	// estimate's split by model; nothing when empty or blank, or when Environment already sets that key (the host's
+	// value wins). It is bookkeeping only: never a precondition, never in the block, never ranked on.
+	Model string
 	// PreferredEnvironment is the metadata ranking prefers.
 	PreferredEnvironment map[string]string
-	// ExcludeModelAuthored leaves model-authored lessons out of the search and the ranking.
+	// ExcludeModelAuthored leaves model-authored lessons out of the search and the ranking: the same as
+	// ModelAuthoredLessons Exclude (either one excludes).
 	ExcludeModelAuthored bool
+	// ModelAuthoredLessons is .NET's ModelAuthoredLessonPolicy (contract 1.13): Include (when empty) injects a
+	// model-authored lesson inside the fixed Authored:/End authored: fence; Exclude asks retrieval to leave them out
+	// and omits any that arrives (ae.OmittedModelAuthored, no detail), before the record limit, so it takes no slot.
+	ModelAuthoredLessons ae.ModelAuthoredLessonPolicy
+	// ReceivingAgent is .NET's ReceivingAgentCapabilities (contract 1.13): what the agent receiving the block can and
+	// may do. A record whose verified approach calls a tool it lacks, or one above its MaxRiskClass, is omitted
+	// (ae.OmittedToolUnavailable, ae.OmittedRiskClassExceeded, no detail) before the record limit, so it takes no slot;
+	// while the gate can reject and a request names its own Limit, retrieval is asked for a wider window. With
+	// UseRunTools the tool check reads the tools the SDK hands the context providers (the configuration's Tools and
+	// the run's agent.WithTool options, and any an earlier context provider added). nil gates nothing. Validated and
+	// copied by UseAgentExperience.
+	ReceivingAgent *ae.ReceivingAgent
+	// ResolveRequest is .NET's ResolveRequest / ResolveRequestAsync (contract 1.13): called once per invocation the
+	// identity resolved for, before retrieval, it returns what to retrieve. nil (the default) retrieves the derived
+	// task text with PreferredEnvironment. A nil request with a nil error skips the invocation (inject outcome
+	// Skipped); an error or a panic injects nothing (OnInjectionFailure, outcome Failed), and the invocation runs; the
+	// caller's own cancellation (an error while ctx is done) propagates from Invoking. A request retrieval refuses (a
+	// blank or overlong task text, a Limit outside 1..CandidateLimit) is RetrievalFailed. No timeout is put around it.
+	ResolveRequest func(ctx context.Context, rc RequestContext) (*InjectionRequest, error)
+	// DecideInjection is .NET's DecideInjection (contract 1.13): asked about each selected record, in order, before the
+	// block is rendered. It can only deny: a denial omits the record as ae.OmittedHostDenied with the decision's
+	// Reason as its detail (ae.HostDeniedDetail when empty), and it fails closed: the zero InjectionDecision, or a
+	// panic, denies. A denied record has taken its slot. Synchronous, as .NET's.
+	DecideInjection func(DecisionContext) InjectionDecision
 	// MessageRole is the injected message's role: message.RoleUser (when empty) or message.RoleSystem.
 	MessageRole message.Role
 	// DisableInjection captures without injecting.
 	DisableInjection bool
 	// OnCaptureFailure, OnInjectionFailure, OnInjected, OnFinalized and OnInjectionRecorded are told what happened;
-	// each is optional, and a panic in one is recovered and ignored. OnInjectionRecorded is called from the
-	// recording's own goroutine.
+	// each is optional, and a panic in one is recovered and ignored. OnInjected is told every invocation that
+	// injects (Outcome Injected) and, as .NET reports it, every one that searched or derived nothing to inject
+	// (Outcome NothingToInject, with the omissions: a scope measured Hurts shows here). OnInjectionRecorded is called
+	// from the recording's own goroutine.
 	OnCaptureFailure    func(CaptureFailure)
 	OnInjectionFailure  func(InjectionFailure)
 	OnInjected          func(InjectionResult)
 	OnFinalized         func(ae.FinalizedExperience)
 	OnInjectionRecorded func(InjectionRecordResult)
+	// Holdout is the injection holdout (contract 1.8); off when zero.
+	Holdout HoldoutOptions
+	// Benefit is acting on the holdout's benefit estimate (contract 1.10, .NET's ExperienceBenefitPolicy); off when
+	// zero. With Enabled, a lesson measured Hurts is omitted (InjectionResult.Omitted, ae.OmittedMeasuredHarmful), a
+	// scope measured Hurts gets no block, and with PreferMeasuredHelpful the lessons measured Helps go first. The
+	// estimate is cached per scope and principal and refreshed in a goroutine, never on the request path: the first
+	// invocation of a key is injected as with the policy off. A zero duration or minimum means its default; a negative
+	// one, or a RefreshTimeout over a day, is refused by UseAgentExperience even with the policy off. The holdout runs
+	// exactly as without it. The lessons view reads its measured benefit over the same Window and MinimumRunsPerArm.
+	Benefit ae.BenefitPolicy
+	// OnWithheld is told, for a held-out invocation, what its block withheld (InjectionResult.WithheldExperienceIDs);
+	// OnHoldoutRecorded how recording each assignment ended, from the recording's own goroutine. Each is optional, and a
+	// panic in one is recovered and ignored.
+	OnWithheld        func(InjectionResult)
+	OnHoldoutRecorded func(HoldoutRecordResult)
 	// Clock is ae.Now when nil.
 	Clock func() ae.Instant
 	// NewID is ae.NewRandomUUID when nil.
@@ -249,8 +359,21 @@ type Options struct {
 	// ones included.
 	Embedder ae.Embedder
 	// MinVectorRelevance, when set (0 to 1), drops vector candidates whose relevance is below it; text candidates
-	// never are.
+	// never are. When set, it replaces RetrievalPolicy.MinimumVectorRelevance (as .NET's one-call setup lets
+	// MinimumSemanticSimilarity replace the policy's floor).
 	MinVectorRelevance *float64
+	// RetrievalPolicy is .NET's RetrievalPolicy (contract 1.12): the retrieval's Timeout (the text search and the
+	// vector channel together: past it, even when only the vector channel is still running, the invocation gets no
+	// block and the inject outcome RetrievalTimedOut; VectorTimeout is a fallback only when strictly shorter), the
+	// search's confidence floor, candidate limit and minimum of matched terms, the expiry (MaxAge, from a record's
+	// last lifecycle activity), the recency half-life, the abandoned-search cap and the vector floor. The zero policy
+	// is .NET's RetrievalPolicy.Default; a zero field means its default (a zero MaxAge, no expiry), and a negative or
+	// otherwise invalid one is refused by UseAgentExperience (an *ae.PolicyError naming the .NET option).
+	RetrievalPolicy ae.RetrievalPolicy
+	// ConfidenceDecay is .NET's ConfidenceDecayPolicy (contract 1.12): the confidence component fades by the lesson's
+	// age (from CreatedAt) at its domain's half-life. Ranking only: it never excludes. nil decays nothing. Copied
+	// when UseAgentExperience is called.
+	ConfidenceDecay *ae.ConfidenceDecayPolicy
 	// VectorTimeout bounds the vector channel of one injection in all (embedding the task text, then searching):
 	// past it the injection answers from text alone and reports ProviderUnavailable or VectorSearchFailed.
 	// DefaultVectorTimeout when 0.
@@ -292,6 +415,37 @@ type settings struct {
 	vectorSlots chan struct{}
 	// index counts the background embedding writes started and not yet ended.
 	index tracker
+	// benefit is the cache the benefit policy acts on (contract 1.10); nil with the policy off.
+	benefit *benefitCache
+	// retrieval and decay are the resolved retrieval policy and confidence decay (contract 1.12; decay nil for none).
+	retrieval ae.RetrievalPolicy
+	decay     *ae.ConfidenceDecayPolicy
+	// gate is the receiving agent's capability gate, validated and copied (contract 1.13); nil for none.
+	gate *ae.CapabilityGate
+	// measured are the memory providers UseMeasuredMemory wrapped on this configuration (contract 1.11), whose
+	// records the context provider's Close waits for too.
+	measuredMu sync.Mutex
+	measured   []*MeasuredMemory
+}
+
+// addMeasured registers a wrapper whose records Close waits for.
+func (s *settings) addMeasured(w *MeasuredMemory) {
+	s.measuredMu.Lock()
+	defer s.measuredMu.Unlock()
+	s.measured = append(s.measured, w)
+}
+
+// waitMeasured waits for every registered wrapper's records, or for ctx to be done.
+func (s *settings) waitMeasured(ctx context.Context) error {
+	s.measuredMu.Lock()
+	wrappers := slices.Clone(s.measured)
+	s.measuredMu.Unlock()
+	for _, w := range wrappers {
+		if err := w.Close(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func newSettings(options Options) (*settings, error) {
@@ -326,6 +480,11 @@ func newSettings(options Options) (*settings, error) {
 	if err := options.BlockOptions.Validate(); err != nil {
 		return nil, err
 	}
+	if options.BlockOptions.MaxBytes != 0 && options.BlockOptions.MaxBytes <= ae.BlockOverheadBytes {
+		// As .NET's ExperienceInjectionLimits refuses it: a budget no record could ever fit in (0 is the default).
+		return nil, fmt.Errorf("maf: the block's byte budget must exceed the block's fixed header and footer (%d bytes), "+
+			"or no record could ever fit", ae.BlockOverheadBytes)
+	}
 	switch options.MessageRole {
 	case "":
 		options.MessageRole = message.RoleUser
@@ -354,17 +513,64 @@ func newSettings(options Options) (*settings, error) {
 	if options.MinVectorRelevance != nil && !(*options.MinVectorRelevance >= 0 && *options.MinVectorRelevance <= 1) {
 		return nil, errors.New("maf: the minimum vector relevance must be a number from 0 to 1")
 	}
+	retrievalPolicy := options.RetrievalPolicy
+	if options.MinVectorRelevance != nil {
+		// As .NET's one-call setup: the integration's floor replaces the policy's.
+		retrievalPolicy.MinimumVectorRelevance = options.MinVectorRelevance
+	}
+	resolvedPolicy, err := retrievalPolicy.Resolved()
+	if err != nil {
+		return nil, fmt.Errorf("maf: %w", err)
+	}
+	var resolvedDecay *ae.ConfidenceDecayPolicy
+	if options.ConfidenceDecay != nil {
+		decay, err := options.ConfidenceDecay.Resolved()
+		if err != nil {
+			return nil, fmt.Errorf("maf: %w", err)
+		}
+		resolvedDecay = &decay
+	}
+	if math.IsNaN(options.Holdout.Rate) || options.Holdout.Rate < 0 || options.Holdout.Rate > 1 {
+		return nil, errors.New("maf: the holdout rate must be a number from 0 to 1")
+	}
+	if err := options.Benefit.Validate(); err != nil {
+		return nil, fmt.Errorf("maf: %w", err)
+	}
+	if err := options.ModelAuthoredLessons.Validate(); err != nil {
+		return nil, fmt.Errorf("maf: %w", err)
+	}
+	if options.ExcludeModelAuthored {
+		options.ModelAuthoredLessons = ae.ModelAuthoredExclude
+	}
+	if options.ModelAuthoredLessons == ae.ModelAuthoredExclude {
+		options.ExcludeModelAuthored = true
+	} else {
+		options.ModelAuthoredLessons = ae.ModelAuthoredInclude
+	}
+	gate, err := ae.NewCapabilityGate(options.ReceivingAgent)
+	if err != nil {
+		return nil, fmt.Errorf("maf: %w", err)
+	}
+	options.ReceivingAgent = nil // copied into gate; the host's value is never read again
+	if options.Holdout.Salt == "" {
+		options.Holdout.Salt = ae.DefaultHoldoutSalt
+	}
 	if options.Clock == nil {
 		options.Clock = ae.Now
 	}
 	if options.NewID == nil {
 		options.NewID = ae.NewRandomUUID
 	}
-	s := &settings{Options: options, vectorSlots: make(chan struct{}, MaxVectorCalls)}
+	s := &settings{Options: options, vectorSlots: make(chan struct{}, MaxVectorCalls), retrieval: resolvedPolicy,
+		decay: resolvedDecay, gate: gate}
 	if options.Environment != nil {
 		s.environment = *options.Environment
 	} else {
 		s.environment = DefaultEnvironment()
+	}
+	s.environment = ae.EnvironmentWithModel(s.environment, ae.NormalizeModel(options.Model))
+	if options.Benefit.Enabled {
+		s.benefit = newBenefitCache(options.Store, options.Benefit, options.Clock)
 	}
 	return s, nil
 }

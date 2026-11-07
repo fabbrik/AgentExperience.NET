@@ -1,0 +1,9 @@
+{
+  "description": "An empty RuleId is refused.",
+  "operation": "rule",
+  "engine": {
+    "ruleId": "",
+    "ruleVersion": "1",
+    "score": "bayes"
+  }
+}

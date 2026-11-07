@@ -1,0 +1,1055 @@
+{
+  "description": "fraction = SHA-256 over the run ID's 16 bytes in RFC 4122 order, then the salt's UTF-8 bytes; the digest's first 8 bytes as a big-endian unsigned integer, divided by 2^64. The arm at a rate is Holdout when the rate is at least 1 or the fraction is strictly below the rate, else Treatment. Each case's last rate is its own fraction (Treatment).",
+  "cases": [
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "salt": "agentexperience-holdout-v1",
+      "fraction": 0.3139116302163824,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.3139116302163824,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "salt": "another-experiment",
+      "fraction": 0.11746491498819744,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.11746491498819744,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000001",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.3227191130711946,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.3227191130711946,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "11111111-2222-3333-4444-555555555555",
+      "salt": "agentexperience-holdout-v1",
+      "fraction": 0.24520626598382958,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.24520626598382958,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "11111111-2222-3333-4444-555555555555",
+      "salt": "another-experiment",
+      "fraction": 0.7247050572180361,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7247050572180361,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "11111111-2222-3333-4444-555555555555",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.6276963220667475,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.6276963220667475,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+      "salt": "agentexperience-holdout-v1",
+      "fraction": 0.47486808769227573,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.47486808769227573,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+      "salt": "another-experiment",
+      "fraction": 0.27303403484801936,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.27303403484801936,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.8641907994993713,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.8641907994993713,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "salt": "agentexperience-holdout-v1",
+      "fraction": 0.25656011927796707,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.25656011927796707,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "salt": "another-experiment",
+      "fraction": 0.25555657345095495,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.25555657345095495,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.11529094601807732,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.11529094601807732,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "a3bb189e-8bf9-3888-9912-ace4e6543002",
+      "salt": "agentexperience-holdout-v1",
+      "fraction": 0.8913670481238475,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.8913670481238475,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "a3bb189e-8bf9-3888-9912-ace4e6543002",
+      "salt": "another-experiment",
+      "fraction": 0.39780141542168157,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.39780141542168157,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "a3bb189e-8bf9-3888-9912-ace4e6543002",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.9640544881922591,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9640544881922591,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "salt": "agentexperience-holdout-v1",
+      "fraction": 0.8851032471291671,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.8851032471291671,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "salt": "another-experiment",
+      "fraction": 0.2041461241603458,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.2041461241603458,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "c9a646d3-9c61-4cb7-bfcd-ee2522c8f633",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.9254503820007213,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9254503820007213,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000000",
+      "salt": "agentexperience-holdout-v1",
+      "fraction": 0.5296305223489175,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5296305223489175,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000000",
+      "salt": "another-experiment",
+      "fraction": 0.5263229254096095,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5263229254096095,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000000-0000-0000-0000-000000000000",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.14481407134710272,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.14481407134710272,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "salt": "agentexperience-holdout-v1",
+      "fraction": 0.43669852969154666,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.43669852969154666,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "salt": "another-experiment",
+      "fraction": 0.9630482185356171,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.9630482185356171,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.8707286284384999,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.8707286284384999,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000070-0000-4000-8000-000000000101",
+      "salt": "agentexperience-holdout-v1",
+      "fraction": 0.4693754464983426,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.4693754464983426,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000070-0000-4000-8000-000000000101",
+      "salt": "another-experiment",
+      "fraction": 0.30457195442019214,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.30457195442019214,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000070-0000-4000-8000-000000000101",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.7095960841878168,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.7095960841878168,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000070-0000-4000-8000-000000000102",
+      "salt": "agentexperience-holdout-v1",
+      "fraction": 0.8758194381931617,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.8758194381931617,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000070-0000-4000-8000-000000000102",
+      "salt": "another-experiment",
+      "fraction": 0.6667746029514363,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.6667746029514363,
+          "arm": "Treatment"
+        }
+      ]
+    },
+    {
+      "runId": "00000070-0000-4000-8000-000000000102",
+      "salt": "expérience-実験-\uD83E\uDDEA",
+      "fraction": 0.08624673579557662,
+      "arms": [
+        {
+          "rate": 0,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.05,
+          "arm": "Treatment"
+        },
+        {
+          "rate": 0.25,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.5,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.75,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 1,
+          "arm": "Holdout"
+        },
+        {
+          "rate": 0.08624673579557662,
+          "arm": "Treatment"
+        }
+      ]
+    }
+  ]
+}

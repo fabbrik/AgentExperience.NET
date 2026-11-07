@@ -3,7 +3,7 @@ name: Release
 # The one workflow in this repository that may publish (RELEASING.md step 10). A maintainer starts it by pushing a
 # version tag, and nothing else can: no branch push, pull request, schedule or manual dispatch. One tag releases all
 # three languages at one version, from one verified commit. The verify job re-runs the release checks on the tagged
-# commit and uploads what it verified: the six NuGet packages, and the Python sdist and wheel. After a reviewer
+# commit and uploads what it verified: the eight NuGet packages, and the Python sdist and wheel. After a reviewer
 # approves the `nuget-release` environment, the publish job pushes exactly those NuGet files to nuget.org, then tags
 # the six Go modules at the tagged commit and creates the GitHub release. After a reviewer approves the
 # `pypi-release` environment, the publish-pypi job uploads exactly the verified Python files to PyPI.
@@ -240,6 +240,11 @@ jobs:
       # available on the runner for Testcontainers, as in ci.yml.
       - name: Test
         run: dotnet test --no-build --configuration Release
+        # The cross-language contract tests need all three toolchains and run in ci.yml's cross-language-lifecycle job;
+        # here they are skipped on purpose (unset in CI, they would fail rather than pass unrun).
+        env:
+          AGENTEXPERIENCE_CROSS_LANGUAGE_RACE: '0'
+          AGENTEXPERIENCE_CROSS_LANGUAGE_REUSE_FEEDBACK: '0'
 
       # RELEASING.md step 7: pack, and assert against the built packages themselves.
       - name: Pack
@@ -387,7 +392,7 @@ jobs:
           name: release-notes
           path: artifacts/release-notes
 
-      # Six packages and six symbol packages, all at the version the tag names, and nothing else.
+      # Eight packages and eight symbol packages, all at the version the tag names, and nothing else.
       - name: Check the packages are the tagged version
         env:
           VERSION: ${{ needs.verify.outputs.version }}
@@ -397,8 +402,8 @@ jobs:
           total="$(find artifacts/packages -type f | wc -l)"
           nupkg="$(find artifacts/packages -type f -name "*.$VERSION.nupkg" | wc -l)"
           snupkg="$(find artifacts/packages -type f -name "*.$VERSION.snupkg" | wc -l)"
-          if [ "$nupkg" -ne 6 ] || [ "$snupkg" -ne 6 ] || [ "$total" -ne 12 ]; then
-            echo "::error::Expected 6 .nupkg and 6 .snupkg at $VERSION and nothing else; found $nupkg, $snupkg, $total files"
+          if [ "$nupkg" -ne 8 ] || [ "$snupkg" -ne 8 ] || [ "$total" -ne 16 ]; then
+            echo "::error::Expected 8 .nupkg and 8 .snupkg at $VERSION and nothing else; found $nupkg, $snupkg, $total files"
             exit 1
           fi
 

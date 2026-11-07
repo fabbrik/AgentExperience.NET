@@ -82,6 +82,8 @@ which is part of the ordinary `dotnet test` run.
 | `AZURE_OPENAI_DEPLOYMENT` | The deployment name to call. |
 | `OLLAMA_MODEL` | Required with `AGENTEXPERIENCE_LIVE_PROVIDER=ollama`: the model tag, such as `qwen2.5:7b`. Reports name it and a price of zero; a local run costs time, not dollars. |
 | `OLLAMA_HOST` | Optional. Default `localhost:11434`. |
+| `OPENROUTER_API_KEY` | Required with `AGENTEXPERIENCE_LIVE_PROVIDER=openrouter` (chosen only explicitly). Prepaid credit, no subscription. |
+| `OPENROUTER_MODEL` | Required with `openrouter`: a model that supports tool calls, such as `qwen/qwen3-coder`. Set both price variables for a cost estimate; no seed is sent. |
 | `ANTHROPIC_API_KEY` | Anthropic API key. |
 | `ANTHROPIC_MODEL` | Optional. Default `claude-haiku-4-5`, Anthropic's low-cost current model. |
 | `AGENTEXPERIENCE_LIVE_MAX_CALLS` | Hard cap on model calls for the whole run. Default 600 (pre-registered). |
@@ -89,6 +91,8 @@ which is part of the ordinary `dotnet test` run.
 | `AGENTEXPERIENCE_LIVE_MIN_CALL_INTERVAL_MS` | Optional pacing between calls, for a free tier's requests-per-minute limit. |
 | `AGENTEXPERIENCE_LIVE_PRICE_INPUT_PER_MTOK`, `..._OUTPUT_PER_MTOK` | USD per million tokens for the cost estimate. Built in only for `gemini-3.1-flash-lite` ($0.25 / $1.50, standard paid tier) and `claude-haiku-4-5` ($1.00 / $5.00, Anthropic API standard rates). |
 | `AGENTEXPERIENCE_LIVE_RESULTS_DIR` | Optional. Default `experiments/AgentExperience.LiveReuse/results`. |
+| `AGENTEXPERIENCE_LIVE_LEARNING_MODEL` | Optional, real-task experiment only (amendment 7): the model its learning runs use, on the same provider and held to the same name rule as the provider's model variable. Unset, or equal to the provider's model, is a same-model run. The other experiments ignore it. |
+| `AGENTEXPERIENCE_LIVE_LEARNING_PRICE_INPUT_PER_MTOK`, `..._OUTPUT_PER_MTOK` | Optional, with a learning model: its USD per million tokens. Without them (and no built-in price for that model) the report says the learning phase's cost was not estimated. |
 
 **Keys.** The key is read from the environment, handed to the provider SDK in one place (the OpenAI SDK's
 `ApiKeyCredential`, or the Anthropic client's `ApiKey`, set explicitly together with its base URL so that no ambient
@@ -408,6 +412,12 @@ trials and then every call returned HTTP 429 after the retries (a quota, not a b
 it was also recorded as complete; **amendment 2** adds 429 to the refusal statuses and lets the ledger void a run, and that
 run is voided. Neither provider has a complete real-task run yet.
 
+**Cross-model run (amendment 7): lessons learned by `anthropic/claude-haiku-4.5`, used by `openai/gpt-oss-120b`, 2026-10-27, `RealTaskNoDemonstratedBenefit`** ([report](results/realtask-openrouter-anthropic-claude-haiku-4.5-to-openai-gpt-oss-120b-2026-10-27-run4.md), 3,433 calls, about USD 1.22 actually charged; the report's estimate at list prices is USD 4.43). Haiku verified 11 of 12 learning runs, so 11 services were evaluated (limit 4 excluded). The confirmatory verdict is no demonstrated benefit: against no memory, the lessons saved tool calls on 5 services and cost them on 4 (p = 0.50), although the verified share rose from 0.455 to 0.576. Against the placebo (the same block with the fix file withheld) the content comparison **passed**: fewer tool calls on 7 of 8 services that differed (p = 0.035) and a verified share of 0.576 against 0.364. The mismatched-cluster control did worse than no memory (0.303 verified), as expected. Read together: what a lesson *says* helps, and a block that says the wrong thing or nothing useful costs more than no block, which is the case the library's holdout is built to catch in production. Earlier attempts that day are in the ledger: two stopped by OpenRouter's new-account limit of 20 requests a minute (voided or stopped), and one stopped at the pre-registered 11-million-token cap after 66 of 156 trials; this run raised the cap to 28 million through `AGENTEXPERIENCE_LIVE_MAX_TOKENS` and spaced calls 3.3 s apart.
+
+**First complete run: `openai/gpt-oss-120b` through OpenRouter, 2026-10-26, `RealTaskInconclusive`** ([report](results/realtask-openrouter-openai-gpt-oss-120b-2026-10-26.md), 1,812 calls, an estimated USD 1.59 at USD 0.15/0.60 per million tokens). Six of the twelve learning runs verified, and the pricing and reports clusters produced no record, so six services were excluded against a limit of four and no comparison was gated. Reported, not gated: memory-enabled and memory-disabled verified the same share of trials (12/18 each), the placebo did worst (8/18), and enabled used about one tool call fewer on average. It is this model's confirmatory run, and it shows nothing either way. Earlier attempts that day on `qwen/qwen3-coder` are voided in the ledger: OpenRouter answered some calls with no choices (amendment 6) and routed others to a host that was down, which the provider now avoids with `provider.require_parameters`.
+
+**A dropped connection stops a run (amendment 5, 2026-10-25).** A failure with no HTTP answer (a dropped or refused connection) is retried like a 429 or 5xx and, after 3 in a row, stops the run as "provider refused" instead of recording a run of errored trials as complete. A model-call timeout is neither.
+
 **Local models (amendment 4, 2026-10-23).** A run on the `ollama` provider uses one repeat per service instead of three and a 15-minute per-step timeout instead of 3 minutes (`localModel` in the pre-registration), because a local GPU takes about a minute per call. The gate is unchanged; the report shows the repeats actually used. A local run is a noisier test of one model and does not replace a hosted-model run.
 
 **The task set is now `realtask@2` (amendment 3, 2026-10-21).** The 70 completed Haiku trials on `realtask@1` showed a floor effect:
@@ -466,10 +476,41 @@ A live run appends to `results/realtask-ledger.tsv` before its first model call 
 result. The pre-registered caps are 2,600 model calls and 11,000,000 tokens (a scripted run uses about 1,200 calls).
 `AGENTEXPERIENCE_LIVE_PYTHON` names a different interpreter.
 
+**A cross-model run (amendment 7, 2026-10-27).** Does a lesson one model learned help another model that never learned it?
+Set `AGENTEXPERIENCE_LIVE_LEARNING_MODEL` and the twelve learning runs call that model while every evaluation trial calls
+the provider's model; both go through the same provider plumbing (for OpenRouter, the routing preference and the
+empty-completion guard), share one budget and follow the same retry and refusal rules. Nothing else changes: task set,
+tools, conditions, metric, gate and limits are those above.
+
+```bash
+# Offline: a second scripted stand-in plays the learning model; the report shows the pair.
+AGENTEXPERIENCE_LIVE_LEARNING_MODEL=anthropic/claude-haiku-4.5 \
+  dotnet run --project experiments/AgentExperience.LiveReuse -c Release -- --experiment realtask --scripted
+
+# Live (spends money; never run in CI): learn with Claude Haiku 4.5, evaluate with gpt-oss-120b, both through OpenRouter.
+export AGENTEXPERIENCE_LIVE_PROVIDER=openrouter
+export OPENROUTER_API_KEY=...
+export OPENROUTER_MODEL=openai/gpt-oss-120b
+export AGENTEXPERIENCE_LIVE_PRICE_INPUT_PER_MTOK=... AGENTEXPERIENCE_LIVE_PRICE_OUTPUT_PER_MTOK=...
+export AGENTEXPERIENCE_LIVE_LEARNING_MODEL=anthropic/claude-haiku-4.5
+export AGENTEXPERIENCE_LIVE_LEARNING_PRICE_INPUT_PER_MTOK=... AGENTEXPERIENCE_LIVE_LEARNING_PRICE_OUTPUT_PER_MTOK=...
+dotnet run --project experiments/AgentExperience.LiveReuse -c Release -- --experiment realtask
+```
+
+The ledger's model column holds the pair, `learning→evaluation` (for example
+`anthropic/claude-haiku-4.5→openai/gpt-oss-120b`), so the confirmatory slot is per (provider, learning model, evaluation
+model): the first complete run of that triple, never a same-model run of either model. The report is
+`results/realtask-<provider>-<learning model>-to-<evaluation model>-<date>.md`; its title and *Run* table name both models
+and the prices used for each phase, and *Tokens and cost* prices each phase at its own model's rates. The by-condition and
+learning-run tables are unchanged. The *Model identities the provider reported* row lists both phases' identities together.
+
 **What the offline run shows.** The scripted engineer goes to the first file path a block names. It needs 3 tool calls with
 the lesson and 9 without, the sibling's lesson ranks first in every memory-enabled block, and the mismatched control gets no
 benefit. That proves the harness (the library's capture, verification, reflection, storage, retrieval and injection run for
 real; the stores, conditions and gate behave as registered). It says nothing about any model.
+
+A recipe arm (story 28.4: the working call's vouched result excerpt on top of the path) is proposed in
+[recipe-amendment.md](recipe-amendment.md); it is not registered and has not been run.
 
 ### What a result will and will not show
 

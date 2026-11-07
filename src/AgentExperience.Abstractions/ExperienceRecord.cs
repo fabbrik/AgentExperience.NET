@@ -95,7 +95,9 @@ public sealed record ExperienceRecord(
     /// and evidence count, the <see cref="Environment"/> (all fields and attributes), the <see cref="Attempts"/> (each
     /// tool call's name and argument values, numbers by exact decimal value, and each attempt's and each tool call's
     /// error text), and the reflection's free text, evidence count, <see cref="Reflection.Authorship"/> and
-    /// <see cref="Reflection.Producer"/>. From <c>0.1.0-preview.7</c> through <c>0.1.0-preview.9</c> it signed claims
+    /// <see cref="Reflection.Producer"/>. With <c>SignClaimsVersion</c> = 4 it signs claims version 4
+    /// (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV4"/>), which also covers each call's recipe excerpt
+    /// (<see cref="ToolCallRecord.RecipeExcerpt"/>); no earlier version does. From <c>0.1.0-preview.7</c> through <c>0.1.0-preview.9</c> it signed claims
     /// version 2 (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV2"/>), the same digest without any error
     /// text: such a signature still confirms content, but its record's error text is unsigned. With signing configured,
     /// a record whose content no version 3 or version 2 signature confirms is treated as model-authored wherever
@@ -114,7 +116,7 @@ public sealed record ExperienceRecord(
 /// the record (see <see cref="ExperienceRecord.ProvenanceSignature"/>).
 /// </summary>
 /// <param name="KeyId">The identifier of the host-held key it was made under. Never the key itself.</param>
-/// <param name="Algorithm">The signature algorithm and claims version: <see cref="HmacSha256ClaimsV3"/> for every signature finalization makes by default since <c>0.1.0-preview.10</c>, <see cref="HmacSha256ClaimsV2"/> for one made by <c>0.1.0-preview.7</c> through <c>0.1.0-preview.9</c> (or during a rollout), or <see cref="HmacSha256"/> for one made before them.</param>
+/// <param name="Algorithm">The signature algorithm and claims version: <see cref="HmacSha256ClaimsV4"/> under <c>SignClaimsVersion</c> = 4, <see cref="HmacSha256ClaimsV3"/> for every signature finalization makes by default since <c>0.1.0-preview.10</c>, <see cref="HmacSha256ClaimsV2"/> for one made by <c>0.1.0-preview.7</c> through <c>0.1.0-preview.9</c> (or during a rollout), or <see cref="HmacSha256"/> for one made before them.</param>
 /// <param name="Value">The signature bytes.</param>
 public sealed record ExperienceProvenanceSignature(string KeyId, string Algorithm, ReadOnlyMemory<byte> Value)
 {
@@ -142,6 +144,15 @@ public sealed record ExperienceProvenanceSignature(string KeyId, string Algorith
     /// default since <c>0.1.0-preview.10</c>. Like version 2, it uses only the characters a store accepts in an algorithm.
     /// </summary>
     public const string HmacSha256ClaimsV3 = "HMAC-SHA256.aexp-prov.v3";
+
+    /// <summary>
+    /// HMAC-SHA256 over claims version 4 (<c>aexp-prov:v4</c>): the version 3 claims, with a content digest that also
+    /// covers each tool call's <see cref="ToolCallRecord.RecipeExcerpt"/>, so the excerpt a <c>Worked:</c> attempt's
+    /// <c>[returned: "…"]</c> marker shows is signed. Finalization signs it under <c>SignClaimsVersion</c> = 4 only. With
+    /// signing configured, injection shows an excerpt only when a version 4 signature confirms it, so a record signed
+    /// version 3 renders without its excerpts.
+    /// </summary>
+    public const string HmacSha256ClaimsV4 = "HMAC-SHA256.aexp-prov.v4";
 
     /// <summary>
     /// Value equality over every member, <see cref="Value"/> compared byte by byte rather than by the memory it

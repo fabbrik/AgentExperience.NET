@@ -1,0 +1,464 @@
+{
+  "minimumRunsPerArm": 2,
+  "overall": {
+    "treatment": {
+      "runs": 28,
+      "successes": 15,
+      "rate": 0.5357142857142857
+    },
+    "holdout": {
+      "runs": 28,
+      "successes": 13,
+      "rate": 0.4642857142857143
+    },
+    "difference": 0.0714285714285714,
+    "lower": -0.17971792878121223,
+    "upper": 0.31038825750911425,
+    "verdict": "NoEvidence",
+    "unverified": 0,
+    "pending": 0,
+    "mixedArm": 0
+  },
+  "lessons": [
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000011",
+      "comparison": {
+        "treatment": {
+          "runs": 6,
+          "successes": 3,
+          "rate": 0.5
+        },
+        "holdout": {
+          "runs": 6,
+          "successes": 3,
+          "rate": 0.5
+        },
+        "difference": 0,
+        "lower": -0.4417772560364358,
+        "upper": 0.4417772560364358,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "model-b",
+          "runModel": "model-a",
+          "comparison": {
+            "treatment": {
+              "runs": 3,
+              "successes": 0,
+              "rate": 0
+            },
+            "holdout": {
+              "runs": 3,
+              "successes": 3,
+              "rate": 1
+            },
+            "difference": -1,
+            "lower": -1,
+            "upper": -0.20592328245977842,
+            "verdict": "Hurts",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        },
+        {
+          "lessonModel": "model-b",
+          "runModel": "model-b",
+          "comparison": {
+            "treatment": {
+              "runs": 3,
+              "successes": 3,
+              "rate": 1
+            },
+            "holdout": {
+              "runs": 3,
+              "successes": 0,
+              "rate": 0
+            },
+            "difference": 1,
+            "lower": 0.20592328245977842,
+            "upper": 1,
+            "verdict": "Helps",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000012",
+      "comparison": {
+        "treatment": {
+          "runs": 4,
+          "successes": 0,
+          "rate": 0
+        },
+        "holdout": {
+          "runs": 4,
+          "successes": 4,
+          "rate": 1
+        },
+        "difference": -1,
+        "lower": -1,
+        "upper": -0.3071897350036087,
+        "verdict": "Hurts",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "unknown",
+          "runModel": "model-a",
+          "comparison": {
+            "treatment": {
+              "runs": 1,
+              "successes": 0,
+              "rate": 0
+            },
+            "holdout": {
+              "runs": 1,
+              "successes": 1,
+              "rate": 1
+            },
+            "difference": -1,
+            "lower": -1,
+            "upper": 0.12210872068194178,
+            "verdict": "NoEvidence",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        },
+        {
+          "lessonModel": "unknown",
+          "runModel": "model-b",
+          "comparison": {
+            "treatment": {
+              "runs": 3,
+              "successes": 0,
+              "rate": 0
+            },
+            "holdout": {
+              "runs": 3,
+              "successes": 3,
+              "rate": 1
+            },
+            "difference": -1,
+            "lower": -1,
+            "upper": -0.20592328245977842,
+            "verdict": "Hurts",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000013",
+      "comparison": {
+        "treatment": {
+          "runs": 4,
+          "successes": 4,
+          "rate": 1
+        },
+        "holdout": {
+          "runs": 4,
+          "successes": 0,
+          "rate": 0
+        },
+        "difference": 1,
+        "lower": 0.3071897350036087,
+        "upper": 1,
+        "verdict": "Helps",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "model-a",
+          "runModel": "model-a",
+          "comparison": {
+            "treatment": {
+              "runs": 4,
+              "successes": 4,
+              "rate": 1
+            },
+            "holdout": {
+              "runs": 4,
+              "successes": 0,
+              "rate": 0
+            },
+            "difference": 1,
+            "lower": 0.3071897350036087,
+            "upper": 1,
+            "verdict": "Helps",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000014",
+      "comparison": {
+        "treatment": {
+          "runs": 3,
+          "successes": 0,
+          "rate": 0
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 3,
+          "rate": 1
+        },
+        "difference": -1,
+        "lower": -1,
+        "upper": -0.20592328245977842,
+        "verdict": "Hurts",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "unknown",
+          "runModel": "unknown",
+          "comparison": {
+            "treatment": {
+              "runs": 3,
+              "successes": 0,
+              "rate": 0
+            },
+            "holdout": {
+              "runs": 3,
+              "successes": 3,
+              "rate": 1
+            },
+            "difference": -1,
+            "lower": -1,
+            "upper": -0.20592328245977842,
+            "verdict": "Hurts",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000015",
+      "comparison": {
+        "treatment": {
+          "runs": 3,
+          "successes": 0,
+          "rate": 0
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 3,
+          "rate": 1
+        },
+        "difference": -1,
+        "lower": -1,
+        "upper": -0.20592328245977842,
+        "verdict": "Hurts",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "model-c",
+          "runModel": "model-c",
+          "comparison": {
+            "treatment": {
+              "runs": 3,
+              "successes": 0,
+              "rate": 0
+            },
+            "holdout": {
+              "runs": 3,
+              "successes": 3,
+              "rate": 1
+            },
+            "difference": -1,
+            "lower": -1,
+            "upper": -0.20592328245977842,
+            "verdict": "Hurts",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000016",
+      "comparison": {
+        "treatment": {
+          "runs": 8,
+          "successes": 8,
+          "rate": 1
+        },
+        "holdout": {
+          "runs": 8,
+          "successes": 0,
+          "rate": 0
+        },
+        "difference": 1,
+        "lower": 0.5412184220047868,
+        "upper": 1,
+        "verdict": "Helps",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      },
+      "byModelPair": [
+        {
+          "lessonModel": "model-d",
+          "runModel": "model-d",
+          "comparison": {
+            "treatment": {
+              "runs": 8,
+              "successes": 8,
+              "rate": 1
+            },
+            "holdout": {
+              "runs": 8,
+              "successes": 0,
+              "rate": 0
+            },
+            "difference": 1,
+            "lower": 0.5412184220047868,
+            "upper": 1,
+            "verdict": "Helps",
+            "unverified": 0,
+            "pending": 0,
+            "mixedArm": 0
+          }
+        }
+      ]
+    }
+  ],
+  "byConsumingModel": [
+    {
+      "model": "model-a",
+      "comparison": {
+        "treatment": {
+          "runs": 8,
+          "successes": 4,
+          "rate": 0.5
+        },
+        "holdout": {
+          "runs": 8,
+          "successes": 4,
+          "rate": 0.5
+        },
+        "difference": 0,
+        "lower": -0.4027453071631501,
+        "upper": 0.4027453071631501,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      }
+    },
+    {
+      "model": "model-b",
+      "comparison": {
+        "treatment": {
+          "runs": 6,
+          "successes": 3,
+          "rate": 0.5
+        },
+        "holdout": {
+          "runs": 6,
+          "successes": 3,
+          "rate": 0.5
+        },
+        "difference": 0,
+        "lower": -0.4417772560364358,
+        "upper": 0.4417772560364358,
+        "verdict": "NoEvidence",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      }
+    },
+    {
+      "model": "model-c",
+      "comparison": {
+        "treatment": {
+          "runs": 3,
+          "successes": 0,
+          "rate": 0
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 3,
+          "rate": 1
+        },
+        "difference": -1,
+        "lower": -1,
+        "upper": -0.20592328245977842,
+        "verdict": "Hurts",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      }
+    },
+    {
+      "model": "model-d",
+      "comparison": {
+        "treatment": {
+          "runs": 8,
+          "successes": 8,
+          "rate": 1
+        },
+        "holdout": {
+          "runs": 8,
+          "successes": 0,
+          "rate": 0
+        },
+        "difference": 1,
+        "lower": 0.5412184220047868,
+        "upper": 1,
+        "verdict": "Helps",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      }
+    },
+    {
+      "model": "unknown",
+      "comparison": {
+        "treatment": {
+          "runs": 3,
+          "successes": 0,
+          "rate": 0
+        },
+        "holdout": {
+          "runs": 3,
+          "successes": 3,
+          "rate": 1
+        },
+        "difference": -1,
+        "lower": -1,
+        "upper": -0.20592328245977842,
+        "verdict": "Hurts",
+        "unverified": 0,
+        "pending": 0,
+        "mixedArm": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,155 @@
+{
+  "description": "The ledger reads an Experience Record for one reason: a submission naming a record erased in its own scope is Invalid, naming the exposure by the position the caller gave it, and writes nothing, not even the submission row. A record erased in another scope is invisible to that read, and one that never existed is recorded like any other: no foreign key.",
+  "steps": [
+    {
+      "erase": {
+        "experienceId": "00001172-0000-4000-8000-000000000030",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "deletedAt": "2026-03-02T12:30:00+00:00"
+      },
+      "clock": "2026-03-02T13:00:00+00:00"
+    },
+    {
+      "erase": {
+        "experienceId": "00001172-0000-4000-8000-000000000032",
+        "scope": {
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "other-agent",
+          "userId": null
+        },
+        "deletedAt": "2026-03-02T12:30:00+00:00"
+      },
+      "clock": "2026-03-02T13:01:00.0000003+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001172-0000-4000-8000-00000000f021",
+          "runId": "00001172-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Unknown",
+          "attributionSource": "None",
+          "reviewerIdentity": null,
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": null,
+          "rationale": null,
+          "evidenceIds": [],
+          "attributedAt": null,
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000031",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001172-0000-4000-8000-00000000003f",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000030",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T13:02:00.0000006+00:00"
+    },
+    {
+      "record": {
+        "authorization": {
+          "principalId": "contract-principal",
+          "tenantId": "contract-tenant",
+          "applicationId": "contract-app",
+          "projectId": "contract-project",
+          "teamId": null,
+          "agentId": "refund-agent",
+          "userId": null
+        },
+        "feedback": {
+          "feedbackId": "00001172-0000-4000-8000-00000000f022",
+          "runId": "00001172-0000-4000-8000-000000005100",
+          "scope": {
+            "tenantId": "contract-tenant",
+            "applicationId": "contract-app",
+            "projectId": "contract-project",
+            "teamId": null,
+            "agentId": "refund-agent",
+            "userId": null
+          },
+          "runOutcome": "Verified",
+          "claimedBenefit": "Unknown",
+          "benefit": "Unknown",
+          "attributionSource": "None",
+          "reviewerIdentity": null,
+          "evaluatorId": null,
+          "verificationRoundId": null,
+          "assessmentId": null,
+          "rationale": null,
+          "evidenceIds": [],
+          "attributedAt": null,
+          "measure": {
+            "kind": "tool-calls",
+            "value": 7
+          },
+          "trialLabel": null,
+          "observedAt": "2026-03-02T09:30:00+00:00",
+          "exposures": [
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000032",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001172-0000-4000-8000-000000000031",
+              "attributed": false,
+              "evidenceId": null
+            },
+            {
+              "experienceId": "00001172-0000-4000-8000-00000000003f",
+              "attributed": false,
+              "evidenceId": null
+            }
+          ]
+        }
+      },
+      "clock": "2026-03-02T13:03:00.0000009+00:00"
+    }
+  ]
+}

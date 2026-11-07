@@ -1,0 +1,29 @@
+{
+  "selected": [
+    "000000a0-0000-4000-8000-000000000011",
+    "000000a0-0000-4000-8000-000000000013",
+    "000000a0-0000-4000-8000-000000000016"
+  ],
+  "injected": [
+    "000000a0-0000-4000-8000-000000000011",
+    "000000a0-0000-4000-8000-000000000013",
+    "000000a0-0000-4000-8000-000000000016"
+  ],
+  "omitted": [
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000012",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this lesson as hurting: runs given it verified less often than runs it was withheld from."
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000014",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this lesson as hurting: runs given it verified less often than runs it was withheld from."
+    },
+    {
+      "experienceId": "000000a0-0000-4000-8000-000000000015",
+      "reason": "MeasuredHarmful",
+      "detail": "The injection holdout measured this lesson as hurting: runs given it verified less often than runs it was withheld from."
+    }
+  ]
+}

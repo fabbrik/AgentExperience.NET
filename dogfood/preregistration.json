@@ -1,0 +1,69 @@
+{
+  "experiment": "dogfood",
+  "version": "dogfood@1",
+  "registeredOn": "2026-10-30",
+  "registeredBefore": "No dogfood session had run when this was written: the hooks were not installed and no config was trusted.",
+  "claim": "Claude Code sessions that build this repository verify their work more often when the library hands them the lessons (and failure hints) earlier verified sessions left, than sessions from which the holdout withholds them.",
+  "notAClaimAbout": "Whether the lessons make sessions faster or cheaper (secondary, never gated), whether they help other repositories, other agents or other models, or whether a passing test suite means the change was right.",
+  "design": {
+    "config": {
+      "file": "dogfood/aexp.config.json",
+      "sha256": "1ab26a261f55958f16038ffac6f967712071df0666b5a99eeda9b4c5c65c1fda",
+      "use": "Copied to .aexp/config.json and approved by the maintainer with 'aexp trust'. The copy must equal this file byte for byte (cmp) for the whole experiment."
+    },
+    "verifier": {
+      "file": "dogfood/verify.sh",
+      "sha256": "992ac372a3f521f0cd621535f25aa72de8c1a3a9233891dabde3664fbdb8b153",
+      "what": "dotnet build, then every Docker-free test project of CONTRIBUTING.md with --no-build; exit 0 only if all pass; stops at the first failure; killed after 540 s.",
+      "hashNote": "Both digests are SHA-256 of the file with line endings normalized to LF. A test fails when either file changes without this file changing too."
+    },
+    "agent": "Claude Code with the hooks of 'aexp setup claude-code' on the maintainer's machine, whatever model the maintainer's sessions use (the model is not recorded per run and not controlled).",
+    "work": "The maintainer's ordinary work on this repository: stories, fixes, reviews. No task is chosen or written for the experiment."
+  },
+  "randomization": {
+    "unit": "One Claude Code session.",
+    "how": "The holdout draws a session's arm once, from the session ID with the library's default salt, at rate 0.5 (injection.holdoutRate). Every run of the session gets a run ID the library assigns to that same arm, so a session is given lessons on every turn or on none. Hints follow the same arm.",
+    "assigned": "Only runs that had a lesson or a hint to give are recorded to the holdout. Runs with nothing to give are in neither arm and are not counted."
+  },
+  "unitOfAnalysis": {
+    "unit": "One run: a turn of a session, from a prompt to the first Stop after the agent changed something (any tool outside the read-only list, or a Bash command not starting with a read-only prefix).",
+    "clustering": "Runs are clustered by session: the runs of one session share its arm, its task and often its outcome. The library's estimate treats every run as independent, so its interval is narrower than the evidence supports, and a long session weighs as much as many short ones. The store does not record which session a run came from, so the number of sessions behind the counts cannot be reported by aexp; the reading says so beside the verdict. The hook log (.aexp/hook.log, rotated past 256 KB) names each recent session's runs and may be used to give an approximate session count, labelled as approximate."
+  },
+  "outcome": {
+    "primary": "The verifier's verdict at the end of the run: exit 0 is Verified (success), any other exit is Failed (failure). Decided by the Stop hook, or by 'aexp finalize --run <id>' for a run the Stop hook stored without a verdict (verifier timed out, config not trusted at the time).",
+    "notTheOutcome": "The model's own report, a tool call's result, or any later edit."
+  },
+  "comparison": {
+    "estimate": "AgentExperienceBenefit.EstimateAsync, as 'aexp benefit' and 'aexp benefit --markdown' print it: treatment minus holdout success rate, with the 95% Newcombe hybrid-score interval built from each arm's Wilson interval.",
+    "verdict": "Helps if the interval lies wholly above zero, Hurts if wholly below, NoEvidence otherwise.",
+    "minimumVerifiedRunsPerArm": 20
+  },
+  "looks": {
+    "first": "Read once, when both arms first have at least 20 runs with a verified outcome. The reading is the page 'aexp benefit --markdown dogfood/results-<date>.md' writes that day, committed as it is. That is the result.",
+    "second": "A second look when both arms first have at least 50 verified runs, stated as a second look. Two looks at a 95% interval each raise the chance of a false Helps or Hurts above 5%; the second page says so, and a verdict that appears only at the second look is reported as weaker than one at the first.",
+    "noMore": "No other reading is reported as a result. 'aexp benefit' prints the counts and the verdict together, so the verdict may be seen before a reading point; that never moves a reading point or decides whether a reading is made.",
+    "deadline": "If both arms have not reached 20 verified runs by 2027-04-30, the page is written that day and reported as it is (NoEvidence for lack of runs, most likely)."
+  },
+  "secondaryMeasures": {
+    "toolCallsPerSession": "Tool calls per run, and per session where the session can be told, by arm.",
+    "failedCallsBeforeFirstGreen": "Failed tool calls before the first verified run of a session, by arm.",
+    "rule": "Reported, never gated, never used to decide a verdict. No tool computes them yet: if none exists at the first reading, they are reported as not measured rather than computed after seeing the primary result."
+  },
+  "exclusions": {
+    "pending": "Runs stored but never finalized (no verifier verdict): counted as Pending on the page, left out of the rates.",
+    "unknown": "Runs finalized without a verdict: counted as Unverified, left out of the rates.",
+    "mixedArm": "Runs recorded in both arms (the rate or salt changed mid-run): counted as Mixed arm, left out of the rates. The config fixes both, so there should be none.",
+    "readOnlySessions": "Sessions that never changed anything never run the verifier and leave no run: they are not counted anywhere.",
+    "unpinned": "A run whose ID could not be pinned to its session's arm (4,096 tries) gets no block or hint and is not recorded to the holdout."
+  },
+  "reporting": "The repository README's 'Real work' section states the result of each reading, whichever way it comes out, and links the committed page. Until the first reading it says there is no result yet.",
+  "limitations": [
+    "One repository, one maintainer, one agent product. The sessions are the maintainer's real work, so their tasks differ in kind and difficulty and are not a sample of anything wider.",
+    "The agent can edit the code the verifier runs: the tests, and dogfood/verify.sh itself. Permission rules (dogfood/README.md) make that visible and harder, not impossible; a reviewer sees every change in the pull request.",
+    "A run whose tests pass is a success even if its change was wrong or untested, and a run whose tests were already failing for another reason is a failure.",
+    "The maintainer sees which sessions got a block (it is in the session's context), so the comparison is not blind.",
+    "Runs are clustered by session and the interval ignores that (see unitOfAnalysis.clustering).",
+    "Claude Code's model, settings and the library itself change over the months this runs; the arms share those changes, the comparison does not control for them."
+  ],
+  "amendments": []
+}

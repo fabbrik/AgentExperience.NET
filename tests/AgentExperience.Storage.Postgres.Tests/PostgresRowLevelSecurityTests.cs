@@ -23,6 +23,8 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
     [
         "experience_records", "lifecycle_events", "confidence_evidence", "experience_grants", "experience_grant_events",
         "experience_grant_access", "reuse_feedback", "reuse_feedback_exposures", "experience_injections",
+        "experience_holdout_assignments", "experience_provider_holdout_assignments", "experience_failure_signatures",
+        "experience_runs",
     ];
 
     // ---------------------------------------------------------------- nothing declared
@@ -196,6 +198,97 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
 
         // The same row for its own live record, in its own scope, is admitted.
         Assert.Equal(1L, await ScalarAsync<long>(world.Owner, null, "SELECT count(*) FROM agent_experience.experience_injections WHERE experience_id = @id", ("id", a)));
+    }
+
+    // ---------------------------------------------------------------- provider holdout assignments (story 25.8)
+
+    [Fact]
+    public async Task A_provider_holdout_row_is_written_and_read_only_inside_the_declared_bounds()
+    {
+        await using var world = await RlsWorldAsync("rls_prov_holdout");
+        var tenantA = NewTenant();
+        var tenantB = NewTenant();
+        var store = new PostgresExperienceRecordStore(world.App);
+        var runA = Guid.NewGuid();
+        foreach (var (tenant, run) in new[] { (tenantA, runA), (tenantB, Guid.NewGuid()) })
+        {
+            Assert.Equal(
+                ExperienceStoreOutcome.Committed,
+                (await store.RecordProviderHoldoutAssignmentAsync(
+                    Authorize(tenant), Scope(tenant), new ProviderHoldoutAssignment(run, "mem0", HoldoutArm.Holdout, DateTimeOffset.UtcNow), CancellationToken.None)).Outcome);
+        }
+
+        const string All = "SELECT count(*) FROM agent_experience.experience_provider_holdout_assignments";
+        Assert.Equal(2L, await ScalarAsync<long>(world.Owner, All));
+        Assert.Equal(1L, await ScalarAsync<long>(world.App, Authorize(tenantA), All));
+        Assert.Equal(1L, await ScalarAsync<long>(world.App, Authorize(tenantB), All));
+        Assert.Equal(0L, await ScalarAsync<long>(world.App, All));
+
+        // The insert with its scope replaced by tenant B's, run in tenant A's bounds, is refused.
+        var refused = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            world.App,
+            Authorize(tenantA),
+            PostgresExperienceRecordStore.RecordProviderHoldoutAssignmentSql,
+            [("run_id", Guid.NewGuid()), ("provider_key", "mem0"), ("arm", "Holdout"), ("assigned_at", DateTimeOffset.UtcNow)],
+            Scope(tenantB)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, refused.SqlState);
+
+        // The application role can neither update nor remove a row: the table is append and read.
+        var update = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            world.App, Authorize(tenantA), "UPDATE agent_experience.experience_provider_holdout_assignments SET arm = 'Treatment' WHERE run_id = @id", ("id", runA)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, update.SqlState);
+        var removal = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            world.App, Authorize(tenantA), "DELETE FROM agent_experience.experience_provider_holdout_assignments WHERE run_id = @id", ("id", runA)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, removal.SqlState);
+    }
+
+    // ---------------------------------------------------------------- holdout assignments (story 25.1)
+
+    [Fact]
+    public async Task A_broken_holdout_statement_is_cut_back_to_the_declared_bounds_and_each_tenant_reads_only_its_own_rows()
+    {
+        await using var world = await RlsWorldAsync("rls_holdout");
+        var tenantA = NewTenant();
+        var tenantB = NewTenant();
+        var a = await world.CreateAsync(tenantA, Scope(tenantA));
+        var b = await world.CreateAsync(tenantB, Scope(tenantB));
+        var store = new PostgresExperienceRecordStore(world.App);
+        var at = DateTimeOffset.UtcNow;
+        Assert.Equal(
+            ExperienceStoreOutcome.Committed,
+            (await store.RecordHoldoutAssignmentAsync(Authorize(tenantB), Scope(tenantB), new HoldoutAssignment(Guid.NewGuid(), HoldoutArm.Treatment, [new(b, 0)], at), CancellationToken.None)).Outcome);
+
+        // The insert with its exact-scope predicate replaced by "true", run in tenant A's bounds naming both records:
+        // tenant B's record is invisible to it, so only tenant A's row is written.
+        var broken = BreakScopePredicate(PostgresExperienceRecordStore.RecordHoldoutAssignmentSql);
+        var runA = Guid.NewGuid();
+        Assert.Equal(1, await ExecuteAsync(
+            world.App,
+            Authorize(tenantA),
+            broken,
+            [("run_id", runA), ("arm", "Holdout"), ("experience_ids", new[] { a, b }), ("revisions", new[] { 0L, 0L }), ("assigned_at", at)],
+            Scope(tenantA)));
+        const string All = "SELECT count(*) FROM agent_experience.experience_holdout_assignments";
+        Assert.Equal(2L, await ScalarAsync<long>(world.Owner, All));
+        Assert.Equal(1L, await ScalarAsync<long>(world.App, Authorize(tenantA), All));
+        Assert.Equal(1L, await ScalarAsync<long>(world.App, Authorize(tenantB), All));
+        Assert.Equal(0L, await ScalarAsync<long>(world.App, All));
+
+        // A hand-written row claiming tenant B's record under tenant A's own scope columns is refused.
+        const string Insert =
+            "INSERT INTO agent_experience.experience_holdout_assignments (run_id, experience_id, revision, arm, tenant_id, application_id, " +
+            "project_id, team_id, agent_id, user_id, assigned_at) VALUES (gen_random_uuid(), @id, 0, 'Holdout', @tenant_id, @application_id, " +
+            "@project_id, @team_id, @agent_id, @user_id, now())";
+        var claimed = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(world.App, Authorize(tenantA), Insert, ("id", b), Scope(tenantA)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, claimed.SqlState);
+
+        // The application role can neither update nor remove a row: the table is append and read.
+        var update = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            world.App, Authorize(tenantA), "UPDATE agent_experience.experience_holdout_assignments SET arm = 'Treatment' WHERE run_id = @id", ("id", runA)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, update.SqlState);
+        var removal = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            world.App, Authorize(tenantA), "DELETE FROM agent_experience.experience_holdout_assignments WHERE run_id = @id", ("id", runA)));
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, removal.SqlState);
     }
 
     [Fact]
@@ -397,6 +490,10 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
         { "reuse_feedback", "feedback_id" },
         { "reuse_feedback_exposures", "experience_id" },
         { "experience_injections", "experience_id" },
+        { "experience_holdout_assignments", "run_id" },
+        { "experience_provider_holdout_assignments", "run_id" },
+        { "experience_failure_signatures", "experience_id" },
+        { "experience_runs", "run_id" },
     };
 
     [Theory]
@@ -419,9 +516,10 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
         Assert.Contains("row-level security", refused.MessageText, StringComparison.Ordinal);
 
         // The grant's recipient (tenant B, team-b) sees exactly what a grant confers: the live grant, its own access
-        // row and the shared record -- never the owner's history, evidence, feedback, or the grant's audit trail.
+        // row, the shared record and the record's failure signatures (story 28.2), which a signature search reads with
+        // it -- never the owner's history, evidence, feedback, or the grant's audit trail.
         var recipient = Authorize(tenantB) with { TeamId = "team-b" };
-        var recipientSees = table is "experience_records" or "experience_grants" or "experience_grant_access";
+        var recipientSees = table is "experience_records" or "experience_grants" or "experience_grant_access" or "experience_failure_signatures";
         Assert.Equal(recipientSees ? 1L : 0L, await ScalarAsync<long>(world.App, recipient, $"SELECT count(*) FROM agent_experience.{table}"));
         if (table != "experience_grant_access")
         {
@@ -964,9 +1062,10 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
                 CancellationToken.None);
 
         /// <summary>Creates a record through the store, as the application role, and returns its ID.</summary>
-        public async Task<Guid> CreateAsync(string tenant, Scope scope, DateTimeOffset? createdAt = null)
+        public async Task<Guid> CreateAsync(string tenant, Scope scope, DateTimeOffset? createdAt = null, bool withFailedCall = false)
         {
             var record = Minimal(scope, createdAt: createdAt is { } at ? new DateTimeOffset(at.UtcTicks - (at.UtcTicks % 10), TimeSpan.Zero) : null);
+            record = withFailedCall ? WithFailedCall(record) : record;
             var created = await new PostgresExperienceRecordStore(App).CreateAsync(Authorize(tenant), record, CancellationToken.None);
             Assert.Equal(ExperienceStoreOutcome.Created, created.Outcome);
             return record.ExperienceId;
@@ -1006,15 +1105,16 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
 
         /// <summary>
         /// One row in every covered table for <paramref name="tenant"/>, through the stores as the application role
-        /// where they write it and as the owner where only a hand-written row will do: a team-a record with a lifecycle
-        /// event and a piece of evidence, a grant to team-b with its issue event, team-b's audited read of it, and a
+        /// where they write it and as the owner where only a hand-written row will do: a team-a record with a failure
+        /// signature, a lifecycle event and a piece of evidence, a grant to team-b with its issue event, team-b's audited read of it, and a
         /// feedback submission with its exposure.
         /// </summary>
         public async Task SeedEveryTableAsync(string tenant)
         {
             var owner = Scope(tenant, team: "team-a");
             var recipient = Scope(tenant, team: "team-b");
-            var record = await CreateAsync(tenant, owner);
+            // Story 28.2: with a failed call, so the store writes its failure signature beside it.
+            var record = await CreateAsync(tenant, owner, withFailedCall: true);
             await CommitAsync(tenant, owner, record);
 
             await using (var evidence = Owner.CreateCommand(
@@ -1057,6 +1157,21 @@ public sealed class PostgresRowLevelSecurityTests(PostgresFixture fixture)
             var injected = await new PostgresExperienceRecordStore(App).RecordInjectionAsync(
                 Authorize(tenant), owner, [record], DateTimeOffset.UtcNow, CancellationToken.None);
             Assert.Equal(ExperienceStoreOutcome.Committed, injected.Outcome);
+
+            // Story 25.1: a holdout assignment naming the owner's own record.
+            var assigned = await new PostgresExperienceRecordStore(App).RecordHoldoutAssignmentAsync(
+                Authorize(tenant), owner, new HoldoutAssignment(Guid.NewGuid(), HoldoutArm.Holdout, [new(record, 1)], DateTimeOffset.UtcNow), CancellationToken.None);
+            Assert.Equal(ExperienceStoreOutcome.Committed, assigned.Outcome);
+
+            // Story 25.8: a measured provider's holdout row in the owner's scope.
+            var measured = await new PostgresExperienceRecordStore(App).RecordProviderHoldoutAssignmentAsync(
+                Authorize(tenant), owner, new ProviderHoldoutAssignment(Guid.NewGuid(), "mem0", HoldoutArm.Holdout, DateTimeOffset.UtcNow), CancellationToken.None);
+            Assert.Equal(ExperienceStoreOutcome.Committed, measured.Outcome);
+
+            // Story 28.7: a stored run in the owner's scope.
+            var run = Storage.Conformance.RunStoreConformanceTests.CompletedRun(owner);
+            var saved = await new PostgresExperienceRunStore(App).SaveAsync(Authorize(tenant), run, Guid.NewGuid(), CancellationToken.None);
+            Assert.Equal(ExperienceRunStoreOutcome.Saved, saved.Outcome);
         }
 
         public async ValueTask DisposeAsync()

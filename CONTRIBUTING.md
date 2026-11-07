@@ -46,10 +46,13 @@ dotnet test tests/AgentExperience.Abstractions.Tests
 dotnet test tests/AgentExperience.Core.Tests
 dotnet test tests/AgentExperience.MicrosoftAgentFramework.Tests
 dotnet test tests/AgentExperience.Storage.InMemory.Tests
+dotnet test tests/AgentExperience.Storage.Sqlite.Tests
+dotnet test tests/AgentExperience.Cli.Tests
 dotnet test tests/AgentExperience.ReuseBaseline
 dotnet test tests/AgentExperience.Release.Tests
 dotnet test tests/AgentExperience.Sample.QuickStart.Tests
 dotnet test experiments/AgentExperience.LiveReuse.Tests
+dotnet test experiments/AgentExperience.CiTriage.Tests
 dotnet test tests/AgentExperience.CompatibilityProof --filter "FullyQualifiedName!~Postgres"
 dotnet test tests/AgentExperience.Sample.EndToEnd.Tests --filter "FullyQualifiedName!~Postgres"
 dotnet test tests/AgentExperience.RetrievalQuality --filter "FullyQualifiedName!~Postgres"
@@ -78,6 +81,8 @@ src/
   AgentExperience.Storage.Postgres/         PostgreSQL store, text search, grants, access log, reuse feedback ledger, deletion, crypto-shredding, schema migrator (0001-0003, 0005-0018)
   AgentExperience.Storage.Postgres.Vectors/ pgvector embedding index, conditional writes, scoped re-index, vector search (0004)
   AgentExperience.Storage.InMemory/         development and tests only: in-memory record store, candidate source and reuse-feedback store, guarded to development and test environments
+  AgentExperience.Storage.Sqlite/           one local SQLite file: record store, FTS5 candidate source, signature source, reuse feedback ledger, run store, erasure, schema migrator
+  AgentExperience.Cli/                      the aexp .NET tool: a CLI and an MCP stdio server over the library, for agents outside the Agent Framework
   Shared/                                   source files linked into more than one package (not a project): the core-port validation rules
 tests/
   AgentExperience.Abstractions.Tests/       contract and dependency-boundary tests
@@ -87,6 +92,8 @@ tests/
   AgentExperience.Storage.Postgres.Tests/   store tests, mostly against a PostgreSQL container, and the PostgreSQL run of the conformance suite
   AgentExperience.Storage.Postgres.Vectors.Tests/  embedding index and hybrid retrieval, against a pgvector container
   AgentExperience.Storage.InMemory.Tests/   the in-memory run of the conformance suite, the production guard, search and concurrency; no Docker
+  AgentExperience.Storage.Sqlite.Tests/     the SQLite run of the conformance suite, two connections on one file, erasure, migration, registration; no Docker
+  AgentExperience.Cli.Tests/                the aexp tool end to end: the CLI in process and in a spawned process, the MCP server through the SDK's client; no Docker
   AgentExperience.CompatibilityProof/       executable proofs for MAF hooks, context providers, pgvector, redaction
   AgentExperience.Sample.EndToEnd.Tests/    the sample's seven stages, its determinism, and what it does not claim
   AgentExperience.Sample.QuickStart.Tests/  the quick-start demo in stand-in mode: run 2 fails less because of the injected lesson, and its golden output
@@ -102,6 +109,8 @@ samples/
 experiments/
   AgentExperience.LiveReuse/                opt-in, pre-registered reuse experiment against a real model; never run by CI
   AgentExperience.LiveReuse.Tests/          that experiment's harness, proven offline against scripted models
+  AgentExperience.CiTriage/                 triages this repository's failed CI runs with the library learning and a holdout judging; run by hand
+  AgentExperience.CiTriage.Tests/           that tool, proven offline over fake CI data with a scripted model
 benchmarks/
   AgentExperience.Benchmarks/               BenchmarkDotNet over the hot paths, on the in-memory store and PostgreSQL; run by hand, never by CI (docs/benchmarks.md)
 contract/                                   the language-neutral contract for ports in other languages: record schema, SQL, conformance fixtures
@@ -124,7 +133,7 @@ _sdlc/                                      product brief, PRD, architecture, ep
   The newest-MAF leg and the `floating-dependencies` probe also run, but on a pull request they only report; they gate
   pushes to `main` and the weekly schedule.
 - **Changing a public API is a reviewed diff.** `tests/AgentExperience.Release.Tests` holds an approval baseline of all
-  six packages' public surface, and any change fails it. If the change is deliberate, regenerate the baseline with
+  eight packages' public surface, and any change fails it. If the change is deliberate, regenerate the baseline with
   `AGENTEXPERIENCE_ACCEPT_API_CHANGES=true dotnet test tests/AgentExperience.Release.Tests --filter "FullyQualifiedName~PublicApi"`
   and commit the resulting `PublicApi/*.verified.txt` diff with your change, so reviewers see it. The baseline never
   updates itself.

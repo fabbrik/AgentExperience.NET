@@ -1,0 +1,57 @@
+{
+  "outcome": "Injected",
+  "messageRole": "User",
+  "retrievalRequest": {
+    "limit": null,
+    "excludeModelAuthored": false
+  },
+  "decisions": [
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000001",
+      "modelAuthored": false
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000007",
+      "modelAuthored": true
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000002",
+      "modelAuthored": false
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000005",
+      "modelAuthored": false
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000006",
+      "modelAuthored": false
+    }
+  ],
+  "injected": [
+    "000000e1-0000-4000-8000-000000000001",
+    "000000e1-0000-4000-8000-000000000005"
+  ],
+  "byteCount": 1021,
+  "omitted": [
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000003",
+      "reason": "RiskClassExceeded",
+      "detail": null
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000007",
+      "reason": "HostDenied",
+      "detail": "The host injection decision denied the record."
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000002",
+      "reason": "HostDenied",
+      "detail": "risk policy: no retries"
+    },
+    {
+      "experienceId": "000000e1-0000-4000-8000-000000000006",
+      "reason": "OverByteBudget",
+      "detail": "The record did not fit in the remaining part of the 1022-byte budget, and a record is never cut to fit."
+    }
+  ]
+}

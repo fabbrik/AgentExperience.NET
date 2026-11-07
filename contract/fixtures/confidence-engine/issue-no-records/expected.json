@@ -1,0 +1,11 @@
+{
+  "assessmentId": null,
+  "token": null,
+  "issuedAtUnixMs": null,
+  "expiresAtUnixMs": null,
+  "refusal": {
+    "exception": "ArgumentException",
+    "parameter": "experienceIds",
+    "message": "An assessment covers 1 to 64 records."
+  }
+}

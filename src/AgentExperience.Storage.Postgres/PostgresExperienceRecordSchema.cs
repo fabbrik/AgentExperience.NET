@@ -386,6 +386,94 @@ public static class PostgresExperienceRecordSchema
     /// </remarks>
     public const string ExperienceInjectionsScriptName = "0026_experience_injections.sql";
 
+    /// <summary>
+    /// The script that records the injection holdout's assignments: it creates
+    /// <c>agent_experience.experience_holdout_assignments</c>, one row per captured run and record its block named, with
+    /// the arm (delivered or withheld), the record's rendered revision, its scope and an instant, which
+    /// <see cref="PostgresExperienceRecordStore.RecordHoldoutAssignmentAsync"/> inserts once per assigned block; a trigger
+    /// that deletes a record's rows, and its run's rows, when the record is erased; and the table's row-level security
+    /// policies, on <c>0019</c>'s helpers.
+    /// </summary>
+    /// <remarks>
+    /// It adds a table to the application role's manifest: re-run
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// after migrating. Until then the injection adapter reports each assignment as not recorded and injects (or withholds)
+    /// anyway. No existing table is rewritten.
+    /// </remarks>
+    public const string ExperienceHoldoutAssignmentsScriptName = "0027_experience_holdout_assignments.sql";
+
+    /// <summary>
+    /// The script that indexes each record's source run per tenant: <c>ix_experience_records_source_run</c> on
+    /// <c>agent_experience.experience_records (tenant_id, source_run_id)</c>, which the holdout's outcome read and the
+    /// holdout write's check for the run's own record look runs up by.
+    /// </summary>
+    /// <remarks>
+    /// A plain <c>CREATE INDEX</c> inside the migrator's transaction (<c>CONCURRENTLY</c> cannot run in one): it blocks
+    /// writes to <c>experience_records</c> while it builds. The script's header gives the out-of-band
+    /// <c>CREATE INDEX CONCURRENTLY</c> for a database that cannot take that. No privilege changes.
+    /// </remarks>
+    public const string ExperienceRecordsSourceRunScriptName = "0028_experience_records_source_run_id.sql";
+
+    /// <summary>
+    /// The script that records another memory provider's holdout assignments: it creates
+    /// <c>agent_experience.experience_provider_holdout_assignments</c>, one row per captured run and provider key, with
+    /// the arm (passed through or withheld), the run's scope and an instant, which
+    /// <see cref="PostgresExperienceRecordStore.RecordProviderHoldoutAssignmentAsync"/> inserts once per run; a trigger that
+    /// deletes a run's rows when the run's own record is erased; and the table's row-level security policies, on
+    /// <c>0019</c>'s helpers.
+    /// </summary>
+    /// <remarks>
+    /// It adds a table to the application role's manifest: re-run
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// after migrating. Until then the measuring wrapper reports each assignment as not recorded and the agent runs on. No
+    /// existing table is rewritten.
+    /// </remarks>
+    public const string ExperienceProviderHoldoutAssignmentsScriptName = "0029_experience_provider_holdout_assignments.sql";
+
+    /// <summary>
+    /// The script that indexes each record's failure signatures: it creates
+    /// <c>agent_experience.experience_failure_signatures</c>, one row per record and signature (tool name, error class,
+    /// fingerprint, whether it was resolved, and the derivation's version, never error text), which
+    /// <see cref="PostgresExperienceRecordStore.CreateAsync"/> writes with the record and
+    /// <see cref="PostgresExperienceSignatureSource"/> searches; a trigger that deletes a record's rows when it is erased;
+    /// and the table's row-level security policies, on <c>0019</c>'s helpers.
+    /// </summary>
+    /// <remarks>
+    /// It adds a table to the application role's manifest: re-run
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// after migrating. Until then a record is created without its signatures. Records written before this script hold
+    /// none until the owner-run
+    /// <see cref="PostgresExperienceRecordStore.BackfillFailureSignaturesAsync(AgentExperience.Abstractions.AuthorizationContext, AgentExperience.Abstractions.Scope, int, ScopeMatch, Guid?, CancellationToken)"/>
+    /// derives them (plaintext records only). No existing table is rewritten.
+    /// </remarks>
+    public const string ExperienceFailureSignaturesScriptName = "0030_experience_failure_signatures.sql";
+
+    /// <summary>
+    /// The script that lets a grant consent to showing a borrowed record's recipe excerpts: it adds
+    /// <c>experience_grants.recipe_excerpts</c> (a JSON array of tool names, <see cref="AgentExperience.Abstractions.ExperienceGrant.RecipeExcerpts"/>),
+    /// two <c>NOT VALID</c> checks (only under a level that shows the approach; a non-empty array of strings), and the
+    /// column to the grant monotonicity trigger's immutable pins.
+    /// </summary>
+    /// <remarks>
+    /// No existing table is rewritten and no privilege changes. The build reads the column through <c>to_jsonb</c>, so
+    /// reads keep working on a schema not yet migrated to it; issuing a grant that names recipe excerpts needs it.
+    /// </remarks>
+    public const string GrantRecipeExcerptsScriptName = "0031_grant_recipe_excerpts.sql";
+
+    /// <summary>
+    /// The script that keeps completed runs for finalizing later: it creates <c>agent_experience.experience_runs</c>, one
+    /// row per completed run (its scope, completion event, execution status, instants and the sanitized run as version-1
+    /// JSON), which <see cref="PostgresExperienceRunStore"/> saves, reads, lists, marks finalized and deletes; a trigger
+    /// that deletes a record's stored run when the record is erased (and no other live record came from that run); and the
+    /// table's row-level security policies, on <c>0019</c>'s helpers.
+    /// </summary>
+    /// <remarks>
+    /// It adds a table to the application role's manifest: re-run
+    /// <see cref="ExperienceSchemaMigrator.ApplyApplicationRolePrivilegesAsync(Npgsql.NpgsqlDataSource, ExperienceApplicationRoleOptions, CancellationToken)"/>
+    /// after migrating. Nothing writes the table unless the host registers the run store. No existing table is rewritten.
+    /// </remarks>
+    public const string ExperienceRunsScriptName = "0032_experience_runs.sql";
+
     private const string ResourcePrefix = "AgentExperience.Storage.Postgres.Migrations.";
 
     /// <summary>
@@ -393,7 +481,7 @@ public static class PostgresExperienceRecordSchema
     /// deliberately text-only: the derived embedding schema, which needs the <c>vector</c> extension,
     /// is owned and applied by <c>AgentExperience.Storage.Postgres.Vectors</c> instead, so a host that
     /// never enables the vector channel never runs a superuser-only <c>CREATE EXTENSION</c>. That is
-    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0026</c> are present.
+    /// why <c>0004</c> and <c>0020</c> are absent from this list while <c>0005</c> and <c>0021</c> to <c>0032</c> are present.
     /// </summary>
     public static IReadOnlyList<string> ScriptNames { get; } =
     [
@@ -420,6 +508,12 @@ public static class PostgresExperienceRecordSchema
         TextSearchFunctionScriptName,
         TextSearchAnyTermScriptName,
         ExperienceInjectionsScriptName,
+        ExperienceHoldoutAssignmentsScriptName,
+        ExperienceRecordsSourceRunScriptName,
+        ExperienceProviderHoldoutAssignmentsScriptName,
+        ExperienceFailureSignaturesScriptName,
+        GrantRecipeExcerptsScriptName,
+        ExperienceRunsScriptName,
     ];
 
     /// <summary>Reads an embedded script's SQL text.</summary>

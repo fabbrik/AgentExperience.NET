@@ -1,0 +1,111 @@
+{
+  "results": [
+    {
+      "outcome": "NotFound",
+      "revision": 0,
+      "currentStatus": null,
+      "errors": [],
+      "appliedConfidence": null
+    },
+    {
+      "outcome": "NotFound",
+      "revision": 0,
+      "currentStatus": null,
+      "errors": [],
+      "appliedConfidence": null
+    },
+    {
+      "outcome": "Denied",
+      "revision": 0,
+      "currentStatus": null,
+      "errors": [],
+      "appliedConfidence": null
+    },
+    {
+      "outcome": "Invalid",
+      "revision": 0,
+      "currentStatus": null,
+      "errors": [
+        {
+          "path": "EventId",
+          "message": "must not be an empty GUID."
+        },
+        {
+          "path": "Reason",
+          "message": "must not be empty or whitespace."
+        },
+        {
+          "path": "ReplacementExperienceId",
+          "message": "is required when the event moves the record to Superseded."
+        },
+        {
+          "path": "ExpectedRevision",
+          "message": "must not be negative."
+        }
+      ],
+      "appliedConfidence": null
+    },
+    {
+      "outcome": "Invalid",
+      "revision": 0,
+      "currentStatus": null,
+      "errors": [
+        {
+          "path": "ReplacementExperienceId",
+          "message": "must be null on an event that carries a confidence update; supersession and evidence are separate transitions."
+        },
+        {
+          "path": "ReplacementExperienceId",
+          "message": "must be null unless the event moves the record to Superseded."
+        },
+        {
+          "path": "ReplacementExperienceId",
+          "message": "must name a record other than the one being superseded."
+        },
+        {
+          "path": "Confidence.VerificationRoundId",
+          "message": "is required for Machine evidence, which is counted once per run and round."
+        }
+      ],
+      "appliedConfidence": null
+    },
+    {
+      "outcome": "Invalid",
+      "revision": 0,
+      "currentStatus": null,
+      "errors": [
+        {
+          "path": "Confidence.ReviewerIdentity",
+          "message": "is required for Human evidence, which is counted once per reviewer and run."
+        },
+        {
+          "path": "Confidence.VerificationRoundId",
+          "message": "must be null for Human evidence."
+        },
+        {
+          "path": "Confidence.Admission",
+          "message": "an event whose evidence moves no counter is accepted only for HostTrusted evidence recorded without being counted."
+        },
+        {
+          "path": "Confidence.NewReuseConfidence",
+          "message": "must equal the prior score when the evidence moves no counter."
+        }
+      ],
+      "appliedConfidence": null
+    }
+  ],
+  "experience_records": [
+    {
+      "experience_id": "00001162-0000-4000-8000-000000000020",
+      "status": "Validated",
+      "reuse_confidence": "0.6666666666666666",
+      "supporting_validations": "1",
+      "contradictions": "0",
+      "revision": "1",
+      "updated_at": "2026-02-20 09:00:00+00",
+      "deleted_at": null
+    }
+  ],
+  "lifecycle_events": [],
+  "confidence_evidence": []
+}

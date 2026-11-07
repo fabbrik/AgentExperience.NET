@@ -1,0 +1,8 @@
+{
+  "outcome": "Quarantined",
+  "reflectionFailure": null,
+  "screening": {
+    "refusal": "UnsafeContent",
+    "reason": "the text across its fields contains instruction-override phrasing"
+  }
+}

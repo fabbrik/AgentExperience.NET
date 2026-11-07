@@ -1,0 +1,49 @@
+{
+  "description": "Every value drawn from a record or the scope is HTML-encoded: <, >, &, the double quote and the apostrophe (as &#39;), every character from U+00A0 to U+00FF as a decimal reference, and a character outside the Basic Multilingual Plane as one decimal reference to its code point. Other characters, and the ineligibility reason, are written as they are once encoded. Check results Pass, Fail and Unknown take their classes.",
+  "scope": {
+    "tenantId": "tenant <&>",
+    "applicationId": "app \"quoted\"",
+    "projectId": "project 'single'",
+    "teamId": "team é",
+    "agentId": "agent \uD83D\uDE00",
+    "userId": "user ÿ"
+  },
+  "outcome": "Found",
+  "generatedAt": "2026-03-03T09:00:00.9999999+00:00",
+  "hasMore": false,
+  "outOfScopeDropped": 0,
+  "injectionsTracked": true,
+  "lessons": [
+    {
+      "experienceId": "00000151-0000-4000-8000-000000000001",
+      "taskId": "task <script>alert('x')</script> & \"quoted\" é ÿ \u00A0 Ā 雪 \uD83D\uDE00 \u0085\t",
+      "status": "Validated",
+      "confidence": 0.875,
+      "createdAt": "2026-03-02T09:00:00+00:00",
+      "updatedAt": "2026-03-02T09:01:00+00:00",
+      "checks": [
+        {
+          "checkId": "check <1>",
+          "evidenceKind": "kind & \"kind\"",
+          "result": "Pass"
+        },
+        {
+          "checkId": "check 'two'",
+          "evidenceKind": "smoke-test",
+          "result": "Fail"
+        },
+        {
+          "checkId": "check é",
+          "evidenceKind": "manual-review",
+          "result": "Unknown"
+        }
+      ],
+      "blockText": "--- BEGIN HISTORICAL REFERENCE ---\nLesson: <script>alert('x')</script> & \"quoted\" é ÿ \u00A0 Ā 雪 \uD83D\uDE00 \u0085\t\n--- END HISTORICAL REFERENCE ---\n",
+      "isEligible": false,
+      "ineligibility": "Status",
+      "ineligibleReason": "status <Stale> & \"never\" retrieved",
+      "lastInjectedAt": "2026-03-02T09:00:59.9999998+00:00",
+      "injectionCount": 2
+    }
+  ]
+}

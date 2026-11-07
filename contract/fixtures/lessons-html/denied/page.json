@@ -1,0 +1,17 @@
+{
+  "description": "A page the store refused (the scope lies outside the authorization): it says what the store answered and lists nothing.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": "payments",
+    "agentId": "refund-agent",
+    "userId": "user-17"
+  },
+  "outcome": "Denied",
+  "generatedAt": "2026-03-03T09:00:00.9999999+00:00",
+  "hasMore": false,
+  "outOfScopeDropped": 0,
+  "injectionsTracked": false,
+  "lessons": []
+}

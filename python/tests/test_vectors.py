@@ -12,6 +12,7 @@ import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 
 import psycopg
@@ -20,8 +21,8 @@ from _contract import FIXTURES, cases, json_difference, read_json, scope_of
 
 pytest.importorskip("agent_framework")
 
-from _maf import ScriptedClient
-from _postgres import OWNER, PASSWORD, Server, application_conninfo, create_database
+from _maf import ScriptedClient, delivered
+from _postgres import OWNER, PASSWORD, PG_RETRIEVAL_POLICY, Server, application_conninfo, create_database
 from _sync import run
 from agent_framework import Agent, tool
 from test_postgres import _erase
@@ -31,6 +32,7 @@ from agentexperience import (
     EmbeddingWrite,
     ExperienceRecord,
     Instant,
+    RetrievalPolicy,
     Scope,
     SearchParameters,
     VectorQuery,
@@ -347,7 +349,7 @@ def make_agent(store: Any, seen: Seen, **options: Any) -> Agent:
         Agent(client=seen.client, name="refund-agent"),
         store=store,
         identity=ExperienceIdentity("python-principal", SCOPE),
-        on_injected=seen.injections.append,
+        on_injected=delivered(seen.injections.append),
         on_vector_fallback=seen.fallbacks.append,
         on_injection_failure=seen.injection_failures.append,
         on_capture_failure=seen.capture_failures.append,
@@ -458,6 +460,38 @@ def test_a_failing_search_answers_from_text_and_reports_it(kind: str) -> None:
     )
     assert [fallback.reason for fallback in seen.fallbacks] == ["VectorSearchFailed"]
     assert seen.injection_failures == []
+    assert sorted(ids(seen.injections[0])) == [1, 2, 3]
+
+
+@pytest.mark.parametrize("vector_timeout", [0.5, 0.1], ids=["longer", "equal"])
+def test_a_vector_channel_still_running_at_the_policy_timeout_times_the_retrieval_out(vector_timeout: float) -> None:
+    # Contract 1.12: the policy's timeout bounds both channels together; a vector_timeout that is not strictly shorter
+    # never turns the overrun into a fallback, even when the two bounds are equal.
+    seen = Seen()
+    policy = RetrievalPolicy(timeout=timedelta(milliseconds=100))
+    agent = make_agent(
+        embedded_store(),
+        seen,
+        embedder=FixedEmbedder(delay=0.4),
+        vector_timeout=vector_timeout,
+        retrieval_policy=policy,
+    )
+    run(agent.run("Rotate the signing keys for the service"))
+    assert [injection.outcome for injection in seen.injections] == ["RetrievalTimedOut"]
+    assert seen.fallbacks == []
+    assert seen.injection_failures == []
+    assert seen.client.blocks() == []
+
+
+def test_a_shorter_vector_timeout_is_a_fallback_inside_the_policy_timeout() -> None:
+    seen = Seen()
+    policy = RetrievalPolicy(timeout=timedelta(seconds=5))
+    agent = make_agent(
+        embedded_store(), seen, embedder=FixedEmbedder(delay=0.4), vector_timeout=0.05, retrieval_policy=policy
+    )
+    run(agent.run("Rotate the signing keys for the service"))
+    assert [fallback.reason for fallback in seen.fallbacks] == ["ProviderUnavailable"]
+    assert [injection.outcome for injection in seen.injections] == ["Injected"]
     assert sorted(ids(seen.injections[0])) == [1, 2, 3]
 
 
@@ -639,13 +673,14 @@ def test_a_record_embedded_by_the_contracts_sql_is_found_by_a_python_agent(pg_se
 
     query = next(s["search"] for s in steps if "search" in s)
     seen = Seen()
-    run(make_agent(store, seen, embedder=FixedEmbedder(query["vector"], model_id=query["modelId"])).run(PARAPHRASE))
+    embedder = FixedEmbedder(query["vector"], model_id=query["modelId"])
+    run(make_agent(store, seen, embedder=embedder, retrieval_policy=PG_RETRIEVAL_POLICY).run(PARAPHRASE))
     assert seen.fallbacks == [] and seen.injection_failures == []
     assert ids(seen.injections[0]) == [3, 2, 1]
 
     # Without the embedder the same query finds nothing, and says why.
     plain = Seen()
-    run(make_agent(store, plain).run(PARAPHRASE))
+    run(make_agent(store, plain, retrieval_policy=PG_RETRIEVAL_POLICY).run(PARAPHRASE))
     assert plain.injections == [] and [f.reason for f in plain.fallbacks] == ["NotConfigured"]
 
 
@@ -654,7 +689,7 @@ def test_a_python_agent_stores_a_record_and_its_embedding_in_postgres(pg_server:
     database = create_database(pg_server, "agent_vector_roundtrip")
     store = PostgresExperienceStore(application_conninfo(pg_server, database))
     seen = Seen()
-    agent = stored_agent(store, seen, FixedEmbedder())
+    agent = stored_agent(store, seen, FixedEmbedder(), retrieval_policy=PG_RETRIEVAL_POLICY)
 
     async def go() -> None:
         await agent.run("Refund ticket 43 is stuck in pending")
@@ -668,7 +703,8 @@ def test_a_python_agent_stores_a_record_and_its_embedding_in_postgres(pg_server:
     assert rows[0]["model_id"] == MODEL and rows[0]["embedding"] == "[1,0,0,0]"
 
     later = Seen()
-    run(make_agent(store, later, embedder=FixedEmbedder()).run("Zebra giraffe antelope"))
+    later_agent = make_agent(store, later, embedder=FixedEmbedder(), retrieval_policy=PG_RETRIEVAL_POLICY)
+    run(later_agent.run("Zebra giraffe antelope"))
     assert len(later.injections) == 1 and later.fallbacks == []
 
 

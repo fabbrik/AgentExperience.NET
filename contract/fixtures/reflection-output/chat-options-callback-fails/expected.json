@@ -1,0 +1,9 @@
+{
+  "outcome": "Quarantined",
+  "reflectionFailure": {
+    "kind": "ChatOptionsCallbackFailed",
+    "causeType": "System.InvalidOperationException",
+    "message": "The ConfigureChatOptions callback failed with System.InvalidOperationException; nothing was sent."
+  },
+  "screening": null
+}

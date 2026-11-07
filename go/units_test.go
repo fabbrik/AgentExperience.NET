@@ -786,8 +786,8 @@ func TestSearchParametersAcceptOnlyTheContractsShapes(t *testing.T) {
 	}
 	nan, high, negative := math.NaN(), 1.5, -0.1
 	for name, p := range map[string]SearchParameters{
-		"limit 50":           invalid(func(p *SearchParameters) { p.Limit = 50 }),
-		"limit 52":           invalid(func(p *SearchParameters) { p.Limit = 52 }),
+		"limit 201":          invalid(func(p *SearchParameters) { p.Limit = 201 }),
+		"negative limit":     invalid(func(p *SearchParameters) { p.Limit = -1 }),
 		"terms beyond int32": invalid(func(p *SearchParameters) { p.MinimumMatchedTerms = math.MaxInt32 + 1 }),
 		"negative terms":     invalid(func(p *SearchParameters) { p.MinimumMatchedTerms = -1 }),
 		"NaN confidence":     invalid(func(p *SearchParameters) { p.MinConfidence = &nan }),
@@ -893,5 +893,73 @@ func BenchmarkErrorClass8192(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		ErrorClassOf(long)
+	}
+}
+
+// Contract 1.19: a tool call's recipe excerpt is read, kept and written back exactly; a call without one writes no
+// recipeExcerpt member.
+func TestARecipeExcerptRoundTripsAndIsAbsentWhenUnset(t *testing.T) {
+	stored := readFixture(t, "inject", "recipe-excerpt", "records.json").([]any)[0].(*Object)
+	value, _ := stored.Get("record")
+	record, err := FromStored(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := &record.Attempts[1].ToolCalls[0]
+	if call.RecipeExcerpt == nil || !strings.HasPrefix(*call.RecipeExcerpt, "pinned") {
+		t.Fatalf("the excerpt was not read: %v", call.RecipeExcerpt)
+	}
+	want, _ := MarshalJSONValue(value)
+	got, _ := MarshalJSONValue(record.ToStored())
+	if string(got) != string(want) {
+		t.Fatalf("read then written changed the record:\n%s\n%s", want, got)
+	}
+	call.RecipeExcerpt = nil
+	payload := record.Payload()
+	attempts, _ := payload.Get("attempts")
+	calls, _ := attempts.([]any)[1].(*Object).Get("toolCalls")
+	if _, ok := calls.([]any)[0].(*Object).Get("recipeExcerpt"); ok {
+		t.Fatal("a call without an excerpt wrote a recipeExcerpt member")
+	}
+	again, err := FromStored(record.ToStored())
+	if err != nil || again.Attempts[1].ToolCalls[0].RecipeExcerpt != nil {
+		t.Fatalf("an absent excerpt read back as %v (%v)", again.Attempts[1].ToolCalls[0].RecipeExcerpt, err)
+	}
+}
+
+func TestBlockOptionsRefuseUnsafeRecipeExcerpts(t *testing.T) {
+	for _, tools := range [][]string{
+		{""}, {" \t"}, {strings.Repeat("t", 257)}, {"to\x07ol"}, {"to\u0085ol"}, {"tool", "tool"},
+	} {
+		if err := (BlockOptions{RecipeExcerpts: tools}).Validate(); err == nil {
+			t.Errorf("%q was accepted", tools)
+		}
+	}
+	if err := (BlockOptions{RecipeExcerpts: []string{strings.Repeat("t", 256), "Tool", "tool", "a b"}}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Without the allowlist, or with a tool it does not name, a call keeps its [returned] marker whatever it stores.
+func TestARecipeExcerptIsShownOnlyForAnAllowlistedTool(t *testing.T) {
+	ranked, err := RankedFromJSON(readFixture(t, "inject", "recipe-excerpt", "records.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tools := range [][]string{nil, {}, {"other_tool"}} {
+		block, err := RenderBlock(ranked, BlockOptions{RecipeExcerpts: tools})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(block.Text, callReturnedExcerpt) {
+			t.Fatalf("%q showed an excerpt:\n%s", tools, block.Text)
+		}
+	}
+	block, err := RenderBlock(ranked, BlockOptions{RecipeExcerpts: []string{"write_config"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(block.Text, callReturnedExcerpt) != 1 || strings.Contains(block.Text, `[returned: "pinned`) {
+		t.Fatalf("only write_config's excerpt is shown:\n%s", block.Text)
 	}
 }

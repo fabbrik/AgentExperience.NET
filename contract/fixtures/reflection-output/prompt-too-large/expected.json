@@ -1,0 +1,9 @@
+{
+  "outcome": "Quarantined",
+  "reflectionFailure": {
+    "kind": "PromptTooLarge",
+    "causeType": null,
+    "message": "The reflection request's data message cannot fit MaxPromptLength even with its lists shortened; nothing was sent."
+  },
+  "screening": null
+}

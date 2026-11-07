@@ -1,0 +1,33 @@
+{
+  "description": "A reviewer bounded to the tenant only may assess any scope in it.",
+  "operation": "issue",
+  "options": {
+    "verification": "Verified",
+    "assessmentTokenKey": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "assessmentTokenLifetimeTicks": 864000000000,
+    "nowUnixMs": 1772442000000
+  },
+  "assessmentId": "000000f6-0000-4000-8000-000000000400",
+  "reviewer": {
+    "principalId": "reviewer-1",
+    "tenantId": "contract-tenant",
+    "applicationId": null,
+    "projectId": null,
+    "teamId": null,
+    "agentId": null,
+    "userId": null
+  },
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "runId": "000000f6-0000-4000-8000-000000000100",
+  "kind": "Supporting",
+  "experienceIds": [
+    "000000f6-0000-4000-8000-000000000001"
+  ]
+}

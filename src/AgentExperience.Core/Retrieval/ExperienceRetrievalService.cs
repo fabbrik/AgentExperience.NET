@@ -328,6 +328,22 @@ public sealed class ExperienceRetrievalService
     public bool IsContentConfirmed(ExperienceRecord record) => RecordAuthorship.IsContentConfirmed(record, _signer);
 
     /// <summary>
+    /// Whether <paramref name="record"/>'s recipe excerpts (<see cref="ToolCallRecord.RecipeExcerpt"/>) are confirmed:
+    /// always without provenance signing; with it, only when the record carries a claims version 4 signature
+    /// (<see cref="ExperienceProvenanceSignature.HmacSha256ClaimsV4"/>), under a key in the ring, that verifies. No
+    /// earlier claims version covers an excerpt, so injection renders a record whose excerpts are not confirmed without
+    /// them, and the rest of the record as it otherwise would.
+    /// </summary>
+    /// <param name="record">The record as it will be rendered.</param>
+    /// <returns>Whether its recipe excerpts may be shown.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="record"/> is <see langword="null"/>.</exception>
+    public bool AreRecipeExcerptsConfirmed(ExperienceRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        return _signer is null || _signer.ConfirmsRecipeExcerpts(record);
+    }
+
+    /// <summary>
     /// Why this service would never return <paramref name="record"/> today, whatever the task, or
     /// <see langword="null"/> when it could: a status that is not eligible for reuse, a confidence below the policy's
     /// floor (which the candidate source applies; a NaN confidence is below it), a model-authored or unconfirmed lesson
@@ -456,6 +472,14 @@ public sealed class ExperienceRetrievalService
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+
+        // The recorded model is bookkeeping for the holdout's per-model estimate: it never filters or grades retrieval.
+        var required = Holdout.ModelMetadata.WithoutModel(request.RequiredEnvironmentAttributes);
+        var preferred = Holdout.ModelMetadata.WithoutModel(request.PreferredEnvironmentAttributes);
+        if (!ReferenceEquals(required, request.RequiredEnvironmentAttributes) || !ReferenceEquals(preferred, request.PreferredEnvironmentAttributes))
+        {
+            request = request with { RequiredEnvironmentAttributes = required, PreferredEnvironmentAttributes = preferred };
+        }
 
         var startedAt = _timeProvider.GetTimestamp();
         var unrestricted = request.RequiredEnvironmentAttributes is null or { Count: 0 };
@@ -805,12 +829,16 @@ public sealed class ExperienceRetrievalService
         var positions = new Dictionary<Guid, int>();
         var truncated = false;
 
-        if (Absorb(request, channels.Text.Candidates, "candidate source", merged, positions, ref truncated) is { } textFailure)
+        // Story 28.5: what each channel said about each record, kept apart from the merged relevance, for the injection floor.
+        var textCoverage = new Dictionary<Guid, double>();
+        var vectorRelevance = new Dictionary<Guid, double>();
+
+        if (Absorb(request, channels.Text.Candidates, "candidate source", merged, positions, ref truncated, textCoverage, static candidate => candidate.TermCoverage ?? candidate.Relevance) is { } textFailure)
         {
             return Empty(RetrievalOutcome.Failed, request, unrestricted, startedAt, textFailure, channels.Vector.Fallback);
         }
 
-        if (Absorb(request, channels.Vector.Candidates, "embedding index", merged, positions, ref truncated) is { } vectorFailure)
+        if (Absorb(request, channels.Vector.Candidates, "embedding index", merged, positions, ref truncated, vectorRelevance, static candidate => candidate.Relevance) is { } vectorFailure)
         {
             // A vector channel that answered with something unverifiable is treated exactly like a
             // text one that did: fail-closed. Silently dropping it would mean returning a result
@@ -860,7 +888,7 @@ public sealed class ExperienceRetrievalService
             double environment;
             try
             {
-                environment = _environmentScorer.Score(record.Environment, preferred);
+                environment = _environmentScorer.Score(Holdout.ModelMetadata.WithoutModel(record.Environment), preferred);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -879,7 +907,12 @@ public sealed class ExperienceRetrievalService
                     channels.Vector.Fallback);
             }
 
-            ranked.Add((Score(record, candidate, environment, now), record.ExperienceId.ToString("D")));
+            var scored = Score(record, candidate, environment, now) with
+            {
+                TextCoverage = textCoverage.TryGetValue(record.ExperienceId, out var coverage) ? coverage : null,
+                VectorRelevance = vectorRelevance.TryGetValue(record.ExperienceId, out var vector) ? vector : null,
+            };
+            ranked.Add((scored, record.ExperienceId.ToString("D")));
         }
 
         // Ties sort by ExperienceId ascending and ordinal, so the order is total and stable rather than
@@ -928,7 +961,9 @@ public sealed class ExperienceRetrievalService
         string channel,
         List<ExperienceCandidate> merged,
         Dictionary<Guid, int> positions,
-        ref bool truncated)
+        ref bool truncated,
+        Dictionary<Guid, double> strengths,
+        Func<ExperienceCandidate, double> strength)
     {
         if (candidates.Count > _policy.CandidateLimit)
         {
@@ -971,6 +1006,7 @@ public sealed class ExperienceRetrievalService
                 return new RetrievalFailure($"The {channel} returned the same record more than once.", Exception: null);
             }
 
+            strengths[record.ExperienceId] = Normalize(strength(candidate));
             Fold(merged, positions, candidate);
         }
 

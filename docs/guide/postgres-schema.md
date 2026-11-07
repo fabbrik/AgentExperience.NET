@@ -1,7 +1,7 @@
 # PostgreSQL schema
 
 **In short.** The schema lives in versioned SQL scripts embedded in the two storage packages: `0001`–`0003`,
-`0005`–`0019` and `0021`–`0026` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
+`0005`–`0019` and `0021`–`0032` in `AgentExperience.Storage.Postgres` (there is no `0014`), and `0004` and `0020` in
 `AgentExperience.Storage.Postgres.Vectors`. You apply them explicitly, on every deploy, as the owner role, with
 `ExperienceSchemaMigrator.MigrateAsync` (and `ExperienceVectorSchemaMigrator.MigrateAsync` for the vector channel).
 The migrator is journaled, runs each script in its own transaction, and serializes concurrent hosts with an advisory
@@ -749,6 +749,163 @@ as the store's own statement now does (see [How the text channel matches](retrie
   `REVOKE ALL` removes them): in a mixed fleet, apply the 1.0 then the 1.4 contract privileges, or the .NET call.
 - No existing table is rewritten; creating the trigger and the foreign key takes a brief lock on `experience_records`.
 
+### 0027: the injection holdout's assignments
+
+`0027_experience_holdout_assignments.sql` records which arm of the injection holdout each captured run was assigned to
+(see [Measuring benefit: the holdout](injection.md#measuring-benefit-the-holdout)):
+
+- `agent_experience.experience_holdout_assignments`: one row per captured run and record its block named, keyed on
+  `(run_id, experience_id)` (with a foreign key from `experience_id` to `experience_records`, `ON DELETE CASCADE`; none on
+  `run_id`, whose record is written later, at finalization), with the record's `revision` as the block rendered it, the
+  `arm` (`Treatment` or `Holdout`), the record's six scope columns and `assigned_at`. The store writes it with one
+  `INSERT … SELECT … ON CONFLICT DO NOTHING` per assigned block, which copies the scope from the record (live, in exactly
+  the caller's scope), clamps the instant to `clock_timestamp()`, and keeps a run's first row for each record. In
+  encrypted mode the store skips a record whose key is destroyed. It holds no content. `QueryHoldoutOutcomesAsync` reads
+  it back a page at a time, joined to each run's outcome through `experience_records.source_run_id = run_id` in the
+  same scope (one semi-join per page, served by `0028`'s `ix_experience_records_source_run`), and decodes the run records' payloads through the store, opening sealed ones in one batch
+  after the connection is released.
+- **Concurrency.** The insert locks its records `FOR KEY SHARE` in ID order, as `0026`'s upsert does, so an erasure
+  racing it either waits and then removes its rows, or runs first and leaves a tombstone the insert does not select.
+  It first locks the run's own records the same way (`source_run_id` is the run, in the caller's tenant), and writes
+  nothing when all of them are by then tombstones (one still live means the run still has a record): an erasure of
+  the run's record that is under way when the write starts holds it and then makes it write nothing, and one that
+  starts while the write is in flight waits and then removes the run's rows. Only a write that overlaps the erasure is
+  handled. **Known limit:** an erasure that committed before the write started cannot be seen, since a tombstone keeps
+  no `source_run_id`; such a write records its rows, which hold IDs only, never join a run's outcome and are counted as
+  `Pending`. With row-level security on, only run records inside the operation's bounds are locked.
+- A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes, when a record is
+  tombstoned, every row naming it, and, when it was the run's last live record in its tenant, every row of the run it
+  was captured from (its `source_run_id` before the purge zeroes it), so erasing a lesson or a run's own records takes
+  their rows with them on every erasure path, while a run that still has a live record keeps its measurement. Two of a
+  run's records erased concurrently can each see the other as live and leave the run's rows; those never join an
+  outcome and count as `Pending`.
+- Its row-level security policies (`rls_holdout_assignments_select`, `_insert`): the row's scope inside the declared
+  bounds, and, for an insert, a live record with that ID in exactly those scope columns. A grant never admits one.
+- The application role gets `SELECT` and `INSERT`, and no `UPDATE` or `DELETE`, once the table exists. **Re-run
+  `ApplyApplicationRolePrivilegesAsync` after migrating**; until then assignments are reported as not recorded and
+  injection carries on. From contract 1.8 the Python and Go ports write it too, and the contract's
+  `sql/application-role-privileges-1.8.sql` grants it: in a mixed fleet apply the 1.0, 1.4, 1.6 and 1.8 files in that
+  order, or run the .NET privileges call after them.
+- No existing table is rewritten; creating the trigger and the foreign key takes a brief lock on `experience_records`.
+
+### 0028: each record's source run, indexed
+
+`0028_experience_records_source_run_id.sql` adds `ix_experience_records_source_run` on
+`agent_experience.experience_records (tenant_id, source_run_id)`, for the two lookups of a run's own record: each page
+of `QueryHoldoutOutcomesAsync`, and the holdout insert's lock on the run's records (above). Before it, each scanned the
+tenant's records. Nothing else changes: no column, constraint, trigger, policy or grant.
+
+- **It is not built `CONCURRENTLY`**: the migrator runs each script in a transaction, where `CREATE INDEX CONCURRENTLY`
+  cannot run. The build takes a `SHARE` lock on `experience_records`, blocking every write to it (not reads) until it
+  finishes. On a large table, build it out of band first, as the script's header and
+  [Applying the schema](deployment.md#applying-the-schema) show; the script's `IF NOT EXISTS` then makes it a no-op.
+
+### 0029: a measured memory provider's holdout assignments
+
+`0029_experience_provider_holdout_assignments.sql` records which arm of a measured memory provider's holdout each
+captured run was assigned to (see [Measuring another memory provider](injection.md#measuring-another-memory-provider)):
+
+- `agent_experience.experience_provider_holdout_assignments`: one row per tenant, captured run and provider key, keyed
+  on `(tenant_id, run_id, provider_key)` (no foreign key: the run's record is written later, at finalization), with the `arm`
+  (`Treatment` or `Holdout`), the caller's six scope columns (the scope the run was captured in) and `assigned_at`. A
+  check constraint holds the key to 1-100 characters of `[A-Za-z0-9._-]`. The store writes it with one
+  `INSERT … SELECT … ON CONFLICT DO NOTHING` per invocation that took part, clamping the instant to `clock_timestamp()`
+  and keeping a run's first row per key. It holds no content and nothing about the provider's memory items. The key
+  includes the tenant, so a run ID another tenant reuses (run IDs a host supplies through `ContinuesRunId`) never
+  suppresses this tenant's row.
+  `QueryProviderHoldoutOutcomesAsync` reads one key's rows back a page at a time in run order, joined to each run's
+  outcome exactly as `0027`'s rows are (served by `0028`'s index and by
+  `experience_provider_holdout_assignments_key_idx` on `(tenant_id, provider_key, run_id)`).
+- **Concurrency** is `0027`'s late-write guard: the insert first locks the run's own records `FOR KEY SHARE` and writes
+  nothing when all of them are by then tombstones, so an erasure of the run's record that overlaps the write serialises
+  with it in either order. The same known limit applies to an erasure committed before the write started.
+- A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes, when a record is
+  tombstoned and was the run's last live record in its tenant, every row of the run it was captured from, in that tenant
+  only (a run ID is caller-supplied), with `0027`'s concurrent-erasure caveat.
+- Its row-level security policies (`rls_provider_holdout_assignments_select`, `_insert`): the row's scope inside the
+  declared bounds. The row names no record, so there is no record to check.
+- The application role gets `SELECT` and `INSERT`, and no `UPDATE` or `DELETE`, once the table exists. **Re-run
+  `ApplyApplicationRolePrivilegesAsync` after migrating**; until then assignments are reported as not recorded and the
+  agent runs on. Since contract 1.11 the Python and Go ports write and read it too, with
+  `sql/record-provider-holdout-assignment.sql` and `sql/query-provider-holdout-outcomes.sql`, and
+  `sql/application-role-privileges-1.11.sql` grants it after the earlier files.
+- No existing table is rewritten; creating the trigger takes a brief lock on `experience_records`.
+
+### 0030: each record's failure signatures
+
+`0030_experience_failure_signatures.sql` indexes the failure signatures each record holds (see
+[Failure signatures](retrieval.md#failure-signatures)):
+
+- `agent_experience.experience_failure_signatures`: one row per record, signature version and signature key, keyed on
+  `(experience_id, signature_version, signature_key)` with a foreign key to `experience_records` (`ON DELETE CASCADE`).
+  Each row carries the `tool_name`, the `error_class` (the class's first token, as a call's `[failed: …]` marker shows
+  it), the `fingerprint` (32 lowercase hexadecimal characters: the first 16 bytes of the SHA-256 of the error's
+  normalized excerpt: the first line, or the last one after a bare header), `signature_key` (the three joined by U+001F; a check constraint holds them equal),
+  `resolved` (a later call in the same verified record succeeded after the failure's last occurrence),
+  `signature_version` (`1`), and the record's six scope columns. **It holds no error text.** Check constraints bound
+  the tool name to 1-256 characters and the class to 1-64, and the fingerprint's shape.
+- Two lookups, both leading with the tenant: `experience_failure_signatures_key_idx` on `(tenant_id, signature_key)` for
+  an exact match and `experience_failure_signatures_tool_class_idx` on `(tenant_id, tool_name, error_class)` for a
+  coarse one.
+- **Written with the record.** `CreateAsync` derives the signatures in .NET (`ExperienceFailureSignatures.Of`) and
+  inserts them in the record's own transaction with one `INSERT … SELECT … ON CONFLICT DO NOTHING`, copying the scope
+  columns from the live record it locks `FOR KEY SHARE`. The insert runs under a savepoint: while the table is missing
+  or the application role is not yet granted it, the record is created without its signatures.
+- **In encrypted mode** the rows are written in the clear, like the derived search vector and the authorship flag: a
+  tool name, a class and a fingerprint, never error text (see [Crypto-shredding](crypto-shredding.md) and KL-2).
+- **Backfill.** `PostgresExperienceRecordStore.BackfillFailureSignaturesAsync` derives and writes the signatures of
+  live **plaintext** records written before `0030` (or while the role lacked the table), a bounded, resumable batch at
+  a time, in ID order after a cursor. It skips sealed records, which the database cannot read: a record sealed before
+  `0030` gains signatures only when it is finalized again. Run it after migrating, normally as the owner.
+- A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) deletes the record's rows when it is
+  tombstoned, so every erasure path removes them, as `0026`'s trigger does for the injection row.
+- Its row-level security policies (`rls_failure_signatures_select`, `_insert`): a row is read exactly as its record is
+  (inside the declared bounds, or shared by a live grant, the read policy's own admission over the row's columns), and
+  inserted only inside the bounds for a live record with that ID in exactly that scope.
+- The application role gets `SELECT` and `INSERT`, and no `UPDATE` or `DELETE`, once the table exists. **Re-run
+  `ApplyApplicationRolePrivilegesAsync` after migrating**, then run the backfill. The table is .NET-only: the Python and
+  Go ports neither write nor read it, and no contract privileges file grants it.
+- No existing table is rewritten; creating the foreign key and the trigger takes a brief lock on `experience_records`.
+
+### 0031: a grant's consent to show recipe excerpts
+
+`0031_grant_recipe_excerpts.sql` adds `experience_grants.recipe_excerpts` (`jsonb`, nullable): the tool names whose
+recipe excerpts (see [Showing what worked](injection.md#showing-what-worked-the-recipe)) a grant's owner consents to
+show the recipient (`ExperienceGrant.RecipeExcerpts`). Two `NOT VALID` checks hold it to a level that shows the
+approach (`LessonAndApproach` or `LessonApproachAndArguments`) and to a non-empty array of strings, and the grant
+monotonicity trigger (restated in full with `0013`'s `search_path` pin) makes it immutable like the level. Names only,
+so it is stored in the clear in encrypted mode, like `0017`'s `approach_arguments`. No privilege changes: the
+application role's table-level `SELECT` and `INSERT` cover it.
+
+**Deployment.** The library reads the column through `to_jsonb(g) ->> 'recipe_excerpts'`, so every read keeps working on
+a schema not yet migrated (it reads no consent), and it names the column in an insert only when a request sets it:
+migrate before issuing a grant that names recipe excerpts. An older build against this schema never names the column.
+
+### 0032: the run store
+
+`0032_experience_runs.sql` keeps completed runs so a later process can finalize them (see
+[Finalizing later](capture.md#finalizing-later)):
+
+- `agent_experience.experience_runs`: one row per completed run, keyed on `run_id` alone (run IDs are unique across every
+  scope), with the run's six scope columns, its `completion_event_id`, `execution_status`, `ended_at`, `saved_at` (the
+  database clock), `finalized_at` (set once, after finalization) and the run itself, already sanitized, as version-1
+  `jsonb` (`payload_version` 1: task ID and description, environment, provenance with its exposures, attempts, status and
+  instants, in the record payload's own JSON shapes). It is written only when the host registers
+  `AddAgentExperiencePostgresRunStore`.
+- `experience_runs_unfinalized_idx` on `(tenant_id, application_id, project_id, run_id) WHERE finalized_at IS NULL`, for
+  the listing of runs still waiting.
+- **Plaintext.** A stored run is never sealed, so the run store refuses to resolve beside `AddAgentExperiencePostgresEncryption`.
+- A trigger on `experience_records` (`AFTER UPDATE OF deleted_at`, `ENABLE ALWAYS`) turns the stored run a tombstoned
+  record was finalized from into a run tombstone (`erased_at` set, every column but the ID and scope cleared; check
+  constraints hold both shapes), or writes one when the run was never stored, in the record's tenant, when no other live
+  record came from that run -- `0029`'s pattern. A save under a tombstoned run ID conflicts, and the store's reads,
+  listing, marking and deletes all skip tombstones, so a capture retry can never bring an erased run back.
+- Its row-level security policies (`rls_runs_select`, `_insert`, `_update`, `_delete`): a row only inside the declared
+  bounds, for every command. A grant never admits one.
+- The application role gets `SELECT`, `INSERT`, `DELETE` and `UPDATE` of `finalized_at` only, once the table exists.
+  **Re-run `ApplyApplicationRolePrivilegesAsync` after migrating.** .NET-only: no contract privileges file grants it.
+- No existing table is rewritten; creating the trigger takes a brief lock on `experience_records`.
+
 ## Script comments that were written before the work they point at shipped
 
 Because a journaled script is never edited, a few script *comments* still describe later work as future work, and
@@ -764,6 +921,8 @@ what each one now means. None of them changes what a script does; they are comme
 | `0006`, `0010`, `0012` | The guards do not bind the tables' owner, "which the application role is because it created them"; the purge path is "an auditability mechanism, not a privilege boundary"; an application role that is not the migrating role must be granted `EXECUTE` by hand | The two-role deployment is now the supported one: the application role owns nothing and holds no `DELETE` on any ledger, so neither the owner's escape hatch nor a hand-set marker is available to it, and `ApplyApplicationRolePrivilegesAsync` grants `EXECUTE` when the host opts in. The owner and superusers remain unbound. See [Deploying with two roles](deployment.md#deploying-with-two-roles) |
 | `0010` | "Backups, replicas, WAL and logical-replication streams … are host-owned and out of reach of this schema", and the dead tuple "STILL CARRIES THE ERASED TEXT" | Still exactly true in plaintext mode. In encrypted mode every one of those copies holds only ciphertext whose key the erasure destroyed; what stays readable is the derived search data. See [Crypto-shredding](crypto-shredding.md) |
 | `0026` | The Python and Go ports do not write the table yet; it is .NET-only and not in the contract's privileges file, so in a mixed fleet the .NET privileges call must run after that file | Contract 1.4 brought it into the contract: the ports record their injections with `sql/record-injection.sql`, and `sql/application-role-privileges-1.4.sql` grants the table after the 1.0 file. Apply the 1.0 then the 1.4 file, or the .NET call |
+| `0027` | The Python and Go ports do not write the table yet; it is .NET-only and not in the contract's privileges files, so in a mixed fleet the .NET privileges call must run after those files | Contract 1.8 brought it into the contract: the ports record their holdout assignments with `sql/record-holdout-assignment.sql`, and `sql/application-role-privileges-1.8.sql` grants the table after the earlier files. Apply them in order, or the .NET call |
+| `0029` | The Python and Go ports do not write the table; it is .NET-only and not in the contract's privileges files | Contract 1.11 brought it into the contract: the ports record a measured provider's assignments with `sql/record-provider-holdout-assignment.sql` and read them with `sql/query-provider-holdout-outcomes.sql`, and `sql/application-role-privileges-1.11.sql` grants the table after the earlier files. Apply them in order, or the .NET call |
 | `0009` | Retention of the grant access log is deferred to a roadmap item, to be done with `0006`'s runbook | Erasing a record deliberately **keeps** access rows — they carry no payload and answer "who read this before it was deleted". Their retention shipped in `0012` as its own path, by age, never younger than 30 days, under its own marker — not `0006`'s runbook. See [Retention for the grant access log](deletion-and-retention.md#retention-for-the-grant-access-log) |
 
 ## Data semantics

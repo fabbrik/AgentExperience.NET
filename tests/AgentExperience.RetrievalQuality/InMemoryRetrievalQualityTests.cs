@@ -17,7 +17,8 @@ public sealed class InMemoryRetrievalQualityTests : RetrievalQualityTests
     private protected override Task<RetrievalQualityResult> RunAsync(RetrievalCorpus corpus)
     {
         var store = new InMemoryExperienceRecordStore();
-        return RetrievalQualityRun.RunAsync(Adapter, corpus, store, new InMemoryExperienceCandidateSource(store));
+        return RetrievalQualityRun.RunAsync(
+            Adapter, corpus, store, new InMemoryExperienceCandidateSource(store), new InMemoryExperienceSignatureSource(store));
     }
 
     /// <summary>

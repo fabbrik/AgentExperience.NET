@@ -1,0 +1,65 @@
+{
+  "modelId": null,
+  "temperature": 0,
+  "maxOutputTokens": 2048,
+  "toolMode": "None",
+  "tools": null,
+  "responseFormat": {
+    "schemaName": "experience_reflection",
+    "schemaDescription": "The free-text fields of a reflection on one agent run.",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "lesson": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "successfulApproaches": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "failedApproaches": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "preconditions": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "reuseGuidance": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

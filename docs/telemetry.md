@@ -114,9 +114,9 @@ for exporter options. For the sample's fixtures and limitations, read its
 
 | Name | Kind | Emitted by | Operations |
 | --- | --- | --- | --- |
-| `AgentExperience.Core` | `ActivitySource` and `Meter` | `AgentExperience.Core` | the thirteen Core operations below |
-| `AgentExperience.MicrosoftAgentFramework` | `ActivitySource` and `Meter` | `AgentExperience.MicrosoftAgentFramework` | `inject`, and `record_injection` (measurements only, no span) |
-| `AgentExperience.Storage.Postgres` | `ActivitySource` and `Meter` | `AgentExperience.Storage.Postgres` | `delete`, `retention.sweep`, `grant.purge`, `grant.access.purge` (erasure and retention) and `record.seal` (the crypto-shredding upgrade) only |
+| `AgentExperience.Core` | `ActivitySource` and `Meter` | `AgentExperience.Core` | the fourteen Core operations below |
+| `AgentExperience.MicrosoftAgentFramework` | `ActivitySource` and `Meter` | `AgentExperience.MicrosoftAgentFramework` | `inject`, `recall`, and `record_injection`, `record_holdout`, `record_provider_holdout` and `benefit_refresh` (measurements only, no span) |
+| `AgentExperience.Storage.Postgres` | `ActivitySource` and `Meter` | `AgentExperience.Storage.Postgres` | `delete`, `retention.sweep`, `grant.purge`, `grant.access.purge` (erasure and retention), `record.seal` (the crypto-shredding upgrade), the `record.authorship.backfill` and `record.signature.backfill` upgrade jobs, and `record.signature.write` (a record created without its failure signatures) only |
 
 - **One source and meter per assembly.** A text-only host can subscribe to Core without pulling in the adapters, and
   the `AgentExperience.*` wildcard subscribes to all three.
@@ -167,7 +167,7 @@ spans only (see [Span attributes](#span-attributes)) and never as a metric dimen
 
 | Dimension | Values |
 | --- | --- |
-| `operation` | one of the twenty values in [Operations](#operations) |
+| `operation` | one of the twenty-eight values in [Operations](#operations) |
 | `outcome` | an enum member name from that operation's own outcome enum, verbatim, or `Faulted` when it threw. See [Operations](#operations) |
 | `error.class` | `Cancelled`, `Timeout`, `Infrastructure`, `Unexpected`. See [`error.class`](#errorclass). Only on `agentexperience.operation.failures` |
 | `nested` | `true` or `false` (a boolean). See [`nested`](#nested) |
@@ -238,15 +238,20 @@ These are the only span attributes the library writes.
 | `agentexperience.reflection.screening_refusal` | a `ReflectionScreeningRefusal` member, such as `OverLimit`, `SanitizerRejected` or `SanitizerTimedOut` | `finalize`, only when screening refused the reflection and quarantined the record |
 | `agentexperience.independence.refusal` | an `IndependenceRefusal` member, such as `UnknownRun`, `NotExposed`, `HostWrittenRun` or `AssessmentTokenInvalid` | `confidence.apply`, only on `Unverified` |
 | `agentexperience.reuse_evidence.submitted` | integer: how many records finalization's reuse-evidence step submitted confidence evidence for (skipped records not included). Which ones stays on the typed result | `finalize`, on a durable result while `ExperienceFinalizationOptions.ReuseEvidence` is on (0 when it submitted nothing) |
-| `agentexperience.correlation_id` | the host-supplied correlation identifier, verbatim | `retrieve`, `inject`; omitted when the host supplied none |
+| `agentexperience.correlation_id` | the host-supplied correlation identifier, verbatim | `retrieve`, `retrieve.signature`, `inject`, `recall`; omitted when the host supplied none |
+| `agentexperience.retrieval.channel` | `signature`: the retrieval channel the lookup ran on | `retrieve.signature` |
+| `agentexperience.signature.match` | an `ExperienceSignatureMatch` member: `Exact` or `Coarse`. Never the signature, its tool name, error class or fingerprint | `retrieve.signature`; `recall`, when a record matched |
+| `agentexperience.record_count` | integer: how many records a recall hint named, or a held-out run would have been hinted. The IDs stay on the typed result | `recall` |
 | `agentexperience.omitted_count` | integer: how many ranked records the injection left out. The omission reasons stay on the typed result | `inject` |
 | `agentexperience.retracted_count` | integer: how many withdrawal notices the injected block carried, for records delivered earlier in the session. The IDs stay on the typed result | `inject`, only when the count is not zero (session tracking) |
 | `agentexperience.history_read` | `failed` or `timed_out`: why the single-call wiring's read of the chat history a `ChatClientAgent` replays joined nothing (the injection went on with the caller's messages alone) | `inject`, only under `UseAgentExperience` without the provider on the agent's options, and only when that read failed or ran past its 500-millisecond bound |
+| `agentexperience.nothing_reason` | `weak_match`: the match floor (`ExperienceInjectionOptions.MinimumMatch`) kept at least one record out of a block that injected nothing | `inject`, only on a `NothingToInject` outcome with a `WeakMatch` omission |
 | `agentexperience.erased_count` | integer: how many records the sweep erased, how many grants the purge removed, or how many access rows the access purge removed. Which ones stays in the database | `retention.sweep`, `grant.purge`, `grant.access.purge`, on every returned result (0 on a refusal); `retention.sweep` also when it threw `ExperienceRetentionSweepInterruptedException`, taken from its `Partial` |
 | `agentexperience.interrupted` | boolean: whether the sweep stopped before the end of its batch | `retention.sweep`, where `erased_count` is written |
-| `agentexperience.scope_match` | `Exact` or `Subtree`: how wide the call was asked to reach (the `ScopeMatch` member's name, never the scope) | `retention.sweep`, `grant.access.purge`, `record.seal`, `record.authorship.backfill`, whenever the caller passed a defined `ScopeMatch`; the five-argument `SweepExpiredAsync` reports `Exact` |
+| `agentexperience.scope_match` | `Exact` or `Subtree`: how wide the call was asked to reach (the `ScopeMatch` member's name, never the scope) | `retention.sweep`, `grant.access.purge`, `record.seal`, `record.authorship.backfill`, `record.signature.backfill`, whenever the caller passed a defined `ScopeMatch`; the five-argument `SweepExpiredAsync` reports `Exact` |
 | `agentexperience.sealed_count` | integer: how many plaintext records the upgrade batch sealed. Which ones stays in the database | `record.seal`, on every returned result (0 on a refusal) |
-| `agentexperience.backfilled_count` | integer: how many sealed records the authorship backfill batch wrote a flag for. Which ones, and which flag, stay in the database | `record.authorship.backfill`, on every returned result (0 on a refusal) |
+| `agentexperience.sqlstate` | the SQLSTATE that made a signature write skip: `42P01`, `42703` or `42501`. Nothing else from the error | `record.signature.write` |
+| `agentexperience.backfilled_count` | integer: how many sealed records the authorship backfill batch wrote a flag for, or how many records the signature backfill batch wrote signatures for. Which ones, and what was written, stay in the database | `record.authorship.backfill`, `record.signature.backfill`, on every returned result (0 on a refusal) |
 
 Identifiers that come from the request are written before the operation runs, so they are present on a span that
 threw as well.
@@ -266,8 +271,8 @@ every identifier from a request, it is written before the operation runs, so it 
 Core operations on that record already emitted. `retention.sweep`, `grant.purge` and `grant.access.purge` carry a
 count, and a sweep also a flag; the sweep and the access purge also say whether they reached `Exact` or `Subtree`.
 `record.seal`, the crypto-shredding upgrade, carries only its `sealed_count` and `scope_match`; a key store's failure
-reaches a span as its exception type and `error.class`, never its message. `record.authorship.backfill` carries only
-its `backfilled_count` and `scope_match`, never which records were flagged or how. In crypto-shredding mode a `delete` span
+reaches a span as its exception type and `error.class`, never its message. `record.authorship.backfill` and
+`record.signature.backfill` carry only their `backfilled_count` and `scope_match`, never which records were written or what. In crypto-shredding mode a `delete` span
 looks exactly as it does in plaintext mode: whether a key was destroyed is not a telemetry value.
 None of them writes a scope identifier, a task ID, record content, the IDs of swept records, purged grants or purged
 access rows, a grant's reason or recipient scope, a reading principal, or an administrator principal. `ErasureTelemetryTests` plants a marker
@@ -276,8 +281,9 @@ record was erased is out of the library's reach: see KL-2.
 
 ## Operations
 
-There are twenty `operation` values: thirteen emitted on `AgentExperience.Core`, one on
-`AgentExperience.MicrosoftAgentFramework`, and six on `AgentExperience.Storage.Postgres`. The set is closed: adding
+There are twenty-eight `operation` values: fourteen emitted on `AgentExperience.Core`, six on
+`AgentExperience.MicrosoftAgentFramework` (the twenty `docs/telemetry-names.json` pins for the ports), and eight on
+`AgentExperience.Storage.Postgres` (pinned by the storage tests' diagnostics-agreement test, not by the names file). The set is closed: adding
 a value is a deliberate change that widens every instrument's cardinality.
 
 | `operation` | Emitted by | `outcome` values (besides `Faulted`) | Span attributes beyond the common ones | Nested operations it emits |
@@ -291,18 +297,25 @@ a value is a deliberate change that widens every instrument's cardinality.
 | `lifecycle.commit` | `ExperienceLifecycleService.CommitAsync` | `LifecycleTransitionOutcome`: `Committed`, `TransitionNotAllowed`, `ReplacementNotAllowed`, `StaleRevision`, `StatusMismatch`, `Conflict`, `NotFound`, `Denied`, `Invalid`, `Deleted` | `experience_id`, `event_id` | `deindex` (when the transition leaves eligibility) |
 | `confidence.apply` | `ExperienceLifecycleService.ApplyEvidenceAsync` | `ConfidenceUpdateOutcome`: `Applied`, `Ineligible`, `StaleRevision`, `StatusMismatch`, `Conflict`, `NotFound`, `Denied`, `Invalid`, `Deleted`, `Unverified` | `experience_id`, `event_id`; `confidence.admission` on `Applied`; `independence.refusal` on `Unverified` | `deindex` (when a contradiction takes the record out of reuse) |
 | `retrieve` | `ExperienceRetrievalService.RetrieveAsync` | `RetrievalOutcome`: `Completed`, `TimedOut`, `Denied`, `Failed` | `correlation_id` | — |
+| `retrieve.signature` | `ExperienceSignatureRetrievalService.FindAsync` (story 28.2: the records holding a failed call's signature, through `IExperienceSignatureSource`) | `SignatureRetrievalOutcome`: `Completed`, `Denied`, `Invalid`, `Failed` (the source threw; the exception stays on the result) | `retrieval.channel`, `signature.match`, `correlation_id` | — |
 | `index` | `ExperienceIndexingService.IndexAsync` | `ExperienceIndexingOutcome`: `Indexed`, `Skipped`, `Stale`, `Missing`, `Denied`, `Ineligible`, `ProviderFailed`, `IndexFailed` | `experience_id` | `reindex` (a one-record pass) |
 | `deindex` | `ExperienceIndexingService.RemoveAsync` | `ExperienceDeindexingOutcome`: `Removed`, `NotIndexed`, `Denied`, `Failed` | `experience_id` | — |
 | `reindex` | `ExperienceIndexingService.ReindexAsync` | `ExperienceReindexOutcome`: `Completed`, `Denied`, `Invalid`, `Failed` | none (a pass has no single record) | — |
 | `reuse_feedback` | `ExperienceReuseFeedbackService.RecordAsync` | `ExperienceReuseFeedbackOutcome`: `Recorded`, `AlreadyRecorded`, `Conflict`, `Denied`, `Invalid` | `feedback_id`, `run_id` | `confidence.apply` (once per attributed exposed record) |
-| `inject` | `ExperienceContextProvider` (MAF `AIContextProvider`) | `InjectionOutcome`: `Injected`, `NothingToInject`, `Skipped`, `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed`, `Failed`, `Retracted` (a block of withdrawal notices only), `SessionBudgetExhausted` | `correlation_id`, `omitted_count`, `retracted_count`, `history_read` | none on its own meter; its `retrieve` is emitted on the Core meter with `nested=false` |
+| `inject` | `ExperienceContextProvider` (MAF `AIContextProvider`) | `InjectionOutcome`: `Injected`, `NothingToInject`, `Skipped`, `RetrievalTimedOut`, `RetrievalDenied`, `RetrievalFailed`, `Failed`, `Retracted` (a block of withdrawal notices only), `SessionBudgetExhausted`, `Withheld` (the injection holdout withheld a built block from a captured run; see `ExperienceInjectionOptions.Holdout`) | `correlation_id`, `omitted_count`, `retracted_count`, `history_read`, `nothing_reason` | none on its own meter; its `retrieve` is emitted on the Core meter with `nested=false` |
+| `recall` | `ExperienceContextProvider`, once per failed tool call it looks at when recall at the moment of failure is on (`ExperienceInjectionOptions.Recall`, off by default), inside the tool call, before the model's next call | `ExperienceRecallOutcome`: `Hinted`, `Withheld` (the run is in the injection holdout's holdout arm), `NoMatch`, `TimedOut`, `Failed`, `Bounded` (the signature was already looked up in the run, or a run or session bound was reached) | `correlation_id`, `signature.match`, `record_count` | none on its own meter; its `retrieve.signature` is emitted on the Core meter with `nested=false` |
 | `record_injection` | `ExperienceContextProvider`, in the background after an injected block is handed over: it records when the block's records were injected, for the lessons view. No span (the injection's has closed); counted, timed and failure-counted on the same instruments | `Recorded`; `NotTracked` (the store does not track injections, `IExperienceRecordStore.TracksInjections`); `NotRecorded` (the store refused or failed the write; `error.class` `Infrastructure` or `Unexpected` when it threw, `Timeout` when too many earlier writes are still running); `OutcomeUnknown` (the write overran its few-second bound, `Timeout`, or was cancelled, `Cancelled`: it may have landed) | — | — |
+| `record_holdout` | `ExperienceContextProvider`, in the background, when the injection holdout (`ExperienceInjectionOptions.Holdout`, off by default) assigned a captured run to an arm: it records the run's arm and the records its block named, delivered or withheld. No span; counted, timed and failure-counted on the same instruments | The same four as `record_injection`; `NotTracked` means the store does not record holdout assignments (`IExperienceRecordStore.TracksHoldout`) | — | — |
+| `record_provider_holdout` | `ExperienceHoldoutContextProvider`, in the background, when a measured memory provider's holdout assigned a captured run to an arm: it records the run, the provider key and the arm. No span; counted, timed and failure-counted on the same instruments | The same four as `record_injection`; `NotTracked` means the store does not record provider holdout assignments (`IExperienceRecordStore.TracksProviderHoldout`) | — | — |
+| `benefit_refresh` | `ExperienceContextProvider`, in the background, when acting on measured benefit (`ExperienceInjectionOptions.Benefit`, off by default) refreshes the cached benefit estimate of one scope and principal. No span; counted, timed and failure-counted on the same instruments | `Refreshed` (the store answered and the cached estimate was replaced; one it could not give, untracked or refused, has no effect); `NotRefreshed` (the read threw, `error.class` `Infrastructure` or `Unexpected`: the previous estimate is kept); `OutcomeUnknown` (the read overran `RefreshTimeout`, `Timeout`, or was cancelled, `Cancelled`: the previous estimate is kept) | — | — |
 | `delete` | `PostgresExperienceRecordStore.DeleteAsync` (both overloads; one span per call) | `ExperienceStoreOutcome`: `Deleted`, `StaleRevision`, `NotFound`, `Denied`, `Invalid` | `experience_id` | — |
 | `retention.sweep` | `PostgresExperienceRecordStore.SweepExpiredAsync` (both overloads; one span per call) | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` | `erased_count`, `interrupted`, `scope_match` | — (one span per batch, never one per record, whether `Exact` or `Subtree`) |
 | `grant.purge` | `PostgresExperienceGrantStore.PurgeExpiredAsync` | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` | `erased_count` | — |
 | `grant.access.purge` | `PostgresExperienceGrantAccessLog.PurgeOlderThanAsync` | `ExperienceStoreOutcome`: `Deleted`, `Denied`, `Invalid` (including a cutoff inside the 30-day minimum retention, which the database refuses) | `erased_count`, `scope_match` | — |
 | `record.seal` | `PostgresExperienceRecordStore.SealPlaintextRecordsAsync` (the crypto-shredding upgrade; one span per batch) | `ExperienceStoreOutcome`: `Committed`, `Denied`, `Invalid` (including a store with no `ExperienceEncryption`) | `sealed_count`, `scope_match` | — |
 | `record.authorship.backfill` | `PostgresExperienceRecordStore.BackfillSealedAuthorshipAsync` (the owner-run authorship backfill; one span per batch) | `ExperienceStoreOutcome`: `Committed`, `Denied`, `Invalid` (including a store with no `ExperienceEncryption`) | `backfilled_count`, `scope_match` | — |
+| `record.signature.backfill` | `PostgresExperienceRecordStore.BackfillFailureSignaturesAsync` (story 28.2: the failure-signature upgrade job over plaintext records; one span per batch) | `ExperienceStoreOutcome`: `Committed`, `Denied`, `Invalid` | `backfilled_count`, `scope_match` | — |
+| `record.signature.write` | `PostgresExperienceRecordStore.CreateAsync`, only when it created a record **without** its failure signatures because the signature table (`42P01`), a column it reads (`42703`) or the role's `INSERT` privilege on it (`42501`) was missing — migrate, re-run the privileges call, then run the backfill. A refusal by a role that holds the privilege (a row-level security policy) is not a skip: the create fails | `Skipped` | `sqlstate` | — |
 
 Notes:
 
@@ -383,21 +396,33 @@ returned error in Go).
 | `finalize` | Core | `finalize` | `Finalize` | `Validated`, `Quarantined`. It covers verification, reflection, record creation and the initial event; the store write is not a separate `lifecycle.commit` |
 | `retrieve` | Core | the text and vector search and the ranking inside an injection | the same | `Completed`, `Failed` (the text search failed) |
 | `index` | Core | the background embedding write after a record is stored | the same | `Indexed`, `Stale`, `Missing`, `ProviderFailed`, `IndexFailed` |
-| `inject` | MAF | the context provider | the context provider | `Injected`, `NothingToInject`, `Skipped`, `RetrievalFailed`, `Failed` |
+| `inject` | MAF | the context provider | the context provider | `Injected`, `NothingToInject`, `Skipped`, `RetrievalFailed`, `Failed`, `Withheld` (the injection holdout withheld the block, contract 1.8) |
 | `record_injection` | MAF | the background injection record (measurements only, no span) | the same | `Recorded`, `NotTracked`, `NotRecorded`, `OutcomeUnknown`, with the failure classes of the table above |
+| `record_holdout` | MAF | the background holdout assignment record (measurements only, no span), when the holdout is on | the same | the same four as `record_injection` |
 
-The ports never emit `lifecycle.commit`, `confidence.apply`, `deindex`, `reindex`, `reuse_feedback`, `delete`,
-`retention.sweep`, `grant.purge`, `grant.access.purge`, `record.seal` or `record.authorship.backfill`: they do not perform
+Since contract 1.16 both ports emit `lifecycle.commit` and `confidence.apply` (Core source, a span each) from their
+lifecycle services, with .NET's outcomes and attributes: `experience_id` and `event_id`, and on `confidence.apply`
+`confidence.admission` (always `HostTrusted` from a port) and `independence.refusal`. Since contract 1.17 both ports emit
+`reuse_feedback` (Core source, a span) from their reuse-feedback services, with .NET's outcomes (`Recorded`,
+`AlreadyRecorded`, `Conflict`, `Denied`, `Invalid`, or `Faulted` when the ledger write fails) and attributes
+(`feedback_id`, `run_id`), and a `confidence.apply` inside it for each attributed record. Finalization's reuse-evidence
+step is a call of its own in a port, so its `confidence.apply` operations are not nested in a `finalize` span. The ports
+never emit `deindex`, `reindex`, `delete`,
+`retention.sweep`, `grant.purge`, `grant.access.purge`, `record.seal`, `record.authorship.backfill`, `retrieve.signature`,
+`record.signature.backfill` or `record.signature.write`: they do not perform
 them. Differences from .NET that a dashboard should know:
 
-- `nested` is `true` for `verify` and `reflect` inside `finalize`, and `false` for everything else: `inject`,
-  `record_injection` and `index` are never nested, and the `retrieve` inside an `inject` is on the Core meter, so `false`.
+- `nested` is `true` for `verify` and `reflect` inside `finalize` and for `confidence.apply` inside `reuse_feedback`, and
+  `false` for everything else: `inject`,
+  `record_injection`, `record_holdout` and `index` are never nested, and the `retrieve` inside an `inject` is on the Core meter, so `false`.
   A span's parent is the span that ran it, or the host's current span.
 - The ports set only these span attributes beyond the common ones: `run_id`, `attempt_id`, `experience_id`,
-  `reflection_id`, `stage` (on `finalize`: `Load`, `Evaluate`, `Reflect` or `CreateRecord`, the last stage reached) and
-  `omitted_count` (on `inject`). They do not write `correlation_id`, `event_id`, `retracted_count`, `history_read`,
-  `confidence.admission`, `independence.refusal`, `reflection.screening_refusal` or `reuse_evidence.submitted`, because
-  they have no such thing.
+  `reflection_id`, `stage` (on `finalize`: `Load`, `Evaluate`, `Reflect` or `CreateRecord`, the last stage reached),
+  `omitted_count` (on `inject`), and `event_id`, `confidence.admission` and `independence.refusal` (on `lifecycle.commit`
+  and `confidence.apply`, contract 1.16), `feedback_id` (on `reuse_feedback`, contract 1.17), and
+  `reflection.screening_refusal` (on `finalize`). They do not write
+  `correlation_id`, `retracted_count`, `history_read`, `nothing_reason` or `reuse_evidence.submitted`, because they have
+  no such thing.
 - An `inject` is `Faulted` only when something escapes it (the invocation's own cancellation in Python); every other
   failure is a returned outcome, as in .NET.
 

@@ -1,0 +1,11 @@
+{
+  "event_id": "f7381634-35dd-8e8a-987a-83ee90a2e188",
+  "experience_id": "2af95164-4a2d-8327-a7f1-f2daa12ff20c",
+  "prior_status": "Candidate",
+  "current_status": "Validated",
+  "reason": "Initial finalization: verification Verified, completion score 1, reflection recorded.",
+  "producer": "AgentExperience.ExperienceFinalizationService/1.0.0",
+  "occurred_at": "2026-03-02T09:00:30+00:00",
+  "expected_revision": 0,
+  "applied_revision": 1
+}

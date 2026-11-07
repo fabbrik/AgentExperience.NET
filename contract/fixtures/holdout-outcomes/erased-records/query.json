@@ -1,0 +1,12 @@
+{
+  "description": "Erased (tombstoned) records are never read: a run whose earliest record is erased reads its next live record's outcome and model; a run whose only record is erased loses its rows, and so does an erased lesson, as the erasure removes them.",
+  "scope": {
+    "tenantId": "contract-tenant",
+    "applicationId": "contract-app",
+    "projectId": "contract-project",
+    "teamId": null,
+    "agentId": "refund-agent",
+    "userId": null
+  },
+  "limit": 1000
+}
