@@ -28,6 +28,9 @@
 #:property RestorePackagesWithLockFile=false
 #:property TreatWarningsAsErrors=true
 #:property GenerateDocumentationFile=false
+// A file-based app defaults to PublishAot, which restores Microsoft.DotNet.ILCompiler; this script is only ever run, never
+// published, and that package's own advisory (NU1903) would fail the build under TreatWarningsAsErrors.
+#:property PublishAot=false
 
 using System.IO.Compression;
 using System.Reflection.Metadata;
