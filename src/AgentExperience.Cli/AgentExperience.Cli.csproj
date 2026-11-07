@@ -9,10 +9,6 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>$(PackageTags);mcp;cli;dotnet-tool;coding-agents</PackageTags>
     <RootNamespace>AgentExperience.Cli</RootNamespace>
-    <!-- A new package ID: nuget.org has no published version to validate against until its first release
-         (RELEASING.md, "First publish of a new package ID"). Remove this after that release. The tool has no public
-         API either: every type is internal, so its approval baseline is empty and stays so. -->
-    <DisablePackageBaselineValidation>true</DisablePackageBaselineValidation>
   </PropertyGroup>
 
   <ItemGroup>
