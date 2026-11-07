@@ -97,6 +97,14 @@ while read -r id floor; do
   rows="$rows$id $floor $float"$'\n'
 done <<< "$floors"
 
+# Test-only Microsoft.Extensions.* packages (the proof's Microsoft.Extensions.AI.Evaluation) are no shipping floor,
+# but a newer MAF raises their floor transitively (1.28.0 asks for Evaluation 10.11.0), and NuGet refuses a direct
+# reference below a transitive one (NU1605). They float to the newest in their major with the rest.
+for project in "$work"/tests/*/*.csproj "$work"/samples/*/*.csproj; do
+  sed -i.bak -E 's/(<PackageReference Include="Microsoft\.Extensions\.[^"]+" Version=")([0-9]+)\.[0-9]+\.[0-9]+"/\1\2.*"/' "$project"
+  rm -f "$project.bak"
+done
+
 echo "Floating every shipping floor to the newest release in its major, in $work"
 
 stage="restore"
