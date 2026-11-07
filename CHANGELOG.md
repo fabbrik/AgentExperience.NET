@@ -6,6 +6,10 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### MAF 1.28.0 compatibility probe
+
+- The MAF probe's latest leg now floats the compatibility proof's `Microsoft.Extensions.*` floors, so a MAF release that raises one (1.28.0 asks for `Microsoft.Extensions.AI.Evaluation` 10.11.0) no longer fails on the proof's own pin. The adapter itself passes against 1.28.0.
+
 ### The benefit estimate in Python and Go: contract 1.9 (story 27.1)
 
 - **Contract 1.9** ([what it adds](contract/README-1.9.md)) brings the benefit estimate into the language-neutral

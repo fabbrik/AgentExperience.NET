@@ -76,6 +76,12 @@ if [ "$version" != "$pinned" ]; then
   proof="$work/tests/AgentExperience.CompatibilityProof/AgentExperience.CompatibilityProof.csproj"
   sed -i.bak -E 's/(<PackageReference Include="[^"]+" Version=")\[([0-9]+\.[0-9]+\.[0-9]+)\]"/\1\2"/' "$proof"
   rm -f "$proof.bak"
+  # A newer MAF can also raise the floor of a Microsoft.Extensions.* package the proof references directly (1.28.0
+  # asks for Microsoft.Extensions.AI.Evaluation 10.11.0 while the proof asks for 10.10.0), and NuGet refuses a
+  # direct reference below a transitive one (NU1605). So those floors float to the newest in their major here;
+  # the floor's own run keeps them as committed.
+  sed -i.bak -E 's/(<PackageReference Include="Microsoft\.Extensions\.[^"]+" Version=")([0-9]+)\.[0-9]+\.[0-9]+"/\1\2.*"/' "$proof"
+  rm -f "$proof.bak"
   for project in \
     "$work/src/AgentExperience.MicrosoftAgentFramework/AgentExperience.MicrosoftAgentFramework.csproj" \
     "$work/tests/AgentExperience.CompatibilityProof/AgentExperience.CompatibilityProof.csproj"; do
