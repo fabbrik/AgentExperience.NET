@@ -6,9 +6,6 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <!-- Selects this package's namespace in the shared rules linked below. -->
     <DefineConstants>$(DefineConstants);AGENTEXPERIENCE_SQLITE</DefineConstants>
-    <!-- A new package ID: nuget.org has no published version to validate against until its first release
-         (RELEASING.md, "First publish of a new package ID"). Remove this after that release. -->
-    <DisablePackageBaselineValidation>true</DisablePackageBaselineValidation>
   </PropertyGroup>
 
   <ItemGroup>
