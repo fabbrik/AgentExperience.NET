@@ -126,6 +126,9 @@ internal sealed class AgentExperienceRegistration(AgentExperienceOptions options
         Options.Capture?.Invoke(capture);
         services.GetRequiredService<AgentExperienceEmbeddingsRuntime>().Report(capture);
 
+        // Reflective execution (optional, off unless configured) lets one run hold several attempts; a no-op otherwise.
+        (services.GetService(typeof(ReflectiveExecution.ReflectiveExecutionRegistration)) as ReflectiveExecution.ReflectiveExecutionRegistration)?.Compose(capture);
+
         if (Options.Verify is not null && capture.ResolveFinalization is not null)
         {
             throw new InvalidOperationException(

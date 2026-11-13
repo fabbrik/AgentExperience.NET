@@ -391,7 +391,7 @@
       "agentexperience.core": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.17, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.18, )",
           "Microsoft.Extensions.Compliance.Redaction": "[10.10.0, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )"
         }
@@ -399,7 +399,7 @@
       "agentexperience.microsoftagentframework": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Core": "[0.1.0-preview.17, )",
+          "AgentExperience.Core": "[0.1.0-preview.18, )",
           "Microsoft.Agents.AI": "[1.22.0, 2.0.0)",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.3, )"
         }
@@ -407,17 +407,25 @@
       "agentexperience.sample.quickstart": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.MicrosoftAgentFramework": "[0.1.0-preview.17, )",
-          "AgentExperience.Storage.InMemory": "[0.1.0-preview.17, )",
-          "AgentExperience.Storage.Sqlite": "[0.1.0-preview.17, )",
+          "AgentExperience.MicrosoftAgentFramework": "[0.1.0-preview.18, )",
+          "AgentExperience.Storage.InMemory": "[0.1.0-preview.18, )",
+          "AgentExperience.Storage.Sqlite": "[0.1.0-preview.18, )",
           "Microsoft.Extensions.AI.OpenAI": "[10.10.0, 10.10.0]",
+          "Microsoft.Extensions.DependencyInjection": "[10.0.12, 10.0.12]"
+        }
+      },
+      "agentexperience.sample.reflective": {
+        "type": "Project",
+        "dependencies": {
+          "AgentExperience.MicrosoftAgentFramework": "[0.1.0-preview.18, )",
+          "AgentExperience.Storage.InMemory": "[0.1.0-preview.18, )",
           "Microsoft.Extensions.DependencyInjection": "[10.0.12, 10.0.12]"
         }
       },
       "agentexperience.storage.inmemory": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.17, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.18, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.3, )"
         }
@@ -425,7 +433,7 @@
       "agentexperience.storage.sqlite": {
         "type": "Project",
         "dependencies": {
-          "AgentExperience.Abstractions": "[0.1.0-preview.17, )",
+          "AgentExperience.Abstractions": "[0.1.0-preview.18, )",
           "Microsoft.Data.Sqlite": "[10.0.12, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.12, )"
         }

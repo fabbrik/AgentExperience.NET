@@ -311,6 +311,39 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
         StartClose(entry, atBound);
     }
 
+    /// <summary>
+    /// Completes a run this registration holds open, with the status of its last attempt, and hands it to the host's
+    /// finalization exactly as a run its own invocation completed would be. Used by the reflective coordinator when it
+    /// stops before the last permitted attempt, so the run is not left to its duration bound (which would record it as
+    /// <see cref="RunExecutionStatus.Cancelled"/>). A no-op when no such run is open, is in flight, or is already closing.
+    /// </summary>
+    /// <param name="runId">The run to close.</param>
+    /// <param name="status">How the run's last attempt ended.</param>
+    /// <returns>A task that finishes when the completion and finalization have, and never faults.</returns>
+    internal Task CloseRunAsync(Guid runId, RunExecutionStatus status)
+    {
+        if (!_entries.TryGetValue(runId, out var entry))
+        {
+            return Task.CompletedTask;
+        }
+
+        lock (entry.Gate)
+        {
+            if (entry.Removed || entry.Busy || entry.Closing || IsDisposed)
+            {
+                return Task.CompletedTask;
+            }
+
+            entry.Busy = true;
+            entry.Closing = true;
+        }
+
+        Interlocked.Increment(ref _closesStarted);
+        var work = Task.Run(() => CloseAsync(entry, atBound: false, status));
+        Track(work);
+        return work;
+    }
+
     /// <summary>Forgets a run the caller has completed, cancelling its duration bound with it.</summary>
     internal void Forget(OpenRun claimed) => Remove(claimed);
 
@@ -553,7 +586,7 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
     /// configured. Never throws; every problem goes to
     /// <see cref="ExperienceCaptureOptions.OnCaptureFailure"/>.
     /// </summary>
-    private async Task CloseAsync(OpenRun entry, bool atBound)
+    private async Task CloseAsync(OpenRun entry, bool atBound, RunExecutionStatus status = RunExecutionStatus.Cancelled)
     {
         var runId = entry.RunId;
         if (IsDisposed)
@@ -577,7 +610,7 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
                 identity = entry.Identity;
             }
 
-            work = Task.Run(() => CompleteAndFinalizeAsync(runId, identity, atBound, token), CancellationToken.None);
+            work = Task.Run(() => CompleteAndFinalizeAsync(runId, identity, atBound, status, token), CancellationToken.None);
             await work.WaitAsync(options.FinalizationTimeout, options.TimeProvider).ConfigureAwait(false);
 
             timeout.Dispose();
@@ -623,10 +656,10 @@ internal sealed class OpenRunRegistry(IExperienceCaptureService service, Experie
         }
     }
 
-    private async Task CompleteAndFinalizeAsync(Guid runId, ExperienceIdentity? identity, bool atBound, CancellationToken cancellationToken)
+    private async Task CompleteAndFinalizeAsync(Guid runId, ExperienceIdentity? identity, bool atBound, RunExecutionStatus status, CancellationToken cancellationToken)
     {
         var completed = await service
-            .CompleteRunAsync(runId, options.NewId(), RunExecutionStatus.Cancelled, options.TimeProvider.GetUtcNow(), cancellationToken)
+            .CompleteRunAsync(runId, options.NewId(), status, options.TimeProvider.GetUtcNow(), cancellationToken)
             .ConfigureAwait(false);
 
         if (completed is null || completed.Outcome is CompleteRunOutcome.RunNotFound)
