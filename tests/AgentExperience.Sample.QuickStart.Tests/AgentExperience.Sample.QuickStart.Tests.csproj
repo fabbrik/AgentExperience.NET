@@ -19,6 +19,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\samples\AgentExperience.Sample.QuickStart\AgentExperience.Sample.QuickStart.csproj" />
+    <!-- The reflective execution sample's tests live here too, so no new test project has to join the dogfood verifier's
+         pre-registered command list. -->
+    <ProjectReference Include="..\..\samples\AgentExperience.Sample.Reflective\AgentExperience.Sample.Reflective.csproj" />
   </ItemGroup>
 
   <ItemGroup>

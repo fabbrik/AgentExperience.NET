@@ -118,6 +118,9 @@ for exporter options. For the sample's fixtures and limitations, read its
 | `AgentExperience.MicrosoftAgentFramework` | `ActivitySource` and `Meter` | `AgentExperience.MicrosoftAgentFramework` | `inject`, `recall`, and `record_injection`, `record_holdout`, `record_provider_holdout` and `benefit_refresh` (measurements only, no span) |
 | `AgentExperience.Storage.Postgres` | `ActivitySource` and `Meter` | `AgentExperience.Storage.Postgres` | `delete`, `retention.sweep`, `grant.purge`, `grant.access.purge` (erasure and retention), `record.seal` (the crypto-shredding upgrade), the `record.authorship.backfill` and `record.signature.backfill` upgrade jobs, and `record.signature.write` (a record created without its failure signatures) only |
 
+- **Reflective execution (experimental) has its own meter**, `AgentExperience.MicrosoftAgentFramework.ReflectiveExecution`,
+  with four counters. It is not in the names file and not part of the cross-language contract; see
+  [Reflective execution](guide/reflective-execution.md#telemetry).
 - **One source and meter per assembly.** A text-only host can subscribe to Core without pulling in the adapters, and
   the `AgentExperience.*` wildcard subscribes to all three.
 - **Why erasure emits from the storage adapter.** Erasure is a capability of the PostgreSQL adapter, not of a

@@ -96,6 +96,12 @@ public static class AgentExperienceAgentBuilderExtensions
                 : WithInjection(inner, services.GetAgentExperienceContextProvider()));
         }
 
+        if (lifetime is ExperienceCaptureMiddleware middleware
+            && services.GetService(typeof(ReflectiveExecution.ReflectiveExecutionRegistration)) is ReflectiveExecution.ReflectiveExecutionRegistration reflective)
+        {
+            reflective.Bind(middleware, services.GetRequiredService<IExperienceCaptureService>());
+        }
+
         // Disposed with the container, which stops this agent's open-run timers and any late finalization.
         services.GetRequiredService<AgentExperienceLifetimes>().Add(lifetime);
         return builder;

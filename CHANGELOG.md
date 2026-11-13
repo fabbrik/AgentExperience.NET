@@ -6,7 +6,18 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- **Reflective execution (experimental, off by default).** An optional loop that evaluates an attempt, proposes a
+  corrected strategy and retries within hard budgets and only with the host's authorization. `AddReflectiveExecution`,
+  `UseReflectiveExecution` (the outermost layer), `ReflectionExecutionCoordinator` (Core, no MAF dependency),
+  `IReflectionEvaluator` with a deterministic and an `IChatClient` implementation, `IRetryAuthorizer` (the default
+  denies), `SideEffectPolicy` (the default never retries semantically). Every attempt is an attempt of one run,
+  finalized once through the host's own `Verify`; a model's claim of success is never verification. Purely additive:
+  no existing signature changed. See [Reflective execution](docs/guide/reflective-execution.md) and its
+  [design assessment](docs/architecture/reflective-execution-design.md). No benefit is claimed: the sample's four-arm
+  comparison uses a scripted model and shows mechanics only.
+- A sample, `AgentExperience.Sample.Reflective`: a corrected run, then a related task handed what it learned.
 
 ## 0.1.0-preview.18
 

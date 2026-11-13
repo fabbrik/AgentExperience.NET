@@ -910,6 +910,156 @@ namespace AgentExperience.Core.Reflections
         UndefinedAuthorship = 10,
     }
 }
+namespace AgentExperience.Core.ReflectiveExecution
+{
+    public sealed class CompositeReflectionEvaluator : AgentExperience.Core.ReflectiveExecution.IReflectionEvaluator
+    {
+        public CompositeReflectionEvaluator(System.Collections.Generic.IEnumerable<AgentExperience.Core.ReflectiveExecution.IReflectionEvaluator> evaluators) { }
+        public System.Threading.Tasks.ValueTask<AgentExperience.Core.ReflectiveExecution.ReflectionEvaluation> EvaluateAsync(AgentExperience.Core.ReflectiveExecution.ReflectionAttemptContext context, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public interface IReflectionEvaluator
+    {
+        System.Threading.Tasks.ValueTask<AgentExperience.Core.ReflectiveExecution.ReflectionEvaluation> EvaluateAsync(AgentExperience.Core.ReflectiveExecution.ReflectionAttemptContext context, System.Threading.CancellationToken cancellationToken);
+    }
+    public interface IReplanningStrategy
+    {
+        AgentExperience.Core.ReflectiveExecution.IReplanningStrategy EvaluatorProposal { get; }
+        System.Threading.Tasks.ValueTask<string?> ReplanAsync(AgentExperience.Core.ReflectiveExecution.ReflectionAttemptContext context, AgentExperience.Core.ReflectiveExecution.ReflectionEvaluation evaluation, System.Threading.CancellationToken cancellationToken);
+    }
+    public interface IRetryAuthorizer
+    {
+        AgentExperience.Core.ReflectiveExecution.IRetryAuthorizer DenyAll { get; }
+        System.Threading.Tasks.ValueTask<bool> AuthorizeAsync(AgentExperience.Core.ReflectiveExecution.ReflectionAttemptContext context, AgentExperience.Core.ReflectiveExecution.ReflectionEvaluation evaluation, System.Threading.CancellationToken cancellationToken);
+    }
+    public enum ReflectionAssessment
+    {
+        Satisfied = 0,
+        NeedsCorrection = 1,
+        Unrecoverable = 2,
+    }
+    public sealed class ReflectionAttemptContext : System.IEquatable<AgentExperience.Core.ReflectiveExecution.ReflectionAttemptContext>
+    {
+        public ReflectionAttemptContext(string TaskText, int AttemptNumber, AgentExperience.Core.ReflectiveExecution.ReflectionAttemptOutcome Outcome, System.Collections.Generic.IReadOnlyList<string> PreviousStrategies) { }
+        public int AttemptNumber { get; init; }
+        public AgentExperience.Core.ReflectiveExecution.ReflectionAttemptOutcome Outcome { get; init; }
+        public System.Collections.Generic.IReadOnlyList<string> PreviousStrategies { get; init; }
+        public string TaskText { get; init; }
+    }
+    public delegate System.Threading.Tasks.ValueTask<AgentExperience.Core.ReflectiveExecution.ReflectionAttemptOutcome> ReflectionAttemptDelegate(AgentExperience.Core.ReflectiveExecution.ReflectionAttemptInput input, System.Threading.CancellationToken cancellationToken);
+    public sealed class ReflectionAttemptInput : System.IEquatable<AgentExperience.Core.ReflectiveExecution.ReflectionAttemptInput>
+    {
+        public ReflectionAttemptInput(int AttemptNumber, string? CorrectionNote, bool IsLastPermittedAttempt) { }
+        public int AttemptNumber { get; init; }
+        public string? CorrectionNote { get; init; }
+        public bool IsLastPermittedAttempt { get; init; }
+    }
+    public sealed class ReflectionAttemptOutcome : System.IEquatable<AgentExperience.Core.ReflectiveExecution.ReflectionAttemptOutcome>
+    {
+        public ReflectionAttemptOutcome(bool Completed, string? ErrorClass, string? ResultExcerpt, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.ReflectiveExecution.ReflectionFailedCall> FailedCalls, int? ToolCalls = default, long? TokensUsed = default, bool? TrustedCheckPassed = default, bool Transient = false) { }
+        public bool Completed { get; init; }
+        public string? ErrorClass { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.ReflectiveExecution.ReflectionFailedCall> FailedCalls { get; init; }
+        public string? ResultExcerpt { get; init; }
+        public long? TokensUsed { get; init; }
+        public int? ToolCalls { get; init; }
+        public bool Transient { get; init; }
+        public bool? TrustedCheckPassed { get; init; }
+    }
+    public sealed class ReflectionEvaluation : System.IEquatable<AgentExperience.Core.ReflectiveExecution.ReflectionEvaluation>
+    {
+        public ReflectionEvaluation(AgentExperience.Core.ReflectiveExecution.ReflectionAssessment Assessment, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.ReflectiveExecution.ReflectionIssue> Issues, string? ProposedStrategy, bool RecommendRetry, double Confidence) { }
+        public AgentExperience.Core.ReflectiveExecution.ReflectionAssessment Assessment { get; init; }
+        public double Confidence { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.ReflectiveExecution.ReflectionIssue> Issues { get; init; }
+        public string? ProposedStrategy { get; init; }
+        public bool RecommendRetry { get; init; }
+    }
+    public sealed class ReflectionExecutionCoordinator
+    {
+        public ReflectionExecutionCoordinator(AgentExperience.Core.ReflectiveExecution.ReflectionExecutionOptions options, AgentExperience.Core.ReflectiveExecution.IReflectionEvaluator? evaluator = null, AgentExperience.Core.ReflectiveExecution.IRetryAuthorizer? authorizer = null, AgentExperience.Core.ReflectiveExecution.IReplanningStrategy? replanning = null) { }
+        public System.Threading.Tasks.ValueTask<AgentExperience.Core.ReflectiveExecution.ReflectionExecutionResult> ExecuteAsync(string taskText, AgentExperience.Core.ReflectiveExecution.ReflectionAttemptDelegate attempt, System.Func<AgentExperience.Core.ReflectiveExecution.ReflectionStopReason, System.Threading.Tasks.ValueTask>? onStopped = null, System.Threading.CancellationToken cancellationToken = default) { }
+    }
+    public sealed class ReflectionExecutionOptions : System.IEquatable<AgentExperience.Core.ReflectiveExecution.ReflectionExecutionOptions>
+    {
+        public ReflectionExecutionOptions() { }
+        public bool Enabled { get; init; }
+        public System.TimeSpan EvaluationTimeout { get; init; }
+        public int MaxAttempts { get; init; }
+        public int MaxCorrectionLength { get; init; }
+        public System.TimeSpan MaxDuration { get; init; }
+        public int MaxReflectionCycles { get; init; }
+        public long? MaxTokens { get; init; }
+        public int? MaxToolCalls { get; init; }
+        public AgentExperience.Core.ReflectiveExecution.SideEffectPolicy SideEffects { get; init; }
+        public System.TimeProvider TimeProvider { get; init; }
+        public void Validate() { }
+    }
+    public sealed class ReflectionExecutionResult : System.IEquatable<AgentExperience.Core.ReflectiveExecution.ReflectionExecutionResult>
+    {
+        public ReflectionExecutionResult(AgentExperience.Core.ReflectiveExecution.ReflectionStopReason StopReason, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.ReflectiveExecution.ReflectionAttemptOutcome> Attempts, System.Collections.Generic.IReadOnlyList<AgentExperience.Core.ReflectiveExecution.ReflectionEvaluation> Evaluations, bool RetryHappened, bool RetryImprovedResult, bool RetryReachedVerifiedSuccess) { }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.ReflectiveExecution.ReflectionAttemptOutcome> Attempts { get; init; }
+        public System.Collections.Generic.IReadOnlyList<AgentExperience.Core.ReflectiveExecution.ReflectionEvaluation> Evaluations { get; init; }
+        public bool RetryHappened { get; init; }
+        public bool RetryImprovedResult { get; init; }
+        public bool RetryReachedVerifiedSuccess { get; init; }
+        public AgentExperience.Core.ReflectiveExecution.ReflectionStopReason StopReason { get; init; }
+    }
+    public sealed class ReflectionFailedCall : System.IEquatable<AgentExperience.Core.ReflectiveExecution.ReflectionFailedCall>
+    {
+        public ReflectionFailedCall(string Tool, string ErrorClass) { }
+        public string ErrorClass { get; init; }
+        public string Tool { get; init; }
+    }
+    public sealed class ReflectionIssue : System.IEquatable<AgentExperience.Core.ReflectiveExecution.ReflectionIssue>
+    {
+        public ReflectionIssue(AgentExperience.Core.ReflectiveExecution.ReflectionIssueCategory Category, string Description, string? Evidence = null) { }
+        public AgentExperience.Core.ReflectiveExecution.ReflectionIssueCategory Category { get; init; }
+        public string Description { get; init; }
+        public string? Evidence { get; init; }
+    }
+    public enum ReflectionIssueCategory
+    {
+        ToolFailure = 0,
+        UnmetRequirement = 1,
+        InvalidResult = 2,
+        MissingInformation = 3,
+        Contradiction = 4,
+        Other = 5,
+    }
+    public sealed class ReflectionRequirement : System.IEquatable<AgentExperience.Core.ReflectiveExecution.ReflectionRequirement>
+    {
+        public ReflectionRequirement(string Name, System.Func<AgentExperience.Core.ReflectiveExecution.ReflectionAttemptContext, bool> IsMet, string Correction) { }
+        public string Correction { get; init; }
+        public System.Func<AgentExperience.Core.ReflectiveExecution.ReflectionAttemptContext, bool> IsMet { get; init; }
+        public string Name { get; init; }
+    }
+    public enum ReflectionStopReason
+    {
+        VerifiedSuccess = 0,
+        EvaluatorSatisfied = 1,
+        CyclesExhausted = 2,
+        AttemptsExhausted = 3,
+        DurationExhausted = 4,
+        BudgetExhausted = 5,
+        RetryDenied = 6,
+        NotRetryable = 7,
+        RepeatedStrategy = 8,
+        EvaluationFailed = 9,
+        Unrecoverable = 10,
+        Disabled = 11,
+    }
+    public sealed class RequirementReflectionEvaluator : AgentExperience.Core.ReflectiveExecution.IReflectionEvaluator
+    {
+        public RequirementReflectionEvaluator(System.Collections.Generic.IEnumerable<AgentExperience.Core.ReflectiveExecution.ReflectionRequirement> requirements) { }
+        public System.Threading.Tasks.ValueTask<AgentExperience.Core.ReflectiveExecution.ReflectionEvaluation> EvaluateAsync(AgentExperience.Core.ReflectiveExecution.ReflectionAttemptContext context, System.Threading.CancellationToken cancellationToken) { }
+    }
+    public enum SideEffectPolicy
+    {
+        NeverRetry = 0,
+        RequiresAuthorization = 1,
+        Idempotent = 2,
+    }
+}
 namespace AgentExperience.Core.Retrieval
 {
     public sealed class AttributeMatchEnvironmentScorer : AgentExperience.Core.Retrieval.IEnvironmentCompatibilityScorer

@@ -264,6 +264,14 @@ working attempt also say what its call produced, as `[returned: "pinned lib to 2
 capture, sanitized, bounded and signed, off by default (`--recipe` on the quick start shows one; see
 [Showing what worked](docs/guide/injection.md#showing-what-worked-the-recipe)).
 
+## Reflective execution (experimental)
+
+An optional loop that evaluates a failed attempt, proposes a correction and retries it inside one task, within hard budgets
+and only when you authorize it. It is off by default and never overrides your own check: a model's "it worked" is advice, not
+verification. All attempts are one run, stored as one lesson. See
+[Reflective execution](docs/guide/reflective-execution.md) and the
+[sample](samples/AgentExperience.Sample.Reflective/README.md). No benefit is claimed; measure it with the holdout.
+
 ## Seeing what it learned
 
 After the quick start, `provider.GetAgentExperienceLessons().ListForDevelopmentIdentityAsync()` lists the lessons it
