@@ -405,6 +405,42 @@ public sealed class ReflectiveExecutionTests
         }
     }
 
+    [Fact]
+    public async Task Steps_reach_the_host_with_the_one_run_id_and_are_counted_by_kind()
+    {
+        var kindsCounted = new List<string>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == "AgentExperience.MicrosoftAgentFramework.ReflectiveExecution" && instrument.Name == "agentexperience.reflection.steps") { l.EnableMeasurementEvents(instrument); }
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags) { if (tag.Key == "agentexperience.reflection.step") { lock (kindsCounted) { kindsCounted.Add(tag.Value?.ToString() ?? string.Empty); } } }
+        });
+        listener.Start();
+
+        var steps = new List<ReflectiveStepEvent>();
+        var h = new Harness();
+        await using var services = h.Build(Enabled(options => options.OnStep = steps.Add));
+        await h.Agent(services).RunAsync(TaskText);
+
+        var kinds = steps.Select(s => s.Step.Kind).ToList();
+        Assert.Equal(ReflectionStepKind.ExecutionStarted, kinds[0]);
+        Assert.Equal(ReflectionStepKind.ExecutionStopped, kinds[^1]);
+        Assert.Contains(ReflectionStepKind.ReplanningPerformed, kinds);
+        Assert.Contains(ReflectionStepKind.RetryAuthorized, kinds);
+
+        // Every step after the first attempt is tied to the same single run.
+        var runIds = steps.Where(s => s.RunId is not null).Select(s => s.RunId).Distinct().ToList();
+        Assert.Single(runIds);
+
+        lock (kindsCounted)
+        {
+            Assert.Equal(kinds.Select(k => k.ToString()).Order().ToList(), kindsCounted.Order().ToList());
+        }
+    }
+
     private sealed class InjectedEvaluatorModel : IChatClient
     {
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>

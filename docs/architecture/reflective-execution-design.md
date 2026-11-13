@@ -141,6 +141,6 @@ has a result.
 - **Closing sooner needed one internal addition**, `OpenRunRegistry.CloseRunAsync`, which completes the run with the **last
   attempt's** status. Reusing the duration bound's close would have recorded the run as `Cancelled`, a wrong outcome.
 - **Telemetry** is four counters on their own experimental meter, outside `docs/telemetry-names.json` because that file is
-  shared with the Python and Go ports, which do not have this feature. `OnEvent` also reports each step.
+  shared with the Python and Go ports, which do not have this feature. `OnEvent` reports each execution and `OnStep` each step (nine kinds, plus the stop; no text).
 - **Tokens** are counted from the provider's reported usage only; a provider that reports none leaves `MaxTokens` unenforced.
 - **Python, Go, CLI and MCP are untouched**, as intended.

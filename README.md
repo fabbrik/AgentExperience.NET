@@ -270,7 +270,7 @@ An optional loop that evaluates a failed attempt, proposes a correction and retr
 and only when you authorize it. It is off by default and never overrides your own check: a model's "it worked" is advice, not
 verification. All attempts are one run, stored as one lesson. See
 [Reflective execution](docs/guide/reflective-execution.md) and the
-[sample](samples/AgentExperience.Sample.Reflective/README.md). No benefit is claimed; measure it with the holdout.
+[sample](samples/AgentExperience.Sample.Reflective/README.md). No benefit is claimed; measure it with the holdout. A [four-arm harness](experiments/AgentExperience.ReflectionEval/README.md) shows the mechanics against a scripted model.
 
 ## Seeing what it learned
 
