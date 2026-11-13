@@ -79,6 +79,7 @@ public sealed class ReflectionExecutionCoordinator
         long tokens = 0;
         var toolCalls = 0;
         var stop = ReflectionStopReason.AttemptsExhausted;
+        Emit(new ReflectionStep(ReflectionStepKind.ExecutionStarted, 0));
 
         for (var n = 1; ; n++)
         {
@@ -87,6 +88,8 @@ public sealed class ReflectionExecutionCoordinator
             attempts.Add(outcome);
             toolCalls += outcome.ToolCalls ?? 0;
             tokens += outcome.TokensUsed ?? 0;
+            Emit(new ReflectionStep(ReflectionStepKind.AttemptCompleted, n));
+            if (_options.Enabled) { Emit(new ReflectionStep(ReflectionStepKind.VerificationReceived, n, TrustedCheckPassed: outcome.TrustedCheckPassed)); }
 
             if (!_options.Enabled) { stop = ReflectionStopReason.Disabled; break; }
             if (outcome.TrustedCheckPassed == true) { stop = ReflectionStopReason.VerifiedSuccess; break; }
@@ -111,10 +114,12 @@ public sealed class ReflectionExecutionCoordinator
             else
             {
                 if (_evaluator is null) { stop = ReflectionStopReason.NotRetryable; break; }
+                Emit(new ReflectionStep(ReflectionStepKind.ReflectionRequested, n));
                 var evaluated = await EvaluateAsync(context, cancellationToken).ConfigureAwait(false);
                 if (evaluated is null) { stop = ReflectionStopReason.EvaluationFailed; break; }
                 evaluation = evaluated;
                 evaluations.Add(evaluation);
+                Emit(new ReflectionStep(ReflectionStepKind.EvaluationCompleted, n, Assessment: evaluation.Assessment));
 
                 if (evaluation.Assessment == ReflectionAssessment.Unrecoverable) { stop = ReflectionStopReason.Unrecoverable; break; }
                 if (evaluation.Assessment == ReflectionAssessment.Satisfied)
@@ -131,15 +136,30 @@ public sealed class ReflectionExecutionCoordinator
                 if (!seen.Add(Normalize(planned.Note))) { stop = ReflectionStopReason.RepeatedStrategy; break; }
                 note = planned.Note;
                 tried.Add(note);
+                Emit(new ReflectionStep(ReflectionStepKind.ReplanningPerformed, n));
             }
 
-            if (!await AuthorizeAsync(context, evaluation, cancellationToken).ConfigureAwait(false)) { stop = ReflectionStopReason.RetryDenied; break; }
+            if (!await AuthorizeAsync(context, evaluation, cancellationToken).ConfigureAwait(false))
+            {
+                Emit(new ReflectionStep(ReflectionStepKind.RetryDenied, n));
+                stop = ReflectionStopReason.RetryDenied;
+                break;
+            }
+
+            Emit(new ReflectionStep(ReflectionStepKind.RetryAuthorized, n));
+        }
+
+        if (stop is ReflectionStopReason.AttemptsExhausted or ReflectionStopReason.CyclesExhausted or ReflectionStopReason.DurationExhausted or ReflectionStopReason.BudgetExhausted)
+        {
+            Emit(new ReflectionStep(ReflectionStepKind.BudgetExhausted, attempts.Count, StopReason: stop));
         }
 
         if (onStopped is not null)
         {
             await onStopped(stop).ConfigureAwait(false);
         }
+
+        Emit(new ReflectionStep(ReflectionStepKind.ExecutionStopped, attempts.Count, StopReason: stop));
 
         return new ReflectionExecutionResult(
             stop,
@@ -148,6 +168,18 @@ public sealed class ReflectionExecutionCoordinator
             attempts.Count > 1,
             Improved(attempts),
             attempts.Count > 1 && attempts[^1].TrustedCheckPassed == true);
+    }
+
+    private void Emit(ReflectionStep step)
+    {
+        try
+        {
+            _options.OnStep?.Invoke(step);
+        }
+        catch (Exception)
+        {
+            // Observing the loop never changes it.
+        }
     }
 
     private static async ValueTask<ReflectionAttemptOutcome> RunAttemptAsync(ReflectionAttemptDelegate attempt, ReflectionAttemptInput input, CancellationToken ct)

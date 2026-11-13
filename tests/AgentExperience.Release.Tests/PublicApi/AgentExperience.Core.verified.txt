@@ -990,6 +990,7 @@ namespace AgentExperience.Core.ReflectiveExecution
         public int MaxReflectionCycles { get; init; }
         public long? MaxTokens { get; init; }
         public int? MaxToolCalls { get; init; }
+        public System.Action<AgentExperience.Core.ReflectiveExecution.ReflectionStep>? OnStep { get; init; }
         public AgentExperience.Core.ReflectiveExecution.SideEffectPolicy SideEffects { get; init; }
         public System.TimeProvider TimeProvider { get; init; }
         public void Validate() { }
@@ -1032,6 +1033,28 @@ namespace AgentExperience.Core.ReflectiveExecution
         public string Correction { get; init; }
         public System.Func<AgentExperience.Core.ReflectiveExecution.ReflectionAttemptContext, bool> IsMet { get; init; }
         public string Name { get; init; }
+    }
+    public sealed class ReflectionStep : System.IEquatable<AgentExperience.Core.ReflectiveExecution.ReflectionStep>
+    {
+        public ReflectionStep(AgentExperience.Core.ReflectiveExecution.ReflectionStepKind Kind, int AttemptNumber, bool? TrustedCheckPassed = default, AgentExperience.Core.ReflectiveExecution.ReflectionAssessment? Assessment = default, AgentExperience.Core.ReflectiveExecution.ReflectionStopReason? StopReason = default) { }
+        public AgentExperience.Core.ReflectiveExecution.ReflectionAssessment? Assessment { get; init; }
+        public int AttemptNumber { get; init; }
+        public AgentExperience.Core.ReflectiveExecution.ReflectionStepKind Kind { get; init; }
+        public AgentExperience.Core.ReflectiveExecution.ReflectionStopReason? StopReason { get; init; }
+        public bool? TrustedCheckPassed { get; init; }
+    }
+    public enum ReflectionStepKind
+    {
+        ExecutionStarted = 0,
+        AttemptCompleted = 1,
+        VerificationReceived = 2,
+        ReflectionRequested = 3,
+        EvaluationCompleted = 4,
+        ReplanningPerformed = 5,
+        RetryAuthorized = 6,
+        RetryDenied = 7,
+        BudgetExhausted = 8,
+        ExecutionStopped = 9,
     }
     public enum ReflectionStopReason
     {

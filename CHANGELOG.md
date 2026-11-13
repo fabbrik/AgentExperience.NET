@@ -6,6 +6,14 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Added
+
+- **Reflective execution: step events and a measuring harness.** `OnStep` reports each step of the loop (attempt, verification,
+  reflection, evaluation, replanning, retry authorized or denied, budget exhausted, stopped) as counts and enums, never text, and a
+  new `agentexperience.reflection.steps` counter counts them by kind. `experiments/AgentExperience.ReflectionEval` runs the four
+  arms (baseline, reflection, memory, both) and reports verified success, attempts, tool calls and latency. It uses a scripted
+  model, so it shows mechanics only. Additive, experimental. See [the guide](docs/guide/reflective-execution.md#steps).
+
 ## 0.1.0-preview.19
 
 This preview adds an experimental, off-by-default reflective execution loop. The same tag releases the eight NuGet packages, the Python distribution and the Go modules at this version, as before.
