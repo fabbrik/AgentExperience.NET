@@ -6,6 +6,10 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+## 0.1.0-preview.19
+
+This preview adds an experimental, off-by-default reflective execution loop. The same tag releases the eight NuGet packages, the Python distribution and the Go modules at this version, as before.
+
 ### Added
 
 - **Reflective execution (experimental, off by default).** An optional loop that evaluates an attempt, proposes a
