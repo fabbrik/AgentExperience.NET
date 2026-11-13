@@ -63,7 +63,7 @@ await agent.RunAsync("Ticket #4977: a refund is stuck on a lock again. Triage it
 
 Agents outside the Agent Framework (Claude Code, Codex, Cursor, a script) get the same loop through `aexp`, a .NET tool
 that is both a command line and an MCP stdio server, over a local SQLite file by default (published from the next
-preview, `0.1.0-preview.18`; until then, [build it from this repository](dogfood/README.md)):
+preview, `0.1.0-preview.19`; until then, [build it from this repository](dogfood/README.md)):
 
 ```bash
 dotnet tool install --global AgentExperience.Cli --prerelease
@@ -318,7 +318,7 @@ Read [Concepts in five minutes](docs/guide/concepts.md) for the whole model and 
 
 ## Status
 
-`0.1.0-preview.18` is a preview: it claims no production readiness, and public APIs may change between previews (each
+`0.1.0-preview.19` is a preview: it claims no production readiness, and public APIs may change between previews (each
 change is a reviewed diff against a checked-in API baseline). Stable enough to evaluate: the capture, verify, store,
 retrieve and inject loop, the PostgreSQL schema (with journaled migrations and upgrade tests from every published
 preview), and the tenant-isolation and sanitization rules. Supported: .NET 10, PostgreSQL 15 to 18, and
