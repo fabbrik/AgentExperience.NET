@@ -164,6 +164,61 @@ jobs:
           path: artifacts/packages/
           retention-days: 14
 
+  # Story 29.2: the adoption path, proven on every OS from the same bytes. What the README promises -- install aexp,
+  # run init and trust, get a verified lesson back -- is done here as a stranger would do it: the tool is installed as
+  # a global tool from the pack job's artifact only (never from nuget.org, which may serve the published package of
+  # the same version), then eng/prove-adoption-path.sh runs init, trust, a failed and a verified run, and asserts what
+  # recall, lessons and benefit print. The three legs are required status checks on main. The job restores no project,
+  # so it does not use the NuGet cache; the SDK carries the runtime the tool needs.
+  adoption-path:
+    needs: pack
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    name: adoption-path (${{ matrix.os }})
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # As the other jobs, but portable: GNU sed (Linux, Git Bash) and BSD sed (macOS) both take an attached backup
+      # suffix, where `sed -i -E` would need `-i ''` on macOS. The working copy is the runner's; nothing is committed.
+      - name: Pin the SDK exactly (CI only)
+        shell: bash
+        run: |
+          sed -i.bak -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
+          rm -f global.json.bak
+          grep -q '"rollForward": "disable"' global.json
+
+      # Exactly global.json's SDK (asserted below). It carries the net10.0 runtime the tool needs, so nothing else is
+      # installed.
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      # Belt and braces after the pin above: a different SDK fails here instead of silently winning. The CR is
+      # stripped because on Windows `dotnet --version` prints CRLF, which `$(...)` keeps.
+      - name: Assert the exact pinned SDK
+        shell: bash
+        run: |
+          pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
+          actual="$(dotnet --version | tr -d '\r')"
+          test "$actual" = "$pinned" || { echo "::error::SDK $actual is in use, but global.json pins $pinned"; exit 1; }
+          echo "SDK $actual, as pinned"
+
+      - name: Download the packages the pack job built
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts/packages
+
+      - name: Install aexp from the packed artifact and prove the adoption path
+        shell: bash
+        run: eng/prove-adoption-path.sh artifacts/packages
+
   # The PostgreSQL matrix (story 6.3, KL-13): the storage suites, the pgvector proof, the sample's PostgreSQL
   # mode and the upgrades from the published previews' databases (story 12.1), on every supported major. One
   # variable picks both the pgvector image and the stock one, and each suite asserts the server it reached reports

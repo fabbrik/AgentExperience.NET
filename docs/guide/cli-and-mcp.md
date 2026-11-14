@@ -17,7 +17,9 @@ aexp --version
 aexp init            # in the project root: writes .aexp/config.json and the .gitignore entry
 ```
 
-It needs the .NET 10 runtime. The SQLite file is created (owner-only) on first use.
+It needs the .NET 10 runtime. The SQLite file is created (owner-only) on first use. This path is proven end to end in CI
+on Linux, macOS and Windows: every run installs the packed tool, runs `init` and `trust`, finalizes a failed and a
+verified run, and checks that `recall`, `lessons` and `benefit` report the lesson (`eng/prove-adoption-path.sh`).
 
 ## Configure
 

@@ -248,6 +248,83 @@ public sealed class WorkflowTests
         Assert.True(File.Exists(Path.Combine(RepositoryRoot.Path, "eng", "probe-floating-dependencies.sh")));
     }
 
+    /// <summary>
+    /// Story 29.2: the adoption path is proven from the packed artifact on Linux, macOS and Windows, and the job gates
+    /// (it is a required status check on main). The proof is a script anyone can run, so it has to be there and
+    /// executable; the job runs it under bash on every runner, from the pack job's artifact and nothing else, with a
+    /// timeout and without a softener.
+    /// </summary>
+    [Fact]
+    public void The_CI_adoption_path_job_proves_the_packed_tool_on_every_OS_and_gates()
+    {
+        var ci = File.ReadAllText(Path.Combine(RepositoryRoot.Path, ".github", "workflows", "ci.yml")).ReplaceLineEndings("\n");
+
+        var job = Job(ci, "adoption-path");
+
+        Assert.Contains("\n    needs: pack\n", job, StringComparison.Ordinal);
+        Assert.Contains("os: [ubuntu-24.04, macos-15, windows-2025]", job, StringComparison.Ordinal);
+        Assert.Contains("runs-on: ${{ matrix.os }}", job, StringComparison.Ordinal);
+        Assert.Contains("name: adoption-path (${{ matrix.os }})", job, StringComparison.Ordinal);
+        Assert.Matches(new Regex(@"\n    timeout-minutes: [0-9]+\n", RegexOptions.CultureInvariant), job);
+        Assert.DoesNotContain("continue-on-error", job, StringComparison.Ordinal);
+        Assert.DoesNotContain("permissions:", job, StringComparison.Ordinal);
+
+        // The same bytes the pack job built and verified, on every OS: the artifact, never a fresh pack or nuget.org.
+        Assert.Matches(
+            new Regex(@"uses: actions/download-artifact@v4\n\s+with:\n\s+name: packages\n\s+path: artifacts/packages\n", RegexOptions.CultureInvariant),
+            job);
+        Assert.DoesNotContain("dotnet pack", job, StringComparison.Ordinal);
+        Assert.DoesNotContain("nuget.org", job, StringComparison.Ordinal);
+        Assert.Matches(
+            new Regex(@"\n        shell: bash\n        run: eng/prove-adoption-path.sh artifacts/packages\n", RegexOptions.CultureInvariant),
+            job);
+
+        // The SDK global.json pins, and nothing beside it (the runtime the tool needs comes with it).
+        Assert.Contains("global-json-file: global.json", job, StringComparison.Ordinal);
+        Assert.DoesNotContain("dotnet-version:", job, StringComparison.Ordinal);
+        Assert.Contains("\"rollForward\": \"disable\"", job, StringComparison.Ordinal);
+        Assert.Contains("test \"$actual\" = \"$pinned\"", job, StringComparison.Ordinal);
+
+        // The script is checked in, executable, and installs from the given directory only.
+        var script = Path.Combine(RepositoryRoot.Path, "eng", "prove-adoption-path.sh");
+        Assert.True(File.Exists(script), "eng/prove-adoption-path.sh is missing.");
+        Assert.True(IsExecutable(script), "eng/prove-adoption-path.sh is not executable (mode 100755).");
+        var text = File.ReadAllText(script).ReplaceLineEndings("\n");
+        Assert.StartsWith("#!/usr/bin/env bash\n", text, StringComparison.Ordinal);
+        Assert.Contains("set -euo pipefail", text, StringComparison.Ordinal);
+        Assert.Contains("dotnet tool install --global AgentExperience.Cli --version \"$version\" --source \"$packages\"", text, StringComparison.Ordinal);
+        Assert.Contains("dotnet tool uninstall --global AgentExperience.Cli", text, StringComparison.Ordinal);
+        Assert.Contains("scripts/release-version.sh\" dotnet", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Whether the file is executable: its Unix mode on Unix; on Windows, where the file system has no such bit, the
+    /// mode git holds for it in the index (100755).
+    /// </summary>
+    private static bool IsExecutable(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return (File.GetUnixFileMode(path) & UnixFileMode.UserExecute) != 0;
+        }
+
+        var start = new System.Diagnostics.ProcessStartInfo("git")
+        {
+            WorkingDirectory = RepositoryRoot.Path,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in new[] { "ls-files", "-s", "--", Path.GetRelativePath(RepositoryRoot.Path, path).Replace('\\', '/') })
+        {
+            start.ArgumentList.Add(arg);
+        }
+
+        using var git = System.Diagnostics.Process.Start(start)!;
+        var line = git.StandardOutput.ReadToEnd();
+        git.WaitForExit();
+        return git.ExitCode == 0 && line.StartsWith("100755 ", StringComparison.Ordinal);
+    }
+
     // ---- release.yml: the one workflow that publishes, and only like this ----
 
     private static string ReadWorkflow(string name) =>
