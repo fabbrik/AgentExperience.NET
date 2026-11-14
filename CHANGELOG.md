@@ -6,6 +6,24 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+### Added
+
+- **`aexp init [--print] [--force] [--verify <json array>]`** writes a commented `.aexp/config.json` from one command,
+  run in the project root, with no agent named: the verifier detected when one kind of project is at the root
+  (`dotnet test`, `npm test`, `pytest`, `go test ./...`; and now `make test`, for a `Makefile` with a `test:` target,
+  proposed only when none of those fits),
+  asked for at a terminal when none or several fit (a candidate's number, a JSON array, or Enter for the placeholder),
+  or given with `--verify` as a JSON array (never a shell line, never split on spaces). It adds `.aexp/` to
+  `.gitignore` when the directory is under git, never touches an existing config (`--force` replaces it, revoking its
+  trust like any edit), and prints the steps left to a person: `aexp trust`, then `aexp setup claude-code` or
+  `claude mcp add`. It approves nothing. `aexp setup claude-code` writes its config and `.gitignore` entry through the
+  same generator (`ProjectInit`), so there is one. See [CLI and MCP](docs/guide/cli-and-mcp.md#write-it-aexp-init).
+
+### Changed
+
+- The config `aexp setup claude-code` writes carries a `//` comment on each choice, as `aexp init`'s does; the loader
+  has always skipped comments. Its values are unchanged.
+
 ## 0.1.0-preview.19
 
 This preview adds an experimental, off-by-default reflective execution loop. The same tag releases the eight NuGet packages, the Python distribution and the Go modules at this version, as before.

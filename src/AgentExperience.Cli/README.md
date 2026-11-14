@@ -14,12 +14,20 @@ lessons, the failure hints and the measurement are the library's own.
 dotnet tool install --global AgentExperience.Cli --prerelease
 ```
 
-Then put a `.aexp/config.json` in your project:
+Then, in your project root:
+
+```bash
+aexp init      # writes a commented .aexp/config.json and adds .aexp/ to .gitignore; approves nothing
+```
+
+It detects the verifier when one kind of project is at the root (`dotnet test`, `npm test`, `pytest`, `go test ./...`;
+`make test` only when none of those fits), asks when none or several fit (or pass `--verify '["npm","test"]'`, a JSON array, never a shell line),
+and otherwise writes a placeholder that refuses to run until you set it. The config it writes is, in short:
 
 ```json
 {
-  "identity": { "tenant": "local", "application": "my-service", "project": "my-repo" },
-  "verify": { "command": ["dotnet", "test"], "timeoutSeconds": 900, "checkId": "tests" }
+  "identity": { "tenant": "local", "application": "my-service", "project": "my-service" },
+  "verify": { "command": ["dotnet", "test"], "timeoutSeconds": 540, "checkId": "tests" }
 }
 ```
 

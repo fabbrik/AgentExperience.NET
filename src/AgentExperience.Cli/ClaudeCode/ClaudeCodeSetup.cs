@@ -9,8 +9,8 @@ namespace AgentExperience.Cli.ClaudeCode;
 /// <summary>
 /// <c>aexp setup claude-code [--print]</c>, run in the project root: adds aexp's hooks to the project's
 /// <c>.claude/settings.json</c> (merged: every existing hook and setting stays, and a hook already there is not added
-/// twice), writes a default <c>.aexp/config.json</c> when there is none (never over one), and adds <c>.aexp/</c> to
-/// <c>.gitignore</c>. Idempotent. <c>--print</c> writes nothing and prints what it would add. It never trusts the
+/// twice), writes a default <c>.aexp/config.json</c> when there is none (never over one; the same generator as
+/// <c>aexp init</c>, see <see cref="ProjectInit"/>), and adds <c>.aexp/</c> to <c>.gitignore</c>. Idempotent. <c>--print</c> writes nothing and prints what it would add. It never trusts the
 /// config: approving the verifier stays a person's step.
 /// </summary>
 internal static class ClaudeCodeSetup
@@ -79,6 +79,11 @@ internal static class ClaudeCodeSetup
         }
 
         args.Only("print");
+        if (args.Value("config") is not null)
+        {
+            throw new AexpUsageException("'setup' writes ./.aexp/config.json in the working directory and takes no --config.");
+        }
+
         var print = args.Flag("print");
         var root = Path.GetFullPath(console.WorkingDirectory);
         var output = console.Out;
@@ -124,54 +129,34 @@ internal static class ClaudeCodeSetup
             }
         }
 
-        // 2. The config, only when there is none.
+        // 2. The config, only when there is none: the same generator as 'aexp init', with the agent named.
         var configPath = Path.Combine(root, AexpConfigLoader.DefaultRelativePath);
-        var verifier = DetectVerifier(root);
         if (File.Exists(configPath))
         {
             await output.WriteLineAsync(".aexp/config.json: exists; left as it is.").ConfigureAwait(false);
         }
-        else if (print)
-        {
-            await output.WriteLineAsync(".aexp/config.json would be written:").ConfigureAwait(false);
-            await output.WriteLineAsync(DefaultConfig(root, verifier)).ConfigureAwait(false);
-        }
         else
         {
-            var directory = Path.GetDirectoryName(configPath)!;
-            if (OperatingSystem.IsWindows())
+            var candidates = ProjectInit.Detect(root);
+            var verifier = candidates.Count == 1 ? candidates[0].Command : null;
+            var config = ProjectInit.Render(root, verifier, agent: "claude-code");
+            if (print)
             {
-                Directory.CreateDirectory(directory);
+                await output.WriteLineAsync(".aexp/config.json would be written:").ConfigureAwait(false);
+                await output.WriteLineAsync(config).ConfigureAwait(false);
             }
             else
             {
-                Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                ProjectInit.WriteConfig(configPath, config, overwrite: false);
+                await output.WriteLineAsync(verifier is null
+                    ? ".aexp/config.json: written. No test command was obvious, so verify.command is a placeholder that refuses to run: set it"
+                        + (candidates.Count == 0 ? "." : $" (candidates: {string.Join("; ", candidates)}).")
+                    : $".aexp/config.json: written, verifier {JsonSerializer.Serialize(verifier)} (detected; check it).").ConfigureAwait(false);
             }
-
-            AtomicFile.Write(configPath, Encoding.UTF8.GetBytes(DefaultConfig(root, verifier)), overwrite: false);
-            await output.WriteLineAsync(verifier is null
-                ? ".aexp/config.json: written. No test command was obvious, so verify.command is a placeholder that refuses to run: set it."
-                : $".aexp/config.json: written, verifier {JsonSerializer.Serialize(verifier)} (detected; check it).").ConfigureAwait(false);
         }
 
         // 3. Keep the store, runs, sessions and config out of version control.
-        var gitignore = Path.Combine(root, ".gitignore");
-        var ignoreText = File.Exists(gitignore) ? await File.ReadAllTextAsync(gitignore, cancellationToken).ConfigureAwait(false) : string.Empty;
-        if (Ignores(ignoreText))
-        {
-            await output.WriteLineAsync(".gitignore: already ignores .aexp/.").ConfigureAwait(false);
-        }
-        else if (print)
-        {
-            await output.WriteLineAsync(".gitignore would get the line: .aexp/").ConfigureAwait(false);
-        }
-        else
-        {
-            var newline = ignoreText.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
-            var prefix = ignoreText.Length == 0 || ignoreText.EndsWith('\n') ? string.Empty : newline;
-            await File.AppendAllTextAsync(gitignore, prefix + "# aexp: the local lesson store, open runs and the config" + newline + ".aexp/" + newline, cancellationToken).ConfigureAwait(false);
-            await output.WriteLineAsync(".gitignore: added .aexp/.").ConfigureAwait(false);
-        }
+        await output.WriteLineAsync(await ProjectInit.EnsureGitignoreAsync(root, print, onlyUnderGit: false, console.Environment, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
 
         await output.WriteLineAsync(NextSteps(console.Environment)).ConfigureAwait(false);
         return AexpCli.Ok;
@@ -273,84 +258,6 @@ internal static class ClaudeCodeSetup
             handler["command"] is JsonValue value
             && value.TryGetValue<string>(out var command)
             && (command.Contains($"aexp hook {hookEvent} ", StringComparison.Ordinal) || command.TrimEnd().EndsWith($"aexp hook {hookEvent}", StringComparison.Ordinal)));
-
-    /// <summary>The project's test command when it is obvious (exactly one kind of project at the root); otherwise <see langword="null"/>.</summary>
-    internal static IReadOnlyList<string>? DetectVerifier(string root)
-    {
-        var found = new List<string[]>();
-        if (Directory.EnumerateFiles(root, "*.sln").Any() || Directory.EnumerateFiles(root, "*.slnx").Any()
-            || Directory.EnumerateFiles(root, "*.csproj").Any() || Directory.EnumerateFiles(root, "*.fsproj").Any())
-        {
-            found.Add(["dotnet", "test"]);
-        }
-
-        if (File.Exists(Path.Combine(root, "package.json")) && HasTestScript(Path.Combine(root, "package.json")))
-        {
-            found.Add(["npm", "test"]);
-        }
-
-        if (new[] { "pytest.ini", "pyproject.toml", "conftest.py", "tox.ini" }.Any(name => File.Exists(Path.Combine(root, name))))
-        {
-            found.Add(["pytest"]);
-        }
-
-        if (File.Exists(Path.Combine(root, "go.mod")))
-        {
-            found.Add(["go", "test", "./..."]);
-        }
-
-        return found.Count == 1 ? found[0] : null;
-    }
-
-    private static bool HasTestScript(string packageJson)
-    {
-        try
-        {
-            return JsonNode.Parse(File.ReadAllText(packageJson)) is JsonObject package
-                && package["scripts"] is JsonObject scripts
-                && scripts["test"] is JsonValue test
-                && test.TryGetValue<string>(out var script)
-                && !script.Contains("no test specified", StringComparison.Ordinal);
-        }
-        catch (Exception ex) when (ex is JsonException or IOException)
-        {
-            return false;
-        }
-    }
-
-    internal static string DefaultConfig(string root, IReadOnlyList<string>? verifier)
-    {
-        var name = new string([.. Path.GetFileName(Path.TrimEndingDirectorySeparator(root)).Where(c => !char.IsControl(c))]).Trim();
-        if (name.Length == 0)
-        {
-            name = "project";
-        }
-        else if (name.Length > 64)
-        {
-            name = name[..64];
-        }
-
-        var config = new JsonObject
-        {
-            ["store"] = AexpConfigLoader.DefaultStore,
-            ["identity"] = new JsonObject { ["tenant"] = "local", ["application"] = name, ["project"] = name, ["agent"] = "claude-code" },
-            ["verify"] = new JsonObject
-            {
-                ["command"] = new JsonArray([.. (verifier ?? [VerifierRunner.Placeholder]).Select(part => (JsonNode?)JsonValue.Create(part))]),
-                // Below the Stop hook's timeout, so the hook can still end and finalize around it.
-                ["timeoutSeconds"] = 540,
-                ["checkId"] = "tests",
-            },
-            ["sanitization"] = new JsonObject { ["allowArguments"] = new JsonArray("file_path") },
-            ["injection"] = new JsonObject { ["holdoutRate"] = 0.2 },
-            ["recall"] = new JsonObject { ["enabled"] = true },
-        };
-        return config.ToJsonString(Indented) + "\n";
-    }
-
-    private static bool Ignores(string gitignore) =>
-        gitignore.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').Select(line => line.Trim())
-            .Any(line => line is ".aexp" or ".aexp/" or "/.aexp" or "/.aexp/" or ".aexp/*" or "/.aexp/*" or ".aexp/**" or "/.aexp/**");
 
     private static string NextSteps(Func<string, string?> environment)
     {

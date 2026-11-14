@@ -14,6 +14,7 @@ the [injection holdout](injection.md), the [lessons view](deployment.md#seeing-w
 ```bash
 dotnet tool install --global AgentExperience.Cli --prerelease
 aexp --version
+aexp init            # in the project root: writes .aexp/config.json and the .gitignore entry
 ```
 
 It needs the .NET 10 runtime. The SQLite file is created (owner-only) on first use.
@@ -25,6 +26,30 @@ further than the repository root, the directory holding `.git`, or the home dire
 file `--config <path>` or the `AEXP_CONFIG` environment variable names. Relative paths in it are relative to the project
 root, the directory that holds `.aexp/`. The tool refuses to start without a config, without an identity, or without a
 verifier, and on Unix it refuses a config (or config directory) another user owns.
+
+### Write it: `aexp init`
+
+`aexp init [--print] [--force] [--verify <json array>]`, run in the project root, writes a commented `.aexp/config.json`
+with the defaults below (the SQLite store in `.aexp/`, the identity named after the directory, a 20% holdout, `file_path`
+as the only argument kept from tool calls, recall on, a 540 s timeout under the Claude Code Stop hook's 600 s, check
+`tests`), adds `.aexp/` to `.gitignore` in that directory when it is under git (a `.gitignore` there, or a `.git` there or
+in a directory above it, up to your home directory), and prints the steps left to you: review it, `aexp trust`, then
+`aexp setup claude-code` or `claude mcp add`. It never approves the config. The verifier is:
+
+- **detected** when exactly one kind of project is at the root: `dotnet test` (a `.sln`, `.slnx`, `.csproj` or
+  `.fsproj`), `npm test` (a `package.json` whose `scripts.test` is set), `pytest` (`pyproject.toml`, `pytest.ini`,
+  `conftest.py` or `tox.ini`) or `go test ./...` (`go.mod`); when none of those fits, `make test` (a `Makefile` with a
+  `test:` target);
+- **asked for** when none or several match and you are at a terminal: a number from the list of candidates, a JSON
+  array, or Enter for a placeholder to set later. A wrong answer is asked again once; then the placeholder. When standard
+  input is not a terminal, the placeholder is written and the candidates are printed;
+- **given** with `--verify '["npm","test","--","--ci"]'`: a JSON array of non-empty strings, never a shell line and
+  never split on spaces (anything else is a usage error, exit 2).
+
+The placeholder refuses to run until `verify.command` is set. An existing config is never touched (exit 2, naming
+`--force`); `--force` replaces it whole, which revokes its `aexp trust` approval like any other edit. `--print` prints the
+config and the `.gitignore` line and writes nothing. The file is written atomically, `.aexp/` owner-only (`0700`) and the
+config owner read and write. Comments (`//`) are allowed in the config; the loader skips them.
 
 ### Approve it: `aexp trust`
 
@@ -138,7 +163,8 @@ aexp finalize --run "$run"                                 # runs the verifier; 
 | `aexp mcp` | Serves the MCP tools over stdin and stdout. |
 | `aexp trust` | Prints what the config would run, and approves the config (see above). |
 | `aexp runs prune --older-than <age>` | Deletes open runs (never ended) started longer ago than `7d`, `12h` or `30m`, unless a command is using them, and Claude Code session files not touched for as long. |
-| `aexp setup claude-code [--print]` | Adds the Claude Code hooks to `.claude/settings.json`, a default config and the `.gitignore` entry ([Claude Code](claude-code.md)). |
+| `aexp init [--print] [--force] [--verify <json array>]` | Writes a commented `.aexp/config.json` with the verifier detected, asked for or given, and the `.gitignore` entry; prints the next steps. Never trusts the config ([above](#write-it-aexp-init)). |
+| `aexp setup claude-code [--print]` | Adds the Claude Code hooks to `.claude/settings.json`, the same default config when there is none, and the `.gitignore` entry ([Claude Code](claude-code.md)). |
 | `aexp hook <event> [--timeout <s>]` | A Claude Code hook: reads the event's JSON on standard input, prints the hook output; always exits 0 ([Claude Code](claude-code.md)). |
 
 Exit codes: 0 done, 1 failed, 2 a usage error (including a run that is not open), 3 a configuration the tool refuses

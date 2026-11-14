@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentExperience.Abstractions;
 using AgentExperience.Cli.ClaudeCode;
@@ -87,9 +88,11 @@ public sealed class ClaudeCodeSetupTests
         Assert.Contains("/path/to/lint-check.sh", Commands(settings, "PostToolUse"));
         Assert.Contains("/path/to/notify.sh", Commands(settings, "Stop"));
 
-        // The config: the detected test command, never trusted by setup.
-        var config = JsonNode.Parse(File.ReadAllText(project.Config))!.AsObject();
+        // The config: commented (the loader skips comments), the detected test command, the agent named, never trusted by setup.
+        var config = JsonNode.Parse(File.ReadAllText(project.Config), documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip })!.AsObject();
         Assert.Equal("""["dotnet","test"]""", config["verify"]!["command"]!.ToJsonString());
+        Assert.Equal("claude-code", (string?)config["identity"]!["agent"]);
+        Assert.Contains("// ", File.ReadAllText(project.Config));
         Assert.Equal("bin/\nobj/\n# aexp: the local lesson store, open runs and the config\n.aexp/\n", File.ReadAllText(Path.Combine(project.Root, ".gitignore")));
         Assert.Contains("aexp trust", first.Output);
         Assert.Contains("Edit(//**/.aexp/**)", first.Output);
