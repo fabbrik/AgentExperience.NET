@@ -199,12 +199,13 @@ jobs:
         with:
           global-json-file: global.json
 
-      # Belt and braces after the pin above: a different SDK fails here instead of silently winning.
+      # Belt and braces after the pin above: a different SDK fails here instead of silently winning. The CR is
+      # stripped because on Windows `dotnet --version` prints CRLF, which `$(...)` keeps.
       - name: Assert the exact pinned SDK
         shell: bash
         run: |
           pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
-          actual="$(dotnet --version)"
+          actual="$(dotnet --version | tr -d '\r')"
           test "$actual" = "$pinned" || { echo "::error::SDK $actual is in use, but global.json pins $pinned"; exit 1; }
           echo "SDK $actual, as pinned"
 

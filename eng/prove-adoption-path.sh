@@ -29,8 +29,9 @@ packages="$(cd "$packages" && pwd)"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 version="$("$root/scripts/release-version.sh" dotnet)"
 
-# Git Bash sets HOME on Windows, and `dotnet tool install --global` puts the shim under ~/.dotnet/tools everywhere.
-export PATH="$HOME/.dotnet/tools:$PATH"
+# Git Bash sets HOME on Windows, and `dotnet tool install --global` puts the shim under ~/.dotnet/tools everywhere
+# (under DOTNET_CLI_HOME instead of HOME when that is set).
+export PATH="${DOTNET_CLI_HOME:-$HOME}/.dotnet/tools:$PATH"
 
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
@@ -52,7 +53,9 @@ if [ ! -f "$nupkg" ]; then
   exit 1
 fi
 
-if dotnet tool list --global | awk 'NR > 2 { print tolower($1) }' | grep -qx 'agentexperience.cli'; then
+# Captured first: under pipefail, `grep -q` exiting early would turn awk's SIGPIPE into a failed pipeline.
+global_tools="$(dotnet tool list --global)"
+if printf '%s\n' "$global_tools" | awk 'NR > 2 { print tolower($1) }' | grep -qx 'agentexperience.cli'; then
   echo "AgentExperience.Cli is already installed as a global tool; this proof installs and uninstalls it, so it will not run over yours." >&2
   echo "Uninstall it first (dotnet tool uninstall --global AgentExperience.Cli), or run the proof on another machine." >&2
   exit 2
@@ -106,7 +109,7 @@ cleanup() {
     dotnet tool uninstall --global AgentExperience.Cli >/dev/null \
       || echo "WARNING: could not uninstall AgentExperience.Cli; run: dotnet tool uninstall --global AgentExperience.Cli" >&2
   fi
-  rm -rf "$scratch"
+  rm -rf "$scratch" || echo "WARNING: could not remove $scratch" >&2
   if [ "$status" -eq 0 ]; then
     echo "Adoption path: PASSED (AgentExperience.Cli $version from $packages)"
   else
@@ -125,7 +128,9 @@ else
 fi
 
 # Runs aexp, prints its stdout (CR stripped: on Windows the tool writes CRLF), and fails the proof when it exits
-# non-zero, with what it wrote to stderr.
+# non-zero, with what it wrote to stderr. Its output is always assigned to a variable first (`out="$(aexp_ok ...)"`,
+# whose failure `set -e` catches) and never written inline as an `expect_*` argument, where `fail` would only end the
+# substitution's subshell and a crashed command would pass as empty output.
 aexp_ok() {
   local out status=0
   out="$(aexp "$@" 2>"$scratch/stderr" | tr -d '\r')" || status=$?
@@ -140,7 +145,8 @@ echo "Installing AgentExperience.Cli $version from $packages (and nowhere else)"
 dotnet tool install --global AgentExperience.Cli --version "$version" --source "$packages"
 installed=1
 command -v aexp >/dev/null || { echo "PATH=$PATH" >&2; ls -la "$HOME/.dotnet/tools" >&2 || true; fail "aexp is not on PATH after the install"; }
-expect_equal "aexp --version prints $version" "$version" "$(aexp_ok --version)"
+printed="$(aexp_ok --version)"
+expect_equal "aexp --version prints $version" "$version" "$printed"
 
 project="$scratch/project"
 mkdir -p "$project/.git"
@@ -148,7 +154,8 @@ cd "$project"
 
 init="$(aexp_ok init --verify "$verifier")"
 expect_file "aexp init wrote .aexp/config.json" "$project/.aexp/config.json"
-expect_contains "aexp init added .aexp/ to .gitignore" ".aexp/" "$(tr -d '\r' < "$project/.gitignore")"
+gitignore="$(tr -d '\r' < "$project/.gitignore")"
+expect_contains "aexp init added .aexp/ to .gitignore" ".aexp/" "$gitignore"
 expect_contains "aexp init names aexp trust as the next step" "aexp trust" "$init"
 
 trust="$(aexp_ok trust)"
@@ -161,8 +168,10 @@ task="Fix the failing build in the payments service"
 run_a="$(aexp_ok run start --task "$task")"
 aexp_ok run call --run "$run_a" --tool run_tests --error "exit 2: build failed" >/dev/null
 aexp_ok run end --run "$run_a" >/dev/null
-expect_contains "run A: finalize reports the verifier's failure" "verifier exit 1 (fail)" "$(aexp_ok finalize --run "$run_a")"
-expect_empty "run A: recall has nothing to give" "$(aexp_ok recall --task "$task")"
+finalized_a="$(aexp_ok finalize --run "$run_a")"
+expect_contains "run A: finalize reports the verifier's failure" "verifier exit 1 (fail)" "$finalized_a"
+recalled_a="$(aexp_ok recall --task "$task")"
+expect_empty "run A: recall has nothing to give" "$recalled_a"
 
 # Run B: the same failure, then the fix; the verifier passes once `fixed` exists, and the run becomes a validated lesson.
 run_b="$(aexp_ok run start --task "$task")"
@@ -172,7 +181,8 @@ aexp_ok run call --run "$run_b" --tool add_reference --args '{"package":"Ledger"
 aexp_ok run call --run "$run_b" --tool run_tests --args '{"filter":"payments"}' --result "all 42 tests passed" >/dev/null
 aexp_ok run end --run "$run_b" >/dev/null
 echo fixed > "$project/fixed"
-expect_contains "run B: finalize reports the verified run as Validated" "verifier exit 0 (pass); finalization Validated" "$(aexp_ok finalize --run "$run_b")"
+finalized_b="$(aexp_ok finalize --run "$run_b")"
+expect_contains "run B: finalize reports the verified run as Validated" "verifier exit 0 (pass); finalization Validated" "$finalized_b"
 
 # The next recall for the task is handed the lesson, in the library's own block (no --run: no holdout arm is drawn).
 block="$(aexp_ok recall --task "$task")"
@@ -180,7 +190,8 @@ expect_starts_with "recall opens the Historical Reference block" "=== BEGIN HIST
 expect_contains "recall names the call that worked" "add_reference [returned]" "$block"
 expect_contains "recall closes the block" "=== END HISTORICAL REFERENCE ===" "$block"
 
-expect_contains "aexp lessons lists the validated lesson" "Validated" "$(aexp_ok lessons)"
+lessons="$(aexp_ok lessons)"
+expect_contains "aexp lessons lists the validated lesson" "Validated" "$lessons"
 
 # Run C asks for its block as a run, so the holdout draws its arm (given or withheld, at the configured 20%), and is
 # verified; benefit then has one run in one arm to report. Which arm is random, so no per-arm count is asserted.
