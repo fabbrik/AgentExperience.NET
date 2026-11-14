@@ -2334,7 +2334,7 @@ each lesson's measured benefit (opt-in).
 
 ## Epic 26: The Library on Real Work
 
-**Added:** 2026-10-28 · **Status:** in progress
+**Added:** 2026-10-28 · **Status:** done (26.2 closed by story 28.7, decided 2026-11-14)
 
 So far the library has only been measured in lab experiments. This epic runs it on real work, wired the way a user
 would wire it (public API only), with its own holdout judging it. The first real workload is this repository's own
@@ -2357,6 +2357,9 @@ A captured run lives only in `InMemoryExperienceCaptureService`. It is dropped a
 the process exits, so an outcome that arrives days later cannot be finalized. Examples are a CI fix and a ticket
 resolution. A durable capture store, so a run can be finalized from another process, would let 26.1 finalize each
 failure when its fix lands instead of replaying only failures whose fix is already known.
+
+**Closed by story 28.7 (#221):** the SQLite store and the PostgreSQL durable capture let a run be finalized from
+another process. 26.1 still replays only failures whose fix is known; wiring it to the durable store is not planned.
 
 ## Epic 27: Python and Go Reach Parity with .NET
 
@@ -2418,7 +2421,7 @@ tests a port leg, so a Python- or Go-only deployment needs no .NET process.
 
 ## Epic 28: Lessons an Agent Can Act On, Wherever It Runs
 
-**Added:** 2026-10-30 · **Status:** in progress
+**Added:** 2026-10-30 · **Status:** done (retro 2026-11-08, accepted with open items; dogfood switch-on is a person's step)
 
 What no other agent memory has is here already: a lesson is stored only on the host's own verified evidence, and a
 randomized holdout measures whether lessons help. What the experiments show is that this is not yet enough:
@@ -2505,3 +2508,50 @@ Run the recipe on this repository's own development: every pull request's CI run
 0.5, and a results page reports the estimate after enough runs per arm, with the same pre-registered reading rules as
 the live experiments. The README then says what the library has shown on real work, whichever way it comes out, and
 leads with what it is for in one paragraph and one example.
+
+## Epic 29: Reach Without a .NET Toolchain
+
+**Added:** 2026-11-14 · **Status:** planned
+
+Epic 28 made the loop usable from any agent through `aexp` and MCP, and the Epic 28 retrospective left one gap it
+named as the likeliest adoption friction: getting from "I read the README" to a trusted, running setup takes a .NET
+SDK, a hand-written config and knowledge of which verifier to name. Nothing proves that path on a machine other than
+this one. This epic is about reach, not benefit: it adds no lesson behavior and changes no default, so it can run while
+the dogfood holdout fills. The holdout stays the only judge of benefit; this epic is judged by whether a person on a
+fresh machine without .NET gets a verified lesson in a few minutes.
+
+Design rules: `aexp init` writes config, never trust (`aexp trust` stays a person's step, and `init` says so); every
+install path ships the same bytes CI tested; a story that adds a surface adds the test that exercises it end to end;
+nothing here changes a lesson, the holdout or what the block says.
+
+### Story 29.1: `aexp init`
+One command that sets a project up: detects the project kind and proposes the verifier (`dotnet test`, `npm test`,
+`pytest`, `go test ./...`, `make test`, or asks), writes `.aexp/config.json` with the SQLite store path, identity and a
+comment on every choice, adds `.aexp/` to `.gitignore` when the project has one, and prints the two steps left to the
+person (`aexp trust`, then `aexp setup claude-code` or `claude mcp add`). Refuses to overwrite an existing config
+without `--force`. `--print` shows the config without writing it. Tests cover each project kind and the refusals.
+
+### Story 29.2: The Adoption Path, Proven in CI
+A CI job on Linux, macOS and Windows runners that installs `aexp` from the packed `.nupkg` of the same commit, then on
+a scratch project runs `aexp init`, `aexp trust`, records a run that fails and one that works, finalizes each with the
+configured verifier, and asserts the next `aexp recall` shows the lesson and `aexp benefit` counts both arms. It is the
+end-to-end test of what the README promises, with no step done by hand. The job joins the merge gate.
+
+### Story 29.3: `aexp` Without the .NET SDK
+Self-contained, single-file `aexp` binaries for linux-x64, linux-arm64, osx-arm64, osx-x64 and win-x64, built and
+attached by the release workflow, with SHA-256 sums in the release notes; an install script that downloads the binary
+for the current platform, verifies its sum and puts it on `PATH`. The 29.2 job gains a leg that uses the binary instead
+of the tool package. The README's install section leads with the path that needs no .NET.
+
+### Story 29.4: The Tool's Own Evidence
+The two residuals from story 28.8: a Testcontainers-backed end-to-end leg of `AgentExperience.Cli.Tests` over
+PostgreSQL (the SQLite leg's cases, same assertions), and the tool's own telemetry: a `telemetry` config section (OTLP
+endpoint, off by default) under which `aexp` emits the library's existing spans and counters plus one counter per
+command and outcome, with the same no-text rule as the library.
+
+### Story 29.5: Recipes for Other Coding Agents
+`aexp setup` grows one more host beyond Claude Code where a hook or MCP-only path can be documented and tested without
+a product login: a documented, tested MCP-only recipe (`experience_recall` at task start, `experience_finish` at the
+end, verifier configured by the operator) for any MCP client, and a `setup <host>` for the first host whose hook model
+supports a `Stop`-equivalent verifier call. Which host is chosen when the story starts, from what users ask for; none
+is promised here.
