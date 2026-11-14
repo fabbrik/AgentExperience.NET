@@ -36,6 +36,12 @@ public sealed record ReflectionExecutionOptions
     /// <summary>The time source for <see cref="MaxDuration"/>.</summary>
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
+    /// <summary>
+    /// Receives each <see cref="ReflectionStep"/> as it happens. Counts and enums only. An exception from it is swallowed:
+    /// observing the loop never changes it.
+    /// </summary>
+    public Action<ReflectionStep>? OnStep { get; init; }
+
     /// <summary>Throws when a limit is out of range.</summary>
     /// <exception cref="ArgumentOutOfRangeException">A bound is not positive where it must be.</exception>
     public void Validate()

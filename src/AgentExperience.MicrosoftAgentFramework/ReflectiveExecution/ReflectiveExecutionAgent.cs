@@ -48,7 +48,16 @@ internal sealed class ReflectiveExecutionAgent : DelegatingAIAgent
         Exception? lastError = null;
         Guid? runId = null;
         var lastCompleted = false;
-        var coordinator = new ReflectionExecutionCoordinator(settings.Limits, settings.Evaluator, settings.Authorizer, settings.Replanning);
+        var limits = settings.Limits with
+        {
+            OnStep = step =>
+            {
+                ReflectiveExecutionTelemetry.RecordStep(step);
+                settings.Limits.OnStep?.Invoke(step);
+                settings.OnStep?.Invoke(new ReflectiveStepEvent(runId, step));
+            },
+        };
+        var coordinator = new ReflectionExecutionCoordinator(limits, settings.Evaluator, settings.Authorizer, settings.Replanning);
 
         async ValueTask<ReflectionAttemptOutcome> Attempt(ReflectionAttemptInput input, CancellationToken token)
         {

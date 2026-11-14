@@ -8,6 +8,12 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ### Added
 
+- **Reflective execution: step events and a measuring harness.** `OnStep` reports each step of the loop (attempt, verification,
+  reflection, evaluation, replanning, retry authorized or denied, budget exhausted, stopped) as counts and enums, never text, and a
+  new `agentexperience.reflection.steps` counter counts them by kind. `experiments/AgentExperience.ReflectionEval` runs the four
+  arms (baseline, reflection, memory, both) and reports verified success, attempts, tool calls and latency. It uses a scripted
+  model, so it shows mechanics only. Additive, experimental. See [the guide](docs/guide/reflective-execution.md#steps).
+
 - **`aexp init [--print] [--force] [--verify <json array>]`** writes a commented `.aexp/config.json` from one command,
   run in the project root, with no agent named: the verifier detected when one kind of project is at the root
   (`dotnet test`, `npm test`, `pytest`, `go test ./...`; and now `make test`, for a `Makefile` with a `test:` target,

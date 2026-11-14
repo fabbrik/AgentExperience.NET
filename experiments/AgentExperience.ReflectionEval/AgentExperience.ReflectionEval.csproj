@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The four-arm reflective execution harness: baseline, reflection only, memory only, both, on the same tasks, printing
+       externally verified success, attempts, tool calls and latency. With the scripted model it shows MECHANICS only (see
+       README.md); a real-model run is separate and pre-registered. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>AgentExperience.ReflectionEval</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="[10.0.12]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\samples\AgentExperience.Sample.Reflective\AgentExperience.Sample.Reflective.csproj" />
+  </ItemGroup>
+
+</Project>
