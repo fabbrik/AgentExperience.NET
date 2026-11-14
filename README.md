@@ -67,10 +67,12 @@ preview, `0.1.0-preview.19`; until then, [build it from this repository](dogfood
 
 ```bash
 dotnet tool install --global AgentExperience.Cli --prerelease
+aexp init                            # in the project root: detects the test command, writes .aexp/config.json
+aexp trust                           # after you reviewed the config: a person's step
 claude mcp add aexp -- aexp mcp      # or any MCP client: the server is `aexp mcp`, run in the project
 ```
 
-A `.aexp/config.json` in the project names the scope and the one command `aexp` may run, the verifier
+`.aexp/config.json` names the scope and the one command `aexp` may run, the verifier
 (`"verify": { "command": ["dotnet", "test"] }`, exit code 0 = pass), which runs only once a person has reviewed the
 config and approved it with `aexp trust` (an edit revokes the approval). The MCP tools `experience_recall`,
 `experience_failure_hint`, `experience_record_call`, `experience_finish` and `experience_lessons` (or the commands

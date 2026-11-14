@@ -26,12 +26,14 @@ aexp trust                                                       # after you rev
 - **adds the hooks to `.claude/settings.json`**, merged with what is there: every existing hook, matcher and setting is
   kept, and an event that already has an `aexp hook` command gets no second one. A settings file that is not plain JSON
   (with comments, say) is left alone, and setup tells you to add the block by hand. Running setup again changes nothing.
-- **writes `.aexp/config.json`** if there is none (an existing one is never touched), with the identity named after the
-  directory, the holdout at 20% so the benefit can be measured, `file_path` as the only argument kept from tool calls, and
-  the verifier detected from the project when it is obvious: `dotnet test` (a solution or project file at the root),
-  `npm test` (a `package.json` with a test script), `pytest` (`pyproject.toml`, `pytest.ini`, `conftest.py`, `tox.ini`)
-  or `go test ./...` (`go.mod`). When none or several match, it writes a placeholder that refuses to run until you set
-  `verify.command`.
+- **writes `.aexp/config.json`** if there is none (an existing one is never touched), through the same generator as
+  [`aexp init`](cli-and-mcp.md#write-it-aexp-init): the identity named after the directory with `"agent": "claude-code"`,
+  the holdout at 20% so the benefit can be measured, `file_path` as the only argument kept from tool calls, a comment on
+  each choice, and the verifier detected from the project when it is obvious: `dotnet test` (a solution or project file
+  at the root), `npm test` (a `package.json` with a test script), `pytest` (`pyproject.toml`, `pytest.ini`,
+  `conftest.py`, `tox.ini`) or `go test ./...` (`go.mod`), and `make test` (a `Makefile` with a `test:` target) only when
+  none of those fits. When none or several match, it writes a placeholder that refuses to run until you set `verify.command` (setup asks nothing; run
+  `aexp init` first to choose from the candidates or pass `--verify`).
 - **adds `.aexp/` to `.gitignore`**: the store, open runs, sessions, the hook log and the config stay local.
 - **prints the next steps**, including the permission rules below. It never approves the config.
 
