@@ -10,7 +10,10 @@ using AgentExperience.MicrosoftAgentFramework;
 
 namespace AgentExperience.Cli;
 
-/// <summary>What one invocation of the tool runs with: its streams, working directory, environment and clock.</summary>
+/// <summary>
+/// What one invocation of the tool runs with: its streams, working directory, environment and clock. <c>ReadLine</c>
+/// reads one line a person typed; <see langword="null"/> means standard input is not a terminal, so nothing asks.
+/// </summary>
 internal sealed record AexpConsole(
     TextWriter Out,
     TextWriter Error,
@@ -18,7 +21,8 @@ internal sealed record AexpConsole(
     Func<string, string?> Environment,
     TimeProvider Clock,
     Stream? StandardInput = null,
-    Stream? StandardOutput = null);
+    Stream? StandardOutput = null,
+    Func<string?>? ReadLine = null);
 
 /// <summary>
 /// The <c>aexp</c> command line. Plain parsing, no framework: each command takes named options only, and every value
@@ -50,6 +54,9 @@ internal static class AexpCli
           aexp mcp                                             Serve the MCP tools over stdio.
           aexp trust                                           Show the config's verifier, and approve the config.
           aexp runs prune --older-than <age>                   Delete open runs older than e.g. 7d, 12h, 30m.
+          aexp init [--print] [--force] [--verify <json array>]
+                                                                Write .aexp/config.json (verifier detected, asked or
+                                                                given) and the .gitignore entry; never trusts it.
           aexp setup claude-code [--print]                     Add the Claude Code hooks, a config and .gitignore entry.
           aexp hook <event> [--timeout <s>] [--claude-md [file]] [--agents-md [file]]
                                                                 A Claude Code hook (reads the event JSON on stdin).
@@ -89,17 +96,25 @@ internal static class AexpCli
             return parsed.Command.Count == 0 && !parsed.Flag("help") ? Usage : Ok;
         }
 
-        // Setup runs before there is a config.
-        if (parsed.Command is ["setup", ..])
+        // Init and setup run before there is a config.
+        if (parsed.Command is ["init", ..] or ["setup", ..])
         {
             try
             {
-                return await ClaudeCodeSetup.RunAsync(parsed, console, cancellationToken).ConfigureAwait(false);
+                return parsed.Command[0] == "init"
+                    ? await ProjectInit.RunAsync(parsed, console, cancellationToken).ConfigureAwait(false)
+                    : await ClaudeCodeSetup.RunAsync(parsed, console, cancellationToken).ConfigureAwait(false);
             }
             catch (AexpUsageException ex)
             {
                 await console.Error.WriteLineAsync("aexp: " + ex.Message + (ex.Detail is null ? string.Empty : " (" + ex.Detail + ")")).ConfigureAwait(false);
                 return Usage;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // A write that failed (permissions, a full disk): the type and message only, never a stack trace.
+                await console.Error.WriteLineAsync($"aexp: failed ({ex.GetType().Name}): {ex.Message}").ConfigureAwait(false);
+                return Failed;
             }
         }
 
@@ -332,7 +347,7 @@ internal static class AexpCli
     /// <summary>Command words, then <c>--name value</c> options and bare <c>--flag</c>s.</summary>
     internal sealed class Arguments
     {
-        private static readonly HashSet<string> Flags = new(StringComparer.Ordinal) { "failure", "all", "help", "version", "print" };
+        private static readonly HashSet<string> Flags = new(StringComparer.Ordinal) { "failure", "all", "help", "version", "print", "force" };
 
         /// <summary>Options whose value may be left out (the next argument is theirs unless it is another option).</summary>
         private static readonly HashSet<string> OptionalValues = new(StringComparer.Ordinal) { "claude-md", "agents-md" };

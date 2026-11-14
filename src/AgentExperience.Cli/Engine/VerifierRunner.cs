@@ -18,8 +18,8 @@ internal sealed record VerifierResult(int ExitCode, bool TimedOut);
 internal static class VerifierRunner
 {
     /// <summary>
-    /// What <c>aexp setup</c> writes as the verifier when it cannot tell the project's test command: never run, so the
-    /// verifier stays refused until a person sets it.
+    /// What <c>aexp init</c> and <c>aexp setup</c> write as the verifier when they cannot tell the project's test command:
+    /// never run, so the verifier stays refused until a person sets it.
     /// </summary>
     public const string Placeholder = "<set verify.command in .aexp/config.json to this project's test command>";
 
@@ -30,7 +30,7 @@ internal static class VerifierRunner
         if (program.StartsWith('<') && program.EndsWith('>'))
         {
             throw new AexpUsageException(
-                "verify.command is still the placeholder 'aexp setup' wrote: set it to this project's test command, then a person "
+                "verify.command is still the placeholder 'aexp init' (or 'aexp setup') wrote: set it to this project's test command, then a person "
                 + "reviews the config and runs 'aexp trust'.");
         }
 
