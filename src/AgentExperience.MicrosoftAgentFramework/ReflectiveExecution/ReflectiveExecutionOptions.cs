@@ -55,6 +55,13 @@ public sealed class ReflectiveExecutionOptions
 
     /// <summary>Called for each stop with the reason and counters; carries no prompt, tool argument or model text.</summary>
     public Action<ReflectiveExecutionEvent>? OnEvent { get; set; }
+
+    /// <summary>
+    /// Receives each step of the loop (attempt, verification, reflection, evaluation, replanning, retry authorized or
+    /// denied, budget exhausted, stopped) with the run id once it is known. Counts and enums only; an exception from it is
+    /// swallowed. <see cref="ReflectionExecutionOptions.OnStep"/> on <see cref="Limits"/> still works and is called too.
+    /// </summary>
+    public Action<ReflectiveStepEvent>? OnStep { get; set; }
 }
 
 /// <summary>What the reflective execution did, as counts and enums only.</summary>
@@ -71,3 +78,8 @@ public sealed record ReflectiveExecutionEvent(
     bool RetryHappened,
     bool RetryImprovedResult,
     bool RetryReachedVerifiedSuccess);
+
+/// <summary>One step of a reflective execution, with the run it belongs to.</summary>
+/// <param name="RunId">The one run all attempts belong to, or <see langword="null"/> before the first attempt records it.</param>
+/// <param name="Step">The step: counts and enums only, never text.</param>
+public sealed record ReflectiveStepEvent(Guid? RunId, ReflectionStep Step);

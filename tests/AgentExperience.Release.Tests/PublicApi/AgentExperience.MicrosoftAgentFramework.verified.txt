@@ -756,8 +756,15 @@ namespace AgentExperience.MicrosoftAgentFramework.ReflectiveExecution
         public AgentExperience.Core.ReflectiveExecution.IReflectionEvaluator? Evaluator { get; set; }
         public AgentExperience.Core.ReflectiveExecution.ReflectionExecutionOptions Limits { get; set; }
         public System.Action<AgentExperience.MicrosoftAgentFramework.ReflectiveExecution.ReflectiveExecutionEvent>? OnEvent { get; set; }
+        public System.Action<AgentExperience.MicrosoftAgentFramework.ReflectiveExecution.ReflectiveStepEvent>? OnStep { get; set; }
         public AgentExperience.Core.ReflectiveExecution.IReplanningStrategy? Replanning { get; set; }
         public System.Func<AgentExperience.MicrosoftAgentFramework.ReflectiveExecution.ReflectiveAttemptView, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool?>>? TrustedCheck { get; set; }
+    }
+    public sealed class ReflectiveStepEvent : System.IEquatable<AgentExperience.MicrosoftAgentFramework.ReflectiveExecution.ReflectiveStepEvent>
+    {
+        public ReflectiveStepEvent(System.Guid? RunId, AgentExperience.Core.ReflectiveExecution.ReflectionStep Step) { }
+        public System.Guid? RunId { get; init; }
+        public AgentExperience.Core.ReflectiveExecution.ReflectionStep Step { get; init; }
     }
 }
 namespace Microsoft.Extensions.DependencyInjection

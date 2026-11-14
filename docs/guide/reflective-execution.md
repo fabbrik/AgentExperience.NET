@@ -173,6 +173,7 @@ An evaluator saying "fine" against a failing trusted check ends as `NotRetryable
 | `Authorizer` | deny all | Called before every retry |
 | `TrustedCheck` | none | Your check, after each attempt: `true` passed, `false` failed, `null` no verdict |
 | `OnEvent` | none | One event per execution: counts and enums, no prompt, argument or model text |
+| `OnStep` | none | One event per step of the loop, with the run ID once known: see [Steps](#steps) |
 | `Replanning` | evaluator's proposal | Builds the correction text from an evaluation |
 
 A bound that capture would enforce first (attempts, duration) is refused when the agent is built, with a message naming it.
@@ -206,7 +207,7 @@ competing recovery path.
 
 ## Telemetry
 
-Four counters on the meter `AgentExperience.MicrosoftAgentFramework.ReflectiveExecution`, one tag, enums only:
+Five counters on the meter `AgentExperience.MicrosoftAgentFramework.ReflectiveExecution`, one tag each, enums only:
 
 | Counter | Counts | Evidence? |
 | --- | --- | --- |
@@ -214,10 +215,33 @@ Four counters on the meter `AgentExperience.MicrosoftAgentFramework.ReflectiveEx
 | `agentexperience.reflection.retries` | executions in which a retry occurred | no |
 | `agentexperience.reflection.retries.improved` | executions in which a retry did better than the attempt before | no |
 | `agentexperience.reflection.retries.verified` | executions in which a retry ended with your own check passing | **the only one** |
+| `agentexperience.reflection.steps` (tag `agentexperience.reflection.step`) | steps of the loop, by kind | n/a |
 
 No prompt, tool argument, error text, model text or identity is ever a tag. `OnEvent` carries the same facts with the run ID.
 The meter is deliberately not in `docs/telemetry-names.json`: the Python and Go ports have no reflective execution, so no
 port has to match these names.
+
+### Steps
+
+`OnStep` (on `ReflectiveExecutionOptions`, or `OnStep` on `Limits` in Core) reports each step as it happens. A step is a kind,
+an attempt number and, where it applies, a trusted-check verdict, an advisory assessment or a stop reason. It has no text field,
+and a test keeps it that way, so it is safe to log. An observer that throws is ignored: watching the loop never changes it.
+
+| Kind | When |
+| --- | --- |
+| `ExecutionStarted` | the loop begins |
+| `AttemptCompleted` | an attempt ends, whatever its result |
+| `VerificationReceived` | your trusted check answered (`TrustedCheckPassed` is `null` when there is none) |
+| `ReflectionRequested` | the evaluator is about to be asked (never for a first attempt that passed, or for a transient technical retry) |
+| `EvaluationCompleted` | a valid evaluation came back (`Assessment` is advisory) |
+| `ReplanningPerformed` | a correction was built and accepted |
+| `RetryAuthorized` / `RetryDenied` | your `IRetryAuthorizer` answered |
+| `BudgetExhausted` | attempts, cycles, duration, tool calls or tokens ended the loop (`StopReason` says which) |
+| `ExecutionStopped` | always last; `StopReason` says why |
+
+**Historical experience reused** has no step of its own, on purpose. Injection and recall already report it through the
+library's existing injection telemetry and `OnContextInjected`; a second report here would be a second source of truth. Use the
+run ID on the steps to join them.
 
 ## Public API compatibility
 
@@ -238,8 +262,12 @@ change in a later preview. With reflective execution unregistered or disabled, b
 - **Tokens are counted only when the provider reports usage.** A provider that does not makes `MaxTokens` inert.
 - **The meter is separate and experimental.** See [Telemetry](#telemetry); its names are not in the cross-language names file.
 - **Only `RunAsync`.** Streaming is not retried.
-- **No benefit is demonstrated.** The sample's four-arm comparison uses a scripted model that obeys what it is handed. It
-  proves the mechanics, not an improvement.
+- **No benefit is demonstrated.** The four-arm comparison (`experiments/AgentExperience.ReflectionEval`) uses a scripted model
+  that obeys what it is handed. It proves the mechanics, not an improvement, and it reports no tokens or cost.
+- **Evaluation is of a finished attempt.** The evaluator sees a bounded summary (error classes, failed tool names), not the
+  plan or intermediate results, and never raw tool arguments or output. A host that wants to critique a plan before acting
+  needs its own step.
+- **Replanning is advice.** The correction is a note the model reads; whether it changes strategy is up to the model.
 - **Python, Go, the CLI and the MCP server are unchanged.**
 
 See also the [design assessment](../architecture/reflective-execution-design.md).

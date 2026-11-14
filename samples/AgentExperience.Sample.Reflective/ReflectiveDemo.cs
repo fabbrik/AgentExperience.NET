@@ -51,7 +51,11 @@ public static class ReflectiveDemo
     /// <param name="Verified">How many of the tasks ended with the host's build check green.</param>
     /// <param name="Tasks">How many tasks.</param>
     /// <param name="ModelCalls">The model calls used in total.</param>
-    public sealed record ArmResult(string Arm, int Verified, int Tasks, int ModelCalls);
+    /// <param name="Attempts">The attempts of the agent across the tasks (a task without reflection is one attempt).</param>
+    /// <param name="ToolCalls">The tool calls across the tasks.</param>
+    /// <param name="Elapsed">The wall-clock time the arm's tasks took. Tiny here: the model is scripted.</param>
+    /// <remarks>Tokens and cost are not measured: the scripted model reports no usage, and the harness does not invent it.</remarks>
+    public sealed record ArmResult(string Arm, int Verified, int Tasks, int ModelCalls, int Attempts = 0, int ToolCalls = 0, TimeSpan Elapsed = default);
 
     /// <summary>
     /// The four arms on the same deterministic tasks: neither, reflection only, memory only, both. This shows the
@@ -66,6 +70,9 @@ public static class ReflectiveDemo
         {
             var verified = 0;
             var calls = 0;
+            var attempts = 0;
+            var toolCalls = 0;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             if (memory)
             {
                 using var model = new ScriptedModel();
@@ -73,13 +80,17 @@ public static class ReflectiveDemo
                 await session.RunTaskAsync(tasks[0]);   // the teaching run, always reflective: it is what stores the lesson
                 session.Reflection = reflection;
                 var before = model.Calls;
+                clock.Restart();
                 foreach (var task in tasks.Skip(1))
                 {
-                    verified += (await session.RunTaskAsync(task)).BuildGreen ? 1 : 0;
+                    var run = await session.RunTaskAsync(task);
+                    verified += run.BuildGreen ? 1 : 0;
+                    attempts += run.Reflection?.Attempts ?? 1;
+                    toolCalls += run.FixesTried.Count;
                 }
 
                 calls = model.Calls - before;
-                results.Add(new ArmResult(name, verified, tasks.Length - 1, calls));
+                results.Add(new ArmResult(name, verified, tasks.Length - 1, calls, attempts, toolCalls, clock.Elapsed));
             }
             else
             {
@@ -88,14 +99,18 @@ public static class ReflectiveDemo
                     // A fresh memory per task: nothing carries over.
                     using var model = new ScriptedModel();
                     await using var session = new Session(model, reflection);
-                    verified += (await session.RunTaskAsync(task)).BuildGreen ? 1 : 0;
+                    var run = await session.RunTaskAsync(task);
+                    verified += run.BuildGreen ? 1 : 0;
+                    attempts += run.Reflection?.Attempts ?? 1;
+                    toolCalls += run.FixesTried.Count;
                     calls += model.Calls;
                 }
 
-                results.Add(new ArmResult(name, verified, tasks.Length - 1, calls));
+                results.Add(new ArmResult(name, verified, tasks.Length - 1, calls, attempts, toolCalls, clock.Elapsed));
             }
 
-            await output.WriteLineAsync($"{name,-22} verified {results[^1].Verified}/{results[^1].Tasks}, model calls {results[^1].ModelCalls}");
+            var r = results[^1];
+            await output.WriteLineAsync($"{name,-22} verified {r.Verified}/{r.Tasks}, attempts {r.Attempts}, tool calls {r.ToolCalls}, model calls {r.ModelCalls}, {r.Elapsed.TotalMilliseconds:F0} ms");
         }
 
         return results;

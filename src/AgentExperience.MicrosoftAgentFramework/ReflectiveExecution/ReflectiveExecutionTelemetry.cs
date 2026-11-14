@@ -28,6 +28,12 @@ internal static class ReflectiveExecutionTelemetry
     private static readonly Counter<long> Verified = Meter.CreateCounter<long>(
         "agentexperience.reflection.retries.verified", "{execution}", "Executions in which a retry ended with the host's own check passing. The only one of the three that is evidence.");
 
+    private static readonly Counter<long> Steps = Meter.CreateCounter<long>(
+        "agentexperience.reflection.steps", "{step}", "Steps of reflective executions, tagged with the kind of step.");
+
+    internal static void RecordStep(ReflectionStep step) =>
+        Steps.Add(1, new KeyValuePair<string, object?>("agentexperience.reflection.step", step.Kind.ToString()));
+
     internal static void Record(ReflectionExecutionResult result)
     {
         Executions.Add(1, new KeyValuePair<string, object?>("agentexperience.reflection.stop_reason", result.StopReason.ToString()));
