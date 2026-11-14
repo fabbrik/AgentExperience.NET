@@ -18,6 +18,10 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   trust like any edit), and prints the steps left to a person: `aexp trust`, then `aexp setup claude-code` or
   `claude mcp add`. It approves nothing. `aexp setup claude-code` writes its config and `.gitignore` entry through the
   same generator (`ProjectInit`), so there is one. See [CLI and MCP](docs/guide/cli-and-mcp.md#write-it-aexp-init).
+- **The adoption path is proven in CI** on Linux, macOS and Windows: `eng/prove-adoption-path.sh` installs `aexp` from
+  the `.nupkg` packed for the same commit, runs `init` and `trust` on a scratch project, finalizes a failed and a
+  verified run, and asserts that `recall`, `lessons` and `benefit` report the lesson; the three `adoption-path` legs
+  gate every pull request.
 
 ### Changed
 

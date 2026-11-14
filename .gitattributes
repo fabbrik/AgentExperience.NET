@@ -1,3 +1,5 @@
 *.sql text eol=lf
+# Bash scripts run under `shell: bash` on the Windows runner too (ci.yml, adoption-path), where a CRLF checkout breaks them.
+*.sh text eol=lf
 contract/** text eol=lf
 dogfood/** text eol=lf
