@@ -64,7 +64,7 @@ await agent.RunAsync("Ticket #4977: a refund is stuck on a lock again. Triage it
 Agents outside the Agent Framework (Claude Code, Codex, Cursor, a script) get the same loop through `aexp`, one
 command that is both a command line and an MCP stdio server, over a local SQLite file by default. No .NET needed: the
 install script puts a self-contained binary for Linux, macOS or Windows on your PATH, its SHA-256 checked against the
-release (the binaries ship with every release from the first one after this change):
+release:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fabbrik/AgentExperience.NET/main/scripts/install-aexp.sh | sh
