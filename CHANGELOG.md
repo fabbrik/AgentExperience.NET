@@ -6,6 +6,12 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-preview.20
+
+This preview takes `aexp` to machines without a .NET toolchain: `aexp init` writes the config in one command, self-contained binaries for Linux, macOS and Windows ship with the release and an install script verifies and installs them, and CI proves the whole adoption path on every platform from the same bytes. The same tag releases the eight NuGet packages, the Python distribution and the Go modules at this version, as before.
+
 ### Added
 
 - **Reflective execution: step events and a measuring harness.** `OnStep` reports each step of the loop (attempt, verification,

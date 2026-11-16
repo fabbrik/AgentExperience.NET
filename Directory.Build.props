@@ -27,7 +27,7 @@
        it. Without this property `dotnet pack` would silently emit 1.0.0. -->
   <PropertyGroup>
     <VersionPrefix>0.1.0</VersionPrefix>
-    <VersionSuffix>preview.19</VersionSuffix>
+    <VersionSuffix>preview.20</VersionSuffix>
   </PropertyGroup>
 
   <!-- Package metadata: applies to every packable project (the eight under src/). -->
@@ -66,7 +66,7 @@
        CHANGELOG). After each release, set the baseline to that release and delete the suppression files (RELEASING.md);
        a release test holds this version to the CHANGELOG. Restore downloads the baseline packages from nuget.org. -->
   <PropertyGroup Condition="'$(AgentExperienceShippingProject)' == 'true'">
-    <AgentExperiencePackageValidationBaseline>0.1.0-preview.18</AgentExperiencePackageValidationBaseline>
+    <AgentExperiencePackageValidationBaseline>0.1.0-preview.19</AgentExperiencePackageValidationBaseline>
     <EnablePackageValidation>true</EnablePackageValidation>
     <PackageValidationBaselineVersion>$(AgentExperiencePackageValidationBaseline)</PackageValidationBaselineVersion>
   </PropertyGroup>
