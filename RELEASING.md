@@ -27,8 +27,7 @@ too. The first release that carries a package ID nuget.org has never seen needs 
 The GitHub release also carries **five self-contained `aexp` binaries** and their `SHA256SUMS` as assets (story 29.3):
 `aexp-linux-x64`, `aexp-linux-arm64`, `aexp-osx-arm64`, `aexp-osx-x64` and `aexp-win-x64.exe`, built by
 `eng/publish-binaries.sh` on the tagged commit (step 7a), their sums quoted in the release notes, so
-`scripts/install-aexp.sh` can install `aexp` on a machine with no .NET at all. They ship from the first release after
-that story's merge.
+`scripts/install-aexp.sh` can install `aexp` on a machine with no .NET at all.
 
 The same tag also releases the two ports, at the same version, from the same verified commit:
 
