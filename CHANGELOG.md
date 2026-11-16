@@ -4,6 +4,10 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 [Known limits](docs/known-limits.md#known-limits) table lists every limit that is still unresolved, and the
 [Documented boundaries](docs/known-limits.md#documented-boundaries) table states what no code change can remove.
 
+## Unreleased
+
+Nothing yet.
+
 ## 0.1.0-preview.20
 
 This preview takes `aexp` to machines without a .NET toolchain: `aexp init` writes the config in one command, self-contained binaries for Linux, macOS and Windows ship with the release and an install script verifies and installs them, and CI proves the whole adoption path on every platform from the same bytes. The same tag releases the eight NuGet packages, the Python distribution and the Go modules at this version, as before.
