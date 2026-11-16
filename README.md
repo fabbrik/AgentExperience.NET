@@ -61,16 +61,19 @@ await agent.RunAsync("Ticket #4977: a refund is stuck on a lock again. Triage it
 
 ## Any agent: CLI and MCP
 
-Agents outside the Agent Framework (Claude Code, Codex, Cursor, a script) get the same loop through `aexp`, a .NET tool
-that is both a command line and an MCP stdio server, over a local SQLite file by default (published from the next
-preview, `0.1.0-preview.19`; until then, [build it from this repository](dogfood/README.md)):
+Agents outside the Agent Framework (Claude Code, Codex, Cursor, a script) get the same loop through `aexp`, one
+command that is both a command line and an MCP stdio server, over a local SQLite file by default. No .NET needed: the
+install script puts a self-contained binary for Linux, macOS or Windows on your PATH, its SHA-256 checked against the
+release (the binaries ship with every release from the first one after this change):
 
 ```bash
-dotnet tool install --global AgentExperience.Cli --prerelease
+curl -fsSL https://raw.githubusercontent.com/fabbrik/AgentExperience.NET/main/scripts/install-aexp.sh | sh
 aexp init                            # in the project root: detects the test command, writes .aexp/config.json
 aexp trust                           # after you reviewed the config: a person's step
 claude mcp add aexp -- aexp mcp      # or any MCP client: the server is `aexp mcp`, run in the project
 ```
+
+With the .NET 10 SDK, the same command is also a .NET tool: `dotnet tool install --global AgentExperience.Cli --prerelease`.
 
 `.aexp/config.json` names the scope and the one command `aexp` may run, the verifier
 (`"verify": { "command": ["dotnet", "test"] }`, exit code 0 = pass), which runs only once a person has reviewed the

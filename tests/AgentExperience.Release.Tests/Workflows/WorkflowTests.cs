@@ -1,4 +1,6 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 namespace AgentExperience.Release.Tests.Workflows;
 
@@ -297,6 +299,148 @@ public sealed class WorkflowTests
         Assert.Contains("scripts/release-version.sh\" dotnet", text, StringComparison.Ordinal);
     }
 
+    /// <summary>The runtimes the self-contained binaries are built for (story 29.3), in the order the csproj lists them.</summary>
+    private static readonly string[] BinaryRuntimes = ["linux-x64", "linux-arm64", "osx-arm64", "osx-x64", "win-x64"];
+
+    /// <summary>
+    /// Story 29.3: the self-contained binaries are built on every pull request by the same script the release runs,
+    /// and each is proven on its own hardware with no .NET installed: five legs, one per runtime, that download the
+    /// <c>binaries</c> job's artifact, run the install script against it as a local download base and then the
+    /// adoption-path checks, with a timeout and without a softener. The legs are required status checks on main.
+    /// </summary>
+    [Fact]
+    public void The_CI_binaries_job_builds_the_binaries_and_the_adoption_path_binary_legs_prove_each_on_its_own_hardware_without_the_SDK()
+    {
+        var ci = File.ReadAllText(Path.Combine(RepositoryRoot.Path, ".github", "workflows", "ci.yml")).ReplaceLineEndings("\n");
+
+        var build = Job(ci, "binaries");
+        Assert.Contains("\n    needs: build-and-test\n", build, StringComparison.Ordinal);
+        Assert.Contains("\n    runs-on: ubuntu-24.04\n", build, StringComparison.Ordinal);
+        Assert.Matches(new Regex(@"\n    timeout-minutes: [0-9]+\n", RegexOptions.CultureInvariant), build);
+        Assert.DoesNotContain("continue-on-error", build, StringComparison.Ordinal);
+        Assert.DoesNotContain("permissions:", build, StringComparison.Ordinal);
+        // The SDK global.json pins, and nothing beside it; the build is the release's own script.
+        Assert.Contains("global-json-file: global.json", build, StringComparison.Ordinal);
+        Assert.DoesNotContain("dotnet-version:", build, StringComparison.Ordinal);
+        Assert.Contains("\"rollForward\": \"disable\"", build, StringComparison.Ordinal);
+        Assert.Contains("test \"$actual\" = \"$pinned\"", build, StringComparison.Ordinal);
+        Assert.Contains("\n        run: eng/publish-binaries.sh artifacts/binaries\n", build, StringComparison.Ordinal);
+        Assert.Matches(
+            new Regex(@"uses: actions/upload-artifact@v4\n\s+with:\n\s+name: binaries\n\s+path: artifacts/binaries/\n\s+retention-days: 14\n", RegexOptions.CultureInvariant),
+            build);
+
+        var legs = Job(ci, "adoption-path-binary");
+        Assert.Contains("\n    needs: binaries\n", legs, StringComparison.Ordinal);
+        Assert.Contains("runs-on: ${{ matrix.os }}", legs, StringComparison.Ordinal);
+        Assert.Contains("fail-fast: false", legs, StringComparison.Ordinal);
+        Assert.Contains("name: adoption-path-binary (${{ matrix.runtime }})", legs, StringComparison.Ordinal);
+        Assert.Matches(new Regex(@"\n    timeout-minutes: [0-9]+\n", RegexOptions.CultureInvariant), legs);
+        Assert.DoesNotContain("continue-on-error", legs, StringComparison.Ordinal);
+        Assert.DoesNotContain("permissions:", legs, StringComparison.Ordinal);
+
+        // One leg per runtime, each on the hardware that runs that binary natively.
+        var rows = Regex.Matches(legs, @"- os: (?<os>[a-z0-9.-]+)\n\s+runtime: (?<runtime>[a-z0-9-]+)\n", RegexOptions.CultureInvariant)
+            .Select(m => (Os: m.Groups["os"].Value, Runtime: m.Groups["runtime"].Value))
+            .ToList();
+        Assert.Equal(
+            [("ubuntu-24.04", "linux-x64"), ("ubuntu-24.04-arm", "linux-arm64"), ("macos-15", "osx-arm64"), ("macos-15-intel", "osx-x64"), ("windows-2025", "win-x64")],
+            rows);
+        Assert.Equal(BinaryRuntimes, rows.Select(row => row.Runtime));
+
+        // No .NET on the runner: no SDK install, nothing restored, built or packed; the binaries job's artifact only.
+        Assert.DoesNotContain("setup-dotnet", legs, StringComparison.Ordinal);
+        Assert.DoesNotContain("global-json-file", legs, StringComparison.Ordinal);
+        Assert.DoesNotContain("dotnet ", legs, StringComparison.Ordinal);
+        Assert.DoesNotContain("nuget.org", legs, StringComparison.Ordinal);
+        Assert.Matches(
+            new Regex(@"uses: actions/download-artifact@v4\n\s+with:\n\s+name: binaries\n\s+path: artifacts/binaries\n", RegexOptions.CultureInvariant),
+            legs);
+        Assert.Contains(
+            "\n        shell: bash\n        env:\n          AEXP_EXPECT_RUNTIME: ${{ matrix.runtime }}\n        run: eng/prove-adoption-path.sh --binaries artifacts/binaries\n",
+            legs,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Story 29.3: the two scripts a stranger or a workflow runs are checked in and executable; the build script names
+    /// exactly the runtimes the csproj publishes for (read from the csproj, so neither list can drift), the lock file
+    /// the locked restore needs carries each of them, and the install script and the proof map each one.
+    /// </summary>
+    [Fact]
+    public void The_binaries_scripts_exist_and_name_exactly_the_runtimes_the_Cli_project_publishes_for()
+    {
+        var csprojPath = Path.Combine(RepositoryRoot.Path, "src", "AgentExperience.Cli", "AgentExperience.Cli.csproj");
+        var csproj = XDocument.Load(csprojPath);
+        var groups = csproj.Root!.Elements("PropertyGroup").Where(group => group.Element("RuntimeIdentifiers") is not null).ToList();
+        var group = Assert.Single(groups);
+        // Never visible to a plain build, restore or pack: the SDK would pack one tool package per runtime.
+        Assert.Contains("'$(AexpBinaries)' == 'true'", (string?)group.Attribute("Condition"), StringComparison.Ordinal);
+        var runtimes = group.Element("RuntimeIdentifiers")!.Value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Assert.Equal(BinaryRuntimes, runtimes);
+        Assert.Equal("packages.binaries.lock.json", group.Element("NuGetLockFilePath")?.Value);
+        var csprojText = File.ReadAllText(csprojPath);
+        Assert.DoesNotContain("PublishTrimmed", csprojText, StringComparison.Ordinal);
+        Assert.DoesNotContain("PublishAot", csprojText, StringComparison.Ordinal);
+        Assert.Contains("<SelfContained>true</SelfContained>", csprojText, StringComparison.Ordinal);
+        Assert.Contains("<PublishSingleFile>true</PublishSingleFile>", csprojText, StringComparison.Ordinal);
+
+        // The binaries' lock file, written with AexpBinaries, holds one target per runtime.
+        using var lockFile = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepositoryRoot.Path, "src", "AgentExperience.Cli", "packages.binaries.lock.json")));
+        var targets = lockFile.RootElement.GetProperty("dependencies").EnumerateObject().Select(target => target.Name).ToList();
+        foreach (var rid in BinaryRuntimes)
+        {
+            Assert.Contains($"net10.0/{rid}", targets);
+        }
+
+        var publish = Path.Combine(RepositoryRoot.Path, "eng", "publish-binaries.sh");
+        Assert.True(File.Exists(publish), "eng/publish-binaries.sh is missing.");
+        Assert.True(IsExecutable(publish), "eng/publish-binaries.sh is not executable (mode 100755).");
+        var publishText = File.ReadAllText(publish).ReplaceLineEndings("\n");
+        Assert.StartsWith("#!/usr/bin/env bash\n", publishText, StringComparison.Ordinal);
+        Assert.Contains("set -euo pipefail", publishText, StringComparison.Ordinal);
+        Assert.Contains("scripts/release-version.sh\" dotnet", publishText, StringComparison.Ordinal);
+        Assert.Contains("--locked-mode -p:AexpBinaries=true", publishText, StringComparison.Ordinal);
+        Assert.Contains("dotnet publish \"$project\" --no-restore --configuration Release", publishText, StringComparison.Ordinal);
+        Assert.Contains("-p:AexpBinaryRuntime=\"$rid\" -p:AgentExperienceReleaseBuild=true", publishText, StringComparison.Ordinal);
+        var listed = Regex.Match(publishText, "^runtimes=\"(?<runtimes>[^\"]+)\"$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        Assert.True(listed.Success, "eng/publish-binaries.sh has no runtimes=\"...\" line.");
+        Assert.Equal(runtimes, listed.Groups["runtimes"].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+
+        var install = Path.Combine(RepositoryRoot.Path, "scripts", "install-aexp.sh");
+        Assert.True(File.Exists(install), "scripts/install-aexp.sh is missing.");
+        Assert.True(IsExecutable(install), "scripts/install-aexp.sh is not executable (mode 100755).");
+        var installText = File.ReadAllText(install).ReplaceLineEndings("\n");
+        Assert.StartsWith("#!/bin/sh\n", installText, StringComparison.Ordinal);
+        Assert.Contains("set -eu", installText, StringComparison.Ordinal);
+        // POSIX sh: dash runs `sh` on Debian, so no line of code may lean on bash.
+        Assert.DoesNotContain("bash", string.Join("\n", installText.Split('\n').Where(line => !line.TrimStart().StartsWith('#'))), StringComparison.Ordinal);
+        foreach (var rid in runtimes)
+        {
+            Assert.Contains($"rid=\"{rid}\"", installText, StringComparison.Ordinal);
+        }
+
+        // The sum is checked before anything is installed, from the release's own SHA256SUMS, and the fetch is curl only.
+        Assert.Contains("https://github.com/$repo/releases/download/v$version", installText, StringComparison.Ordinal);
+        Assert.Contains("sha256sum -c one.sum", installText, StringComparison.Ordinal);
+        Assert.Contains("shasum -a 256 -c one.sum", installText, StringComparison.Ordinal);
+        Assert.True(installText.IndexOf("sha256sum -c one.sum", StringComparison.Ordinal) < installText.IndexOf("mv -f \"$tmp/$asset\"", StringComparison.Ordinal), "The sum must be checked before the binary is moved into place.");
+        Assert.DoesNotContain("wget", installText, StringComparison.Ordinal);
+        foreach (var knob in new[] { "AEXP_VERSION", "AEXP_DOWNLOAD_BASE", "AEXP_INSTALL_DIR" })
+        {
+            Assert.Contains($"${{{knob}:-", installText, StringComparison.Ordinal);
+        }
+
+        // The proof's binary mode maps the same runtimes, and the runtime legs in ci.yml name each one.
+        var proof = File.ReadAllText(Path.Combine(RepositoryRoot.Path, "eng", "prove-adoption-path.sh")).ReplaceLineEndings("\n");
+        Assert.Contains("--binaries)", proof, StringComparison.Ordinal);
+        Assert.Contains("AEXP_DOWNLOAD_BASE=\"$(file_url \"$binaries\")\" AEXP_INSTALL_DIR=\"$scratch/bin\" sh \"$installer\"", proof, StringComparison.Ordinal);
+        Assert.Contains("AEXP_INSTALL_DIR=\"$scratch/tampered-bin\"", proof, StringComparison.Ordinal);
+        foreach (var rid in runtimes)
+        {
+            Assert.Contains($"rid={rid} ;;", proof, StringComparison.Ordinal);
+        }
+    }
+
     /// <summary>
     /// Whether the file is executable: its Unix mode on Unix; on Windows, where the file system has no such bit, the
     /// mode git holds for it in the index (100755).
@@ -527,6 +671,25 @@ public sealed class WorkflowTests
     [InlineData("enable-cache: false", "enable-cache: true")]
     [InlineData("uv build --out-dir dist\n", "uv build --out-dir dist\n          uv publish dist/*\n")]
     [InlineData("uv build --out-dir dist\n", "uv build --out-dir dist\n          git tag go/v1 && git push origin go/v1\n")]
+    // Story 29.3: the self-contained binaries, built and checked by verify, checked again and attached by publish.
+    [InlineData("        run: eng/publish-binaries.sh artifacts/binaries\n", "        run: echo skipped\n")]
+    [InlineData("          (cd artifacts/binaries && sha256sum --check --strict SHA256SUMS)\n          printed=", "          printed=")]
+    [InlineData("          (cd artifacts/binaries && sha256sum --check --strict SHA256SUMS)\n\n      # Eight packages", "\n      # Eight packages")]
+    [InlineData("          (cd artifacts/binaries && sha256sum --check --strict SHA256SUMS)\n\n      # Eight packages", "          (cd artifacts/binaries && sha256sum --check SHA256SUMS)\n\n      # Eight packages")]
+    [InlineData("test \"$printed\" = \"$VERSION\"", "true")]
+    [InlineData("test \"$(find artifacts/binaries -type f | wc -l)\" -eq 6", "test \"$(find artifacts/binaries -type f | wc -l)\" -ge 1")]
+    [InlineData("for file in aexp-linux-x64 aexp-linux-arm64 aexp-osx-arm64 aexp-osx-x64 aexp-win-x64.exe SHA256SUMS; do", "for file in aexp-linux-x64 SHA256SUMS; do")]
+    [InlineData("            echo \"## Binaries\"\n", "")]
+    [InlineData("            cat artifacts/binaries/SHA256SUMS\n", "")]
+    [InlineData("          name: binaries\n          path: artifacts/binaries/\n          if-no-files-found: error\n          retention-days: 30\n", "          name: binaries\n          path: artifacts/binaries/\n          retention-days: 30\n")]
+    [InlineData("          name: binaries\n          path: artifacts/binaries/\n          if-no-files-found: error\n          retention-days: 30\n", "          name: binaries\n          path: artifacts/binaries/\n          if-no-files-found: error\n          retention-days: 1\n")]
+    [InlineData("      - name: Upload the binaries\n        uses: actions/upload-artifact@v4\n        with:\n          name: binaries\n          path: artifacts/binaries/\n          if-no-files-found: error\n          retention-days: 30\n\n", "")]
+    [InlineData("uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0\n        with:\n          name: binaries", "uses: actions/download-artifact@v4\n        with:\n          name: binaries")]
+    [InlineData("          name: binaries\n          path: artifacts/binaries\n", "          name: packages\n          path: artifacts/binaries\n")]
+    [InlineData("            gh release upload \"$TAG\" artifacts/binaries/* --clobber\n", "")]
+    [InlineData("            gh release upload \"$TAG\" artifacts/binaries/* --clobber\n", "            gh release upload \"$TAG\" artifacts/binaries/*\n")]
+    [InlineData("--notes-file artifacts/release-notes/notes.md \"${flags[@]}\" artifacts/binaries/*", "--notes-file artifacts/release-notes/notes.md \"${flags[@]}\"")]
+    [InlineData("      - name: Check the binaries are the tagged version\n", "      - name: Create the GitHub release (early)\n        run: gh release upload \"$TAG\" artifacts/binaries/* --clobber\n      - name: Check the binaries are the tagged version\n")]
     public void The_release_rules_catch_each_way_the_workflow_could_weaken(string original, string replacement)
     {
         var workflow = ReadWorkflow(ReleaseWorkflow);
@@ -719,6 +882,49 @@ public sealed class WorkflowTests
         Require(pushAt >= 0 && viewAt > pushAt && createAt > viewAt, "The GitHub release must be looked up, then created, only after the push.");
         Require(publish.Contains("flags+=(--prerelease)", StringComparison.Ordinal) && publish.Contains("--notes-file artifacts/release-notes/notes.md", StringComparison.Ordinal), "The GitHub release must be a prerelease for a suffixed version, with the built notes.");
 
+        // Story 29.3: the self-contained binaries. The publish job downloads verify's `binaries` artifact (SHA-pinned,
+        // as its every action), checks that it holds exactly the five binaries and SHA256SUMS with the sums right,
+        // and only then attaches them: on the release it creates, or, on a re-run, to the existing release with
+        // --clobber, so a re-run completes the assets instead of leaving the release without them.
+        const string BinaryFiles = "for file in aexp-linux-x64 aexp-linux-arm64 aexp-osx-arm64 aexp-osx-x64 aexp-win-x64.exe SHA256SUMS; do";
+        const string SixFiles = "test \"$(find artifacts/binaries -type f | wc -l)\" -eq 6";
+        const string CheckSums = "(cd artifacts/binaries && sha256sum --check --strict SHA256SUMS)";
+        const string UploadAssets = "gh release upload \"$TAG\" artifacts/binaries/* --clobber";
+        Require(Regex.IsMatch(publish, @"uses: actions/download-artifact@\S+(?: #[^\n]*)?\n\s+with:\n\s+name: binaries\n\s+path: artifacts/binaries\n", RegexOptions.CultureInvariant), "The publish job must download the verified `binaries` artifact to artifacts/binaries.");
+        var publishSumsAt = publish.IndexOf(CheckSums, StringComparison.Ordinal);
+        var uploadAssetsAt = publish.IndexOf(UploadAssets, StringComparison.Ordinal);
+        var firstGhReleaseAt = publish.IndexOf("gh release ", StringComparison.Ordinal);
+        Require(publish.Contains(BinaryFiles, StringComparison.Ordinal) && publish.Contains(SixFiles, StringComparison.Ordinal), "The publish job must check that artifacts/binaries holds exactly the five binaries and SHA256SUMS.");
+        Require(publishSumsAt >= 0 && firstGhReleaseAt > publishSumsAt, "The publish job must check the binaries' sums (sha256sum --check --strict) before it touches the GitHub release.");
+        Require(uploadAssetsAt > viewAt && uploadAssetsAt < createAt, "A re-run must complete an existing release's assets: `gh release upload ... --clobber` between the lookup and the create.");
+        Require(publish.Contains("--notes-file artifacts/release-notes/notes.md \"${flags[@]}\" artifacts/binaries/*", StringComparison.Ordinal), "The GitHub release must be created with the binaries attached (artifacts/binaries/* after the notes).");
+        Require(Regex.Matches(workflow, "gh release ", RegexOptions.CultureInvariant).Count == 3, "The GitHub release must be looked up, uploaded to and created, and nothing else.");
+
+        // The verify job builds them with the script ci.yml runs, right after the packages are verified; checks the
+        // six files, the sums and the version the Linux binary prints; quotes the sums in the release notes; and
+        // uploads them (30 days, as the packages) after the check.
+        var publishBinariesAt = verify.IndexOf("run: eng/publish-binaries.sh artifacts/binaries\n", StringComparison.Ordinal);
+        var verifySumsAt = verify.IndexOf(CheckSums, StringComparison.Ordinal);
+        var binariesUploadAt = verify.IndexOf("name: binaries\n", StringComparison.Ordinal);
+        Require(publishBinariesAt >= 0, "The verify job must build the binaries with `eng/publish-binaries.sh artifacts/binaries`.");
+        Require(verifySumsAt > publishBinariesAt, "The verify job must check the binaries' sums (sha256sum --check --strict SHA256SUMS) after building them.");
+        foreach (var (text, rule) in new[]
+        {
+            (BinaryFiles, "check for each of the five binaries and SHA256SUMS"),
+            (SixFiles, "require exactly six files in artifacts/binaries"),
+            ("printed=\"$(artifacts/binaries/aexp-linux-x64 --version)\"", "run the Linux x64 binary"),
+            ("test \"$printed\" = \"$VERSION\"", "check the binary prints the tagged version"),
+            ("echo \"## Binaries\"\n", "add a Binaries section to the release notes"),
+            ("cat artifacts/binaries/SHA256SUMS\n", "quote the sums in the release notes"),
+            ("\n          name: binaries\n          path: artifacts/binaries/\n          if-no-files-found: error\n          retention-days: 30\n", "upload the binaries, failing on none, kept as long as the packages"),
+        })
+        {
+            Require(verify.Contains(text, StringComparison.Ordinal), $"The verify job must {rule} (`{text}`).");
+        }
+
+        var notesAt = verify.IndexOf("} >> artifacts/release-notes/notes.md", StringComparison.Ordinal);
+        Require(verifySumsAt >= 0 && notesAt > verifySumsAt && binariesUploadAt > notesAt, "The binaries must be checked, then quoted in the notes, then uploaded.");
+
         // The verify job: every check before anything is uploaded.
         foreach (var (text, rule) in new[]
         {
@@ -784,7 +990,7 @@ public sealed class WorkflowTests
         var recordAt = verify.IndexOf("sha256sum -- *.whl *.tar.gz", StringComparison.Ordinal);
         var twineAt = verify.IndexOf("twine==", StringComparison.Ordinal);
         var goTestAt = verify.IndexOf("go test ./...", StringComparison.Ordinal);
-        var recheckAt = verify.IndexOf("sha256sum --check --strict", StringComparison.Ordinal);
+        var recheckAt = verify.IndexOf("sha256sum --check --strict \"$RUNNER_TEMP/python-dist.sha256\"", StringComparison.Ordinal);
         var firstUploadAt = verify.IndexOf("actions/upload-artifact", StringComparison.Ordinal);
         Require(
             buildAt >= 0 && recordAt > buildAt && twineAt > recordAt && goTestAt > twineAt && recheckAt > goTestAt && firstUploadAt > recheckAt

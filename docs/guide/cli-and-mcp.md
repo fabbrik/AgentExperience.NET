@@ -11,15 +11,27 @@ the [injection holdout](injection.md), the [lessons view](deployment.md#seeing-w
 
 ## Install
 
+No .NET needed. The install script detects the platform (Linux x64 or arm64, macOS Apple silicon or Intel, Windows x64),
+downloads the self-contained `aexp` binary from the newest GitHub release, checks its SHA-256 sum against the release's
+`SHA256SUMS` and puts it on your PATH as `~/.local/bin/aexp` (it installs nothing on a mismatch):
+
 ```bash
-dotnet tool install --global AgentExperience.Cli --prerelease
+curl -fsSL https://raw.githubusercontent.com/fabbrik/AgentExperience.NET/main/scripts/install-aexp.sh | sh
 aexp --version
 aexp init            # in the project root: writes .aexp/config.json and the .gitignore entry
 ```
 
-It needs the .NET 10 runtime. The SQLite file is created (owner-only) on first use. This path is proven end to end in CI
-on Linux, macOS and Windows: every run installs the packed tool, runs `init` and `trust`, finalizes a failed and a
-verified run, and checks that `recall`, `lessons` and `benefit` report the lesson (`eng/prove-adoption-path.sh`).
+Two knobs: `AEXP_VERSION=0.1.0-preview.20` (a release's version) installs that release instead of the newest, and
+`AEXP_INSTALL_DIR=/some/dir` changes where `aexp` goes. The script prints which release it chose, and fails naming the
+asset when that release has no binary for the platform (releases before the binaries shipped). On Windows, run it under
+Git Bash (it installs `aexp.exe`), or download `aexp-win-x64.exe` from the release page and rename it; there is no
+PowerShell script yet. A musl-based Linux (Alpine) is not served: use the .NET tool below.
+
+With the .NET 10 SDK installed, the same command is also a .NET tool, `dotnet tool install --global AgentExperience.Cli --prerelease`,
+which needs the .NET 10 runtime. The SQLite file is created (owner-only) on first use. Both paths are proven end to end
+in CI: every run installs `aexp` (the binary through the install script, on each of the five runtimes with no .NET on
+the runner; the packed tool on Linux, macOS and Windows), runs `init` and `trust`, finalizes a failed and a verified
+run, and checks that `recall`, `lessons` and `benefit` report the lesson (`eng/prove-adoption-path.sh`).
 
 ## Configure
 

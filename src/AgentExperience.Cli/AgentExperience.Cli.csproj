@@ -11,6 +11,27 @@
     <RootNamespace>AgentExperience.Cli</RootNamespace>
   </PropertyGroup>
 
+  <!-- Story 29.3: the self-contained, single-file binaries eng/publish-binaries.sh builds for the GitHub release (the
+       path that needs no .NET). Both groups are conditional on AexpBinaries, which only that script sets: a tool
+       project with plain RuntimeIdentifiers packs one tool package per runtime and strips the outer package (NU5017),
+       and a locked restore (the release's) needs the runtimes' graphs in a lock file, so they get their own
+       (packages.binaries.lock.json) and packages.lock.json stays the tool package's. A plain build, restore or pack
+       sees none of this. No trimming or AOT: reflection-based JSON and Npgsql are not proven trim-safe.
+       InvariantGlobalization is for the binaries only: a self-contained Linux app without it needs libicu on the host.
+       AssemblyName stays (the tests' InternalsVisibleTo names it); the script renames the published file. -->
+  <PropertyGroup Condition="'$(AexpBinaries)' == 'true'">
+    <RuntimeIdentifiers>linux-x64;linux-arm64;osx-arm64;osx-x64;win-x64</RuntimeIdentifiers>
+    <NuGetLockFilePath>packages.binaries.lock.json</NuGetLockFilePath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(AexpBinaries)' == 'true' And '$(AexpBinaryRuntime)' != ''">
+    <RuntimeIdentifier>$(AexpBinaryRuntime)</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- The official MCP C# SDK's core package only (stdio and stream transports, the low-level server and client): no
          hosting stack. A tool ships its own dependency graph, resolved once at pack time, so this floor is exactly what

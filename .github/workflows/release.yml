@@ -3,9 +3,10 @@ name: Release
 # The one workflow in this repository that may publish (RELEASING.md step 10). A maintainer starts it by pushing a
 # version tag, and nothing else can: no branch push, pull request, schedule or manual dispatch. One tag releases all
 # three languages at one version, from one verified commit. The verify job re-runs the release checks on the tagged
-# commit and uploads what it verified: the eight NuGet packages, and the Python sdist and wheel. After a reviewer
-# approves the `nuget-release` environment, the publish job pushes exactly those NuGet files to nuget.org, then tags
-# the six Go modules at the tagged commit and creates the GitHub release. After a reviewer approves the
+# commit and uploads what it verified: the eight NuGet packages, the five self-contained aexp binaries with their
+# SHA256SUMS (story 29.3), and the Python sdist and wheel. After a reviewer approves the `nuget-release` environment,
+# the publish job pushes exactly those NuGet files to nuget.org, then tags the six Go modules at the tagged commit and
+# creates the GitHub release with the binaries attached. After a reviewer approves the
 # `pypi-release` environment, the publish-pypi job uploads exactly the verified Python files to PyPI.
 #
 # No API key or token is stored anywhere. The publish job exchanges its GitHub OIDC token for a short-lived nuget.org
@@ -255,6 +256,50 @@ jobs:
       - name: Verify the packages
         run: dotnet run eng/verify-packages.cs -- artifacts/packages
 
+      # Story 29.3: the self-contained aexp binaries, built by the script ci.yml runs on every pull request, from a
+      # locked restore of the binaries' own lock file. The tool package packed above is unaffected.
+      - name: Build the self-contained binaries
+        run: eng/publish-binaries.sh artifacts/binaries
+
+      # Exactly the five binaries and their sums, the sums right, and the Linux x64 one (this runner's) carrying the
+      # tagged version. The other four are proven on their own hardware by ci.yml's adoption-path-binary legs on main.
+      - name: Check the binaries
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -l artifacts/binaries
+          for file in aexp-linux-x64 aexp-linux-arm64 aexp-osx-arm64 aexp-osx-x64 aexp-win-x64.exe SHA256SUMS; do
+            test -f "artifacts/binaries/$file" || { echo "::error::artifacts/binaries has no $file"; exit 1; }
+          done
+          test "$(find artifacts/binaries -type f | wc -l)" -eq 6 || { echo "::error::artifacts/binaries must hold exactly six files"; exit 1; }
+          (cd artifacts/binaries && sha256sum --check --strict SHA256SUMS)
+          printed="$(artifacts/binaries/aexp-linux-x64 --version)"
+          test "$printed" = "$VERSION" || { echo "::error::aexp-linux-x64 --version prints '$printed', not $VERSION"; exit 1; }
+          echo "aexp $printed: five binaries and SHA256SUMS OK"
+
+      # The release page quotes the sums, so a person can check a download against the notes as well as against the
+      # SHA256SUMS asset, and leads with the install script.
+      - name: Add the binaries to the release notes
+        run: |
+          set -euo pipefail
+          {
+            echo
+            echo "## Binaries"
+            echo
+            echo "Self-contained \`aexp\` for Linux (x64, arm64), macOS (Apple silicon, Intel) and Windows (x64): no .NET needed. Install the one for this machine, its SHA-256 sum checked:"
+            echo
+            echo '```bash'
+            echo "curl -fsSL https://raw.githubusercontent.com/fabbrik/AgentExperience.NET/main/scripts/install-aexp.sh | sh"
+            echo '```'
+            echo
+            echo "SHA-256 sums of the attached binaries (\`SHA256SUMS\`):"
+            echo
+            echo '```'
+            cat artifacts/binaries/SHA256SUMS
+            echo '```'
+          } >> artifacts/release-notes/notes.md
+
       # The Python distribution (python/). uv is pinned to one release, with its checksum, and nothing is cached: a
       # release restores from the lock file alone.
       - name: Setup uv and Python
@@ -357,6 +402,14 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Upload the binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: artifacts/binaries/
+          if-no-files-found: error
+          retention-days: 30
+
       # Kept for 90 days, the most GitHub allows: re-running publish-pypi needs it (RELEASING.md).
       - name: Upload the verified Python distribution
         uses: actions/upload-artifact@v4
@@ -391,6 +444,24 @@ jobs:
         with:
           name: release-notes
           path: artifacts/release-notes
+
+      - name: Download the binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: binaries
+          path: artifacts/binaries
+
+      # The five binaries and SHA256SUMS verify built, and nothing else, with their sums checked again here, just
+      # before they are attached to the release (as the Python distribution's are before its upload).
+      - name: Check the binaries are the tagged version
+        run: |
+          set -euo pipefail
+          ls -l artifacts/binaries
+          for file in aexp-linux-x64 aexp-linux-arm64 aexp-osx-arm64 aexp-osx-x64 aexp-win-x64.exe SHA256SUMS; do
+            test -f "artifacts/binaries/$file" || { echo "::error::artifacts/binaries has no $file"; exit 1; }
+          done
+          test "$(find artifacts/binaries -type f | wc -l)" -eq 6 || { echo "::error::artifacts/binaries must hold exactly six files"; exit 1; }
+          (cd artifacts/binaries && sha256sum --check --strict SHA256SUMS)
 
       # Eight packages and eight symbol packages, all at the version the tag names, and nothing else.
       - name: Check the packages are the tagged version
@@ -487,7 +558,9 @@ jobs:
             exit 1
           done
 
-      # Only after the push and the Go tags. An existing release (a re-run) is left untouched.
+      # Only after the push and the Go tags, with the five binaries and SHA256SUMS attached. An existing release (a
+      # re-run) keeps its notes and gets its assets completed: the checked binaries are uploaded again, replacing any
+      # of the same name (story 29.3).
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -498,13 +571,14 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "The GitHub release $TAG already exists; leaving it as it is."
+            echo "The GitHub release $TAG already exists; completing its assets and leaving the rest as it is."
+            gh release upload "$TAG" artifacts/binaries/* --clobber
             exit 0
           fi
           flags=()
           if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
           gh release create "$TAG" --verify-tag --title "AgentExperience.NET $VERSION" \
-            --notes-file artifacts/release-notes/notes.md "${flags[@]}"
+            --notes-file artifacts/release-notes/notes.md "${flags[@]}" artifacts/binaries/*
 
   # Uploads exactly the Python files verify built and checked, through PyPI Trusted Publishing: the action exchanges
   # the job's GitHub OIDC token for a short-lived PyPI token, under a publisher on pypi.org that names this repository,

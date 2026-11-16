@@ -14,6 +14,11 @@ lessons, the failure hints and the measurement are the library's own.
 dotnet tool install --global AgentExperience.Cli --prerelease
 ```
 
+No .NET on the machine? The same command ships as a self-contained binary for Linux, macOS and Windows with every
+release: `curl -fsSL https://raw.githubusercontent.com/fabbrik/AgentExperience.NET/main/scripts/install-aexp.sh | sh`
+puts it on your PATH, its SHA-256 sum checked against the release
+([details](https://github.com/fabbrik/AgentExperience.NET/blob/main/docs/guide/cli-and-mcp.md#install)).
+
 Then, in your project root:
 
 ```bash

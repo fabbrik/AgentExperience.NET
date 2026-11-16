@@ -28,6 +28,15 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   the `.nupkg` packed for the same commit, runs `init` and `trust` on a scratch project, finalizes a failed and a
   verified run, and asserts that `recall`, `lessons` and `benefit` report the lesson; the three `adoption-path` legs
   gate every pull request.
+- **`aexp` without the .NET SDK.** Every release now attaches self-contained, single-file `aexp` binaries for
+  linux-x64, linux-arm64, osx-arm64, osx-x64 and win-x64 with a `SHA256SUMS` file (sums quoted in the release notes),
+  built by `eng/publish-binaries.sh` from a locked restore; the tool package is unchanged. The install script
+  `scripts/install-aexp.sh` (`curl -fsSL https://raw.githubusercontent.com/fabbrik/AgentExperience.NET/main/scripts/install-aexp.sh | sh`)
+  picks the binary for the machine, checks its SHA-256 sum against `SHA256SUMS` (installing nothing on a mismatch) and
+  puts it on PATH; `AEXP_VERSION` pins a release and `AEXP_INSTALL_DIR` the directory. CI builds the same binaries on
+  every pull request and proves each on its own hardware with no .NET installed (`adoption-path-binary`, five legs:
+  the install script against the artifact, a corrupted sum refused, then the adoption-path checks). The README leads
+  with this path. See [CLI and MCP](docs/guide/cli-and-mcp.md#install).
 
 ### Changed
 
