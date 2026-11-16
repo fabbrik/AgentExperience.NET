@@ -219,6 +219,94 @@ jobs:
         shell: bash
         run: eng/prove-adoption-path.sh artifacts/packages
 
+  # Story 29.3: the self-contained aexp binaries, the path that needs no .NET. eng/publish-binaries.sh builds the five
+  # of them (linux-x64, linux-arm64, osx-arm64, osx-x64, win-x64) from a locked restore of the binaries' own lock file,
+  # with the same script release.yml runs on a tag, and uploads them with their SHA256SUMS for the job below. The tool
+  # package is untouched: the pack job above proves that. NOT published.
+  binaries:
+    needs: build-and-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Local development may roll forward (global.json: latestFeature). CI may not: the runner image ships
+      # newer SDK bands, which would otherwise win. Disabling roll-forward here makes setup-dotnet install,
+      # and the host select, exactly the pinned SDK. The working copy is the runner's; nothing is committed.
+      - name: Pin the SDK exactly (CI only)
+        run: |
+          sed -i -E 's/"rollForward": *"[^"]*"/"rollForward": "disable"/' global.json
+          grep -q '"rollForward": "disable"' global.json
+
+      # Exactly global.json's SDK (asserted below). It carries the net10.0 runtime every project targets, so nothing
+      # else is installed.
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      # Belt and braces after the pin above: a different SDK fails here instead of silently winning.
+      - name: Assert the exact pinned SDK
+        run: |
+          pinned="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' global.json)"
+          actual="$(dotnet --version)"
+          test "$actual" = "$pinned" || { echo "::error::SDK $actual is in use, but global.json pins $pinned"; exit 1; }
+          echo "SDK $actual, as pinned"
+
+      - name: Build the self-contained binaries
+        run: eng/publish-binaries.sh artifacts/binaries
+
+      - name: Upload the binaries (for the adoption-path-binary job, never published from here)
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: artifacts/binaries/
+          retention-days: 14
+
+  # Story 29.3: each binary proven on its own hardware, with no .NET installed (no setup-dotnet: the runner has only
+  # what a stranger's machine has). The leg runs the install script a stranger runs, scripts/install-aexp.sh, against
+  # the binaries job's artifact as a local download base (never the network), first on a copy with a corrupted sum
+  # (which must install nothing), then for real; then eng/prove-adoption-path.sh's checks: init, trust, a failed and a
+  # verified run, recall, lessons, benefit. AEXP_EXPECT_RUNTIME makes the leg assert it got the binary for its runtime.
+  # The five legs are required status checks on main.
+  adoption-path-binary:
+    needs: binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            runtime: linux-x64
+          - os: ubuntu-24.04-arm
+            runtime: linux-arm64
+          - os: macos-15
+            runtime: osx-arm64
+          - os: macos-15-intel
+            runtime: osx-x64
+          - os: windows-2025
+            runtime: win-x64
+    name: adoption-path-binary (${{ matrix.runtime }})
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download the binaries the binaries job built
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: artifacts/binaries
+
+      - name: Install aexp through the install script and prove the adoption path
+        shell: bash
+        env:
+          AEXP_EXPECT_RUNTIME: ${{ matrix.runtime }}
+        run: eng/prove-adoption-path.sh --binaries artifacts/binaries
+
   # The PostgreSQL matrix (story 6.3, KL-13): the storage suites, the pgvector proof, the sample's PostgreSQL
   # mode and the upgrades from the published previews' databases (story 12.1), on every supported major. One
   # variable picks both the pgvector image and the stock one, and each suite asserts the server it reached reports

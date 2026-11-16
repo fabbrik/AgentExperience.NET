@@ -16,10 +16,13 @@ session becomes learning material with no code and no model call of aexp's own:
 ## Set it up in three commands
 
 ```bash
-dotnet tool install --global AgentExperience.Cli --prerelease   # puts aexp on PATH, where the hooks call it
+curl -fsSL https://raw.githubusercontent.com/fabbrik/AgentExperience.NET/main/scripts/install-aexp.sh | sh   # puts aexp on PATH, where the hooks call it; no .NET needed
 aexp setup claude-code                                           # in the project root
 aexp trust                                                       # after you reviewed .aexp/config.json: a person's step
 ```
+
+(With the .NET 10 SDK, `dotnet tool install --global AgentExperience.Cli --prerelease` installs the same command as a
+.NET tool; see [Install](cli-and-mcp.md#install).)
 
 `aexp setup claude-code` (add `--print` to see everything without writing anything):
 

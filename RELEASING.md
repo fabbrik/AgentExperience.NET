@@ -24,6 +24,12 @@ eight packages, eight symbol packages, eight API baselines — is that list; `en
 too. The first release that carries a package ID nuget.org has never seen needs one extra check, described under
 [First publish of a new package ID](#first-publish-of-a-new-package-id).
 
+The GitHub release also carries **five self-contained `aexp` binaries** and their `SHA256SUMS` as assets (story 29.3):
+`aexp-linux-x64`, `aexp-linux-arm64`, `aexp-osx-arm64`, `aexp-osx-x64` and `aexp-win-x64.exe`, built by
+`eng/publish-binaries.sh` on the tagged commit (step 7a), their sums quoted in the release notes, so
+`scripts/install-aexp.sh` can install `aexp` on a machine with no .NET at all. They ship from the first release after
+that story's merge.
+
 The same tag also releases the two ports, at the same version, from the same verified commit:
 
 - **Python:** the distribution `agenticexperience` (`python/`), an sdist and a wheel, on PyPI. The first release that
@@ -297,6 +303,30 @@ dotnet pack --no-build --configuration Release --output artifacts/packages -p:Ag
 dotnet run eng/verify-packages.cs -- artifacts/packages
 ```
 
+### 7a. The self-contained binaries
+
+The five `aexp` binaries the release attaches (story 29.3), built by the script `release.yml` and `ci.yml` both run:
+a locked restore against the binaries' own lock file (`src/AgentExperience.Cli/packages.binaries.lock.json`), then one
+self-contained, single-file publish per runtime, renamed `aexp-<rid>` (`.exe` for Windows), and their `SHA256SUMS`.
+The check asserts exactly six files, the sums, that the tool package was left alone (no lock file changed; step 7's
+packages are unaffected), and that this machine's binary prints the version, run through the install script as a
+stranger would run it, with the full adoption path behind it (`eng/prove-adoption-path.sh --binaries`: the tampered
+copy refused, then init, trust, a failed and a verified run, recall, lessons, benefit; no `dotnet` call at all).
+
+```bash
+( version="$(scripts/release-version.sh dotnet)"
+  rm -rf artifacts/binaries
+  eng/publish-binaries.sh artifacts/binaries \
+    && [ "$(find artifacts/binaries -type f | wc -l)" -eq 6 ] \
+    && (cd artifacts/binaries && (sha256sum --check --strict SHA256SUMS 2>/dev/null || shasum -a 256 -c SHA256SUMS)) \
+    && [ -z "$(git status --porcelain -- '*packages.lock.json')" ] \
+    && eng/prove-adoption-path.sh --binaries artifacts/binaries \
+    && echo "Binaries OK: aexp $version" || echo "FAILED: see above" )
+```
+
+`release.yml`'s `verify` job runs the build and the file, sum and version checks on its Linux runner; the other four
+binaries are proven on their own hardware by CI's `adoption-path-binary` legs on `main`.
+
 ### 8. The sample, twice, byte for byte
 
 The sample's promise is one command, no Docker, no database, no credentials, and the same transcript every time.
@@ -379,9 +409,12 @@ not repeated there: they are what you ran locally, and CI's `postgres`, `maf-com
 version derived from `Directory.Build.props` (see [What a release is today](#what-a-release-is-today)); builds the
 Python sdist and wheel with a pinned `uv`, checks that they are `agenticexperience` at that version (`twine check
 --strict` and the wheel's metadata), and runs the Python tests; and runs `go vet` and `go test` in each Go module (the
-PostgreSQL legs of both ports are not repeated: CI on `main` ran them). It builds the release notes from this
-version's `CHANGELOG.md` section, and fails if there is none. Last, it uploads what it verified: the NuGet packages,
-and the Python distribution as its own artifact. It publishes nothing.
+PostgreSQL legs of both ports are not repeated: CI on `main` ran them). It builds the five self-contained binaries
+(step 7a) and checks them: six files, `sha256sum --check --strict SHA256SUMS`, and `aexp-linux-x64 --version` printing
+the tagged version. It builds the release notes from this version's `CHANGELOG.md` section, and fails if there is
+none, then appends a `## Binaries` section (the install one-liner and the `SHA256SUMS` lines). Last, it uploads what
+it verified: the NuGet packages, the release notes, the binaries, and the Python distribution as its own artifact. It
+publishes nothing.
 
 Then **approve the deployments**, two of them. Open the run under the repository's **Actions** tab, choose **Review
 deployments**, select `nuget-release`, and approve. The `publish` job then:
@@ -397,7 +430,10 @@ deployments**, select `nuget-release`, and approve. The `publish` job then:
    ten attempts, 30 seconds apart (at worst about 57 minutes for all six; the job's timeout is 75 minutes);
 5. only then creates the GitHub release for the tag: a prerelease when the version has a suffix, with that
    version's `CHANGELOG.md` section, the Known limits table (or "None currently.") and the Documented boundaries
-   table from `docs/known-limits.md` as its notes. A preview's release notes say what it does not promise.
+   table from `docs/known-limits.md` as its notes, and the five binaries and `SHA256SUMS` (downloaded from `verify`
+   and their sums checked again just before, as the Python distribution's are) attached as its assets. A preview's
+   release notes say what it does not promise. On a re-run, an existing release keeps its notes and gets its assets
+   completed (`gh release upload --clobber`) instead of being left as it is.
 
 When `publish` has succeeded, the run asks for the second approval: select `pypi-release` and approve. The
 `publish-pypi` job downloads exactly the sdist and wheel `verify` uploaded (it checks nothing out and builds nothing),
@@ -406,15 +442,15 @@ Publishing: the job's OIDC token is exchanged for a short-lived PyPI token, and 
 `skip-existing` makes a re-run skip the files PyPI already has.
 
 If `publish` fails part-way, re-run the failed job from the Actions tab (it needs approving again): `--skip-duplicate`
-skips the packages nuget.org already has, Go tags already at the commit are kept, and an existing GitHub release is
-left as it is. If `publish` fails at the Go module proxy check, nuget.org and the Go tags stand, but the GitHub
+skips the packages nuget.org already has, Go tags already at the commit are kept, and an existing GitHub release
+keeps its notes and gets the binaries uploaded again (replacing assets of the same name). If `publish` fails at the Go module proxy check, nuget.org and the Go tags stand, but the GitHub
 release and PyPI wait: `publish-pypi` runs only after `publish` succeeds. Re-run `publish` (the tags are kept, and the
 proxy check runs again); the proxy can remember that a version was not found for up to about 30 minutes, so wait that
 long before re-running if the tags were only just created. If `publish-pypi` fails, nuget.org, the Go tags and the
 GitHub release stand; fix the cause and re-run that job alone.
 
-A publish job can be re-run only while the artifacts `verify` uploaded are retained: 30 days for the NuGet packages
-and the release notes, 90 days (the most GitHub allows) for the Python distribution. After that, delete the version tag
+A publish job can be re-run only while the artifacts `verify` uploaded are retained: 30 days for the NuGet packages,
+the release notes and the binaries, 90 days (the most GitHub allows) for the Python distribution. After that, delete the version tag
 and push it again at the same commit (step 10's commands), which runs `verify` again and rebuilds them; everything
 already published is skipped. If `verify` fails, nothing was published: fix the cause on `main`, delete the tag (`git push origin
 :refs/tags/vX` and `git tag -d vX`), and tag again. A version pushed by mistake cannot be deleted from nuget.org —

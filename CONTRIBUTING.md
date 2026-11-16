@@ -126,7 +126,10 @@ _sdlc/                                      product brief, PRD, architecture, ep
 - Make sure `dotnet build` and `dotnet test` pass locally. CI (`.github/workflows/ci.yml`) runs on every pull request:
   `build-and-test`, `pack` (with package verification), `adoption-path (ubuntu-24.04, macos-15, windows-2025)` (installs
   `aexp` from the packed artifact on each OS and runs `eng/prove-adoption-path.sh`: init, trust, a failed and a
-  verified run, recall, lessons, benefit), the `postgres` matrix (15 to 18, plaintext and
+  verified run, recall, lessons, benefit), `binaries` (builds the five self-contained `aexp` binaries with
+  `eng/publish-binaries.sh`) and `adoption-path-binary (linux-x64, linux-arm64, osx-arm64, osx-x64, win-x64)` (each
+  binary on its own hardware with no .NET installed: `scripts/install-aexp.sh` against the artifact, a corrupted sum
+  refused, then the same proof), the `postgres` matrix (15 to 18, plaintext and
   crypto-shredding), the MAF floor (`maf-compatibility (pinned)`), the Python port's `python` matrix (CPython 3.10 to
   3.14, plus its PostgreSQL 16 and 18 legs; [python/README.md](python/README.md#running-the-tests) says how to run it
   locally) and the Go port's `go` matrix (the core on Go 1.24, the stores from 1.25, and the Agent Framework
