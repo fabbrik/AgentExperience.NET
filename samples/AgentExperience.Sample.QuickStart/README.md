@@ -103,5 +103,31 @@ OPENAI_API_KEY=... OPENAI_MODEL=gemini-3.1-flash-lite \
 
 A real model is free to do anything, so its output varies from run to run, and one pair of runs measures nothing.
 
+### Run it against a local model with Ollama (no key, no account)
+
+[Ollama](https://ollama.com) serves local models on an OpenAI-compatible endpoint, so the same sample needs no cloud key.
+The key variable only has to be non-empty; Ollama ignores it. The model must support tool calling.
+
+```bash
+ollama serve            # if it is not already running
+ollama pull llama3.2:3b # about 2 GB
+OPENAI_API_KEY=ollama OPENAI_MODEL=llama3.2:3b OPENAI_BASE_URL=http://localhost:11434/v1/ \
+  dotnet run --project samples/AgentExperience.Sample.QuickStart
+```
+
+Tested with `llama3.2:3b` on a Mac (Apple silicon). The first run finished in one call and was verified and stored.
+The second run was handed the lesson and still picked the wrong strategy first:
+
+```text
+Model: llama3.2:3b at localhost
+Run 1 (no memory yet): tried wait-for-lock ✓  (0 failed attempts)
+Run 2 (lesson injected): tried retry-immediately ✗  (1 failed attempt)
+```
+
+That is the honest picture of a small model: the library retrieves and injects the lesson (the printed Historical
+Reference block shows it), but whether the model uses it is the model's choice, and results differ between models and
+between runs. A 3B model can pass run 1 by luck, so one pair proves nothing either way. Use
+[`aexp benefit`](../../docs/guide/cli-and-mcp.md) or the [holdout](../../README.md#does-it-help) to measure over many runs.
+
 `tests/AgentExperience.Sample.QuickStart.Tests` runs the stand-in mode and compares its output with a checked-in copy,
 byte for byte; set `AGENTEXPERIENCE_QUICKSTART_GOLDEN_UPDATE=1` to rewrite it on purpose.
