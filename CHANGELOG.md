@@ -6,7 +6,13 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- **A documented recipe for any MCP client** ([CLI and MCP](docs/guide/cli-and-mcp.md#recipe-any-mcp-client)): the
+  stdio registration, the operator's `aexp init` and `aexp trust`, and four lines for the agent's rules file saying
+  when to call `experience_recall`, `experience_failure_hint`, `experience_record_call` and `experience_finish`. A test
+  runs that sequence over MCP and fails if the recipe names a tool the server does not offer. Documentation and a test
+  only; no host-specific setup was added, because no user has asked for one.
 
 ## 0.1.0-preview.20
 
