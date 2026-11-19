@@ -6,6 +6,10 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
 
 ## Unreleased
 
+## 0.1.0-preview.21
+
+This preview is documentation and one test: a tested recipe for wiring `aexp` into any MCP client, and a quick start that runs against a local Ollama model with no key or account. No library or CLI behaviour changes. The same tag releases the eight NuGet packages, the Python distribution and the Go modules at this version, as before.
+
 ### Added
 
 - **A documented recipe for any MCP client** ([CLI and MCP](docs/guide/cli-and-mcp.md#recipe-any-mcp-client)): the
@@ -13,6 +17,10 @@ AgentExperience.NET is a **preview**. It is not production ready, and public API
   when to call `experience_recall`, `experience_failure_hint`, `experience_record_call` and `experience_finish`. A test
   runs that sequence over MCP and fails if the recipe names a tool the server does not offer. Documentation and a test
   only; no host-specific setup was added, because no user has asked for one.
+
+- **The quick start runs against a local model with Ollama** ([quick start sample](samples/AgentExperience.Sample.QuickStart/README.md)):
+  no key and no account. The README records one real pair of runs, including that a 3B model was handed the lesson and
+  still tried the wrong strategy first, and says one pair proves nothing.
 
 ## 0.1.0-preview.20
 
